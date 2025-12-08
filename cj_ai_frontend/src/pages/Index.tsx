@@ -2,7 +2,7 @@
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { ToolCard } from "@/components/ToolCard";
-import type { LucideIcon } from "lucide-react";
+//import type { LucideIcon } from "lucide-react";
 import {
   FileText,
   Award,
