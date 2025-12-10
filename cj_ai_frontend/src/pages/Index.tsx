@@ -1,8 +1,6 @@
-// src/pages/Index.tsx
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { ToolCard } from "@/components/ToolCard";
-//import type { LucideIcon } from "lucide-react";
 import {
   FileText,
   Award,
@@ -22,6 +20,7 @@ const Index = () => {
       icon: FileText,
       title: "보도자료 생성기",
       description: "AI 기반으로 전문적인 보도자료를 빠르게 작성합니다",
+      path: "/press-release"
     },
     {
       icon: Award,
@@ -67,6 +66,7 @@ const Index = () => {
       icon: Languages,
       title: "다국어 번역기",
       description: "문서를 여러 언어로 자동 번역합니다",
+      path : "/translator"
     },
   ];
 
@@ -74,7 +74,6 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <Navbar />
 
-      {/* Hero */}
       <header
         id="home"
         className="bg-gradient-hero text-primary-foreground py-20 px-6"
@@ -99,9 +98,7 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Main */}
       <main className="max-w-6xl mx-auto px-6 py-16">
-        {/* 소개 */}
         <section id="about" className="mb-16">
           <div className="text-center max-w-2xl mx-auto space-y-4 mb-12">
             <h2 className="text-2xl md:text-3xl font-bold text-foreground tracking-tight">
@@ -113,7 +110,6 @@ const Index = () => {
             </p>
           </div>
 
-          {/* 도구 카드 */}
           <div
             id="tools"
             className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch"
@@ -128,13 +124,12 @@ const Index = () => {
                   icon={tool.icon}
                   title={tool.title}
                   description={tool.description}
+                  path={tool.path}
                 />
               </div>
             ))}
           </div>
         </section>
-
-        
       </main>
 
       <Footer />
