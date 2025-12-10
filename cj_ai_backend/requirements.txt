@@ -12,3 +12,5 @@ python-dotenv
 pydantic
 sentence-transformers
 scikit-learn
+deepl
+lxml
