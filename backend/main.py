@@ -1,0 +1,60 @@
+"""
+충주시 AI 플랫폼 - FastAPI 백엔드
+Azure Container Apps 배포용
+"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
+from config import settings
+from routers import press_release, election_law, news, health
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """애플리케이션 시작/종료 시 실행"""
+    # 시작 시
+    print("🚀 충주시 AI 플랫폼 백엔드 시작")
+    print(f"📍 CORS Origins: {settings.cors_origins_list}")
+    yield
+    # 종료 시
+    print("👋 백엔드 종료")
+
+
+app = FastAPI(
+    title="충주시 AI 플랫폼 API",
+    description="보도자료 생성, 선거법 챗봇, 뉴스 관리 API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS 설정
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 라우터 등록
+app.include_router(health.router, prefix="/api", tags=["Health"])
+app.include_router(press_release.router, prefix="/api/press-release", tags=["Press Release"])
+app.include_router(election_law.router, prefix="/api/election-law", tags=["Election Law"])
+app.include_router(news.router, prefix="/api/news", tags=["News"])
+
+
+@app.get("/")
+async def root():
+    """루트 엔드포인트"""
+    return {
+        "message": "충주시 AI 플랫폼 API",
+        "version": "1.0.0",
+        "platform": "Azure Container Apps",
+        "docs": "/docs"
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
