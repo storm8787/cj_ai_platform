@@ -1,11 +1,4 @@
 {
-  "routes": [
-    {
-      "route": "/api/*",
-      "allowedRoles": ["anonymous"],
-      "rewrite": "https://cj-ai-backend.ashysky-a846c5bf.koreacentral.azurecontainerapps.io/api/*"
-    }
-  ],
   "navigationFallback": {
     "rewrite": "/index.html",
     "exclude": ["/assets/*", "/*.{css,scss,js,png,jpg,gif,ico,svg,woff,woff2,ttf,eot}"]
