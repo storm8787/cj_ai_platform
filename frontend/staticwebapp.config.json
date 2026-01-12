@@ -1,0 +1,40 @@
+{
+  "routes": [
+    {
+      "route": "/api/*",
+      "allowedRoles": ["anonymous"],
+      "rewrite": "https://cj-ai-backend.ashysky-a846c5bf.koreacentral.azurecontainerapps.io/api/*"
+    }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html"
+  },
+  "responseOverrides": {
+    "404": {
+      "rewrite": "/index.html",
+      "statusCode": 200
+    }
+  }
+}
+```
+
+**중요**: `rewrite` URL이 너의 백엔드 URL로 정확하게 들어가야 해!
+
+---
+
+## 🔧 Step 2: 백엔드 CORS 설정 업데이트
+
+Azure Container Apps에서 CORS 설정을 해야 해.
+
+### Azure Portal에서:
+
+1. **Container Apps** → `cj-ai-backend` 검색
+2. 왼쪽 메뉴 → **컨테이너**
+3. **편집 및 배포** (또는 **Revision management**)
+4. **새 수정 만들기** 클릭
+5. 컨테이너 이미지 옆 **편집** 버튼
+6. **환경 변수** 탭
+7. `CORS_ORIGINS` 찾아서 **편집**
+8. 값을 이렇게 수정:
+```
+https://agreeable-smoke-0b02cf31e.2.azurestaticapps.net,http://localhost:5173
