@@ -1,0 +1,23 @@
+# FastAPI & Server
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+
+# AI & ML
+openai==1.12.0
+sentence-transformers==2.3.1
+faiss-cpu==1.7.4
+torch==2.2.0
+numpy==1.26.4
+
+# Database
+supabase==2.3.4
+
+# Utilities
+python-dotenv==1.0.1
+httpx==0.25.2
+pydantic==2.6.1
+pydantic-settings==2.1.0
+
+# Async
+aiohttp==3.9.3
