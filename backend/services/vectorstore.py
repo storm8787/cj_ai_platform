@@ -129,12 +129,18 @@ class VectorStoreService:
                 if idx < len(_metadata):
                     doc = _metadata[idx]
                     similarity = 1 / (1 + dist)  # 거리를 유사도로 변환
-                    results.append({
-                        "title": doc.get("title", ""),
-                        "content": doc.get("content", ""),
-                        "similarity": float(similarity),
-                        "metadata": doc.get("metadata", {})
-                    })
+                    
+                    # page_content와 content 둘 다 지원
+                    content = doc.get("page_content", "") or doc.get("content", "")
+                    title = doc.get("title", "") or doc.get("metadata", {}).get("title", "")
+                    
+                    if content:  # content가 있을 때만 추가
+                        results.append({
+                            "title": title,
+                            "content": content,
+                            "similarity": float(similarity),
+                            "metadata": doc.get("metadata", {})
+                        })
             
             return results
             
@@ -169,10 +175,13 @@ class VectorStoreService:
                     doc = metadata[idx]
                     similarity = 1 / (1 + dist)
                     
+                    # page_content와 content 둘 다 지원
+                    content = doc.get("page_content", "") or doc.get("content", "")
+                    
                     # 최소 유사도 필터링
-                    if similarity >= 0.35:
+                    if similarity >= 0.35 and content:
                         results.append({
-                            "content": doc.get("content", ""),
+                            "content": content,
                             "similarity": float(similarity),
                             "type": doc.get("type", target),
                             "metadata": doc.get("metadata", {})
