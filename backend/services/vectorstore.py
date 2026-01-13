@@ -1,7 +1,7 @@
 """벡터스토어 검색 서비스"""
 import os
 import pickle
-from typing import List, Dict, Optional
+from typing import List, Dict
 import numpy as np
 
 from config import settings
@@ -28,30 +28,30 @@ def get_embedding_model():
 
 class VectorStoreService:
     """벡터스토어 검색 서비스"""
-    
+
     def __init__(self):
         self.press_release_loaded = False
         self.election_law_loaded = False
-    
+
     def _load_press_release_vectorstore(self):
         """보도자료 벡터스토어 로드"""
         global _faiss_index, _metadata
-        
+
         if _faiss_index is not None:
             return True
-        
+
         try:
             import faiss
-            
+
             index_path = os.path.join(settings.VECTORSTORE_PATH, "press_release_faiss.index")
             metadata_path = os.path.join(settings.VECTORSTORE_PATH, "documents_metadata.pkl")
-            
+
             if not os.path.exists(index_path):
                 print(f"⚠️ 인덱스 파일 없음: {index_path}")
                 return False
-            
+
             _faiss_index = faiss.read_index(index_path)
-            
+
             with open(metadata_path, "rb") as f:
                 loaded = pickle.load(f)
 
@@ -68,103 +68,67 @@ class VectorStoreService:
                 _metadata = []
 
             # (권장) 인덱스 개수랑 메타 길이 불일치 로그
-            if _faiss_index is not None and _metadata is not None:
-                if hasattr(_faiss_index, "ntotal") and len(_metadata) != _faiss_index.ntotal:
-                    print(f"⚠️ 메타데이터 길이({len(_metadata)})와 인덱스 ntotal({_faiss_index.ntotal}) 불일치")
+            if hasattr(_faiss_index, "ntotal") and len(_metadata) != _faiss_index.ntotal:
+                print(f"⚠️ 메타데이터 길이({len(_metadata)})와 인덱스 ntotal({_faiss_index.ntotal}) 불일치")
 
-            ###
             print(f"✅ 보도자료 벡터스토어 로드: {_faiss_index.ntotal}개 문서")
             self.press_release_loaded = True
             return True
-            
+
         except Exception as e:
             print(f"❌ 보도자료 벡터스토어 로드 실패: {e}")
             return False
-    
-    def _load_election_law_vectorstore(self, target: str = "all"):
-        """선거법 벡터스토어 로드"""
-        global _election_indexes, _election_metadata
-        
-        if target in _election_indexes:
-            return True
-        
-        try:
-            import faiss
-            
-            # 파일명 매핑
-            file_map = {
-                "all": ("election_law_faiss.index", "documents_metadata.pkl"),
-                "law": ("election_law_law_faiss.index", "documents_metadata_law.pkl"),
-                "panli": ("election_law_panli_faiss.index", "documents_metadata_panli.pkl"),
-                "written": ("election_law_written_faiss.index", "documents_metadata_written.pkl"),
-                "internet": ("election_law_internet_faiss.index", "documents_metadata_internet.pkl"),
-                "guidance": ("election_law_guidance_faiss.index", "documents_metadata_guidance.pkl"),
-            }
-            
-            if target not in file_map:
-                target = "all"
-            
-            index_file, metadata_file = file_map[target]
-            index_path = os.path.join(settings.ELECTION_VECTORSTORE_PATH, index_file)
-            metadata_path = os.path.join(settings.ELECTION_VECTORSTORE_PATH, metadata_file)
-            
-            if not os.path.exists(index_path):
-                print(f"⚠️ 인덱스 파일 없음: {index_path}")
-                return False
-            
-            _election_indexes[target] = faiss.read_index(index_path)
-            
-            with open(metadata_path, "rb") as f:
-                _election_metadata[target] = pickle.load(f)
-            
-            print(f"✅ 선거법 벡터스토어 로드 ({target}): {_election_indexes[target].ntotal}개 문서")
-            self.election_law_loaded = True
-            return True
-            
-        except Exception as e:
-            print(f"❌ 선거법 벡터스토어 로드 실패 ({target}): {e}")
-            return False
-    
-    async def search_press_release(
-        self,
-        query: str,
-        top_k: int = 3
-    ) -> List[Dict]:
+
+    async def search_press_release(self, query: str, top_k: int = 3) -> List[Dict]:
         """보도자료 유사 문서 검색"""
         if not self._load_press_release_vectorstore():
             return []
-        
+
         try:
+            import faiss  # ✅ 여기서 사용 (정규화)
+
             model = get_embedding_model()
             query_embedding = model.encode([query])[0]
             query_embedding = np.array([query_embedding]).astype("float32")
-            
-            # FAISS 검색
+
+            # ✅ 코사인처럼 쓰기 위한 정규화
+            faiss.normalize_L2(query_embedding)
+
+            # FAISS 검색 (IndexFlatIP면 distances가 곧 cosine score에 가까움)
             distances, indices = _faiss_index.search(query_embedding, top_k)
-            
+
             results = []
-            for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
+            for score, idx in zip(distances[0], indices[0]):
                 if idx < len(_metadata):
                     doc = _metadata[idx]
-                    similarity = 1 / (1 + dist)  # 거리를 유사도로 변환
-                    
-                    # page_content와 content 둘 다 지원
+                    similarity = float(score)  # ✅ dist 환산 제거, score 그대로 사용
+
                     content = doc.get("page_content", "") or doc.get("content", "")
                     title = doc.get("title", "") or doc.get("metadata", {}).get("title", "")
-                    
-                    if content:  # content가 있을 때만 추가
+
+                    if content:
                         results.append({
                             "title": title,
                             "content": content,
-                            "similarity": float(similarity),
+                            "similarity": similarity,
                             "metadata": doc.get("metadata", {})
                         })
-            
+
             return results
-            
+
         except Exception as e:
             print(f"❌ 보도자료 검색 오류: {e}")
             return []
+
+    def get_press_release_status(self) -> Dict:
+        """보도자료 벡터스토어 상태"""
+        self._load_press_release_vectorstore()
+        return {
+            "loaded": self.press_release_loaded,
+            "document_count": _faiss_index.ntotal if _faiss_index else 0,
+            "metadata_count": len(_metadata) if _metadata else 0,
+            "path": settings.VECTORSTORE_PATH
+        }
     
     async def search_election_law(
         self,
@@ -191,7 +155,8 @@ class VectorStoreService:
             for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
                 if idx < len(metadata):
                     doc = metadata[idx]
-                    similarity = 1 / (1 + dist)
+                    #similarity = 1 / (1 + dist)
+                    similarity = float(dist)   # ✅ IP score (정규화면 cosine과 거의 동일)
                     
                     # page_content와 content 둘 다 지원
                     content = doc.get("page_content", "") or doc.get("content", "")
