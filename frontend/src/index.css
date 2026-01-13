@@ -4,30 +4,98 @@
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    @apply bg-gradient-to-br from-blue-50 to-blue-100 text-gray-900;
   }
 }
 
 @layer components {
+  /* 버튼 스타일 */
   .btn-primary {
-    @apply px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 
-           transition-colors duration-200 font-medium disabled:opacity-50 
-           disabled:cursor-not-allowed;
+    @apply px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg 
+           font-semibold shadow-md hover:from-blue-700 hover:to-blue-800 
+           transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
   }
-  
+
   .btn-secondary {
-    @apply px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 
-           transition-colors duration-200 font-medium;
+    @apply px-6 py-3 bg-white text-blue-600 border-2 border-blue-600 rounded-lg 
+           font-semibold hover:bg-blue-50 transition-all duration-200;
   }
-  
+
+  /* 입력 필드 */
   .input-field {
-    @apply w-full px-3 py-2 border border-gray-300 rounded-lg 
-           focus:ring-2 focus:ring-primary-500 focus:border-transparent 
-           outline-none transition-all duration-200;
+    @apply px-4 py-2 border border-gray-300 rounded-lg 
+           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+           disabled:bg-gray-100 disabled:cursor-not-allowed;
   }
-  
+
+  /* 카드 */
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6;
+    @apply bg-white rounded-xl shadow-lg p-6 border border-gray-100;
+  }
+
+  .card-hover {
+    @apply card hover:shadow-2xl hover:-translate-y-1 transition-all duration-300;
+  }
+
+  /* 뱃지 */
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold;
+  }
+
+  .badge-blue {
+    @apply badge bg-blue-100 text-blue-700;
+  }
+
+  .badge-green {
+    @apply badge bg-green-100 text-green-700;
+  }
+
+  .badge-yellow {
+    @apply badge bg-yellow-100 text-yellow-700;
+  }
+
+  .badge-red {
+    @apply badge bg-red-100 text-red-700;
+  }
+}
+
+/* 애니메이션 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out;
+}
+
+/* 로딩 점 애니메이션 */
+.loading-dot {
+  animation: loading 1.4s infinite;
+}
+
+.loading-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.loading-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes loading {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-8px);
+    opacity: 1;
   }
 }
 
@@ -38,37 +106,23 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 4px;
+  @apply bg-gray-100;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 4px;
+  @apply bg-blue-400 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  @apply bg-blue-500;
 }
 
-/* 애니메이션 */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+/* 텍스트 선택 색상 */
+::selection {
+  @apply bg-blue-200 text-blue-900;
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.3s ease-out;
+/* 포커스 링 제거 (커스텀 스타일 사용) */
+*:focus {
+  outline: none;
 }
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
-}
-
-.loading-dot {
-  animation: pulse-dot 1.4s ease-in-out infinite;
-}
-
-.loading-dot:nth-child(2) { animation-delay: 0.2s; }
-.loading-dot:nth-child(3) { animation-delay: 0.4s; }
