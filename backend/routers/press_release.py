@@ -1,10 +1,12 @@
-"""보도자료 생성 API"""
+"""보도자료 생성 API - 완벽 구현"""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
+import datetime
 
 from services.vectorstore import VectorStoreService
 from services.openai_service import OpenAIService
+from services.supabase_service import SupabaseService
 from utils.prompt_filter import check_text_security
 
 router = APIRouter()
@@ -12,6 +14,7 @@ router = APIRouter()
 # 서비스 인스턴스
 vectorstore = VectorStoreService()
 openai_service = OpenAIService()
+supabase_service = SupabaseService()
 
 
 class SearchRequest(BaseModel):
@@ -29,10 +32,23 @@ class GenerateRequest(BaseModel):
     additional: str = ""
 
 
-class DocumentResult(BaseModel):
-    title: str
-    content: str
+class DocumentReference(BaseModel):
+    """참조 문서 정보"""
+    index: int
     similarity: float
+    doc_id: str
+    preview: str
+    full_content: str
+
+
+class GenerateResponse(BaseModel):
+    """보도자료 생성 응답"""
+    result: str
+    references: List[DocumentReference]
+    search_method: str
+    vectorstore_status: Dict
+    generation_time: float
+    supabase_log_id: Optional[int] = None
 
 
 @router.post("/search-similar")
@@ -53,9 +69,12 @@ async def search_similar_documents(request: SearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/generate")
+@router.post("/generate", response_model=GenerateResponse)
 async def generate_press_release(request: GenerateRequest):
-    """보도자료 생성 - 충주시 스타일"""
+    """보도자료 생성 - 완벽 구현"""
+    import time
+    start_time = time.time()
+    
     # 입력값 검증
     for text in [request.title, request.content, request.additional]:
         if text:
@@ -64,23 +83,42 @@ async def generate_press_release(request: GenerateRequest):
                 raise HTTPException(status_code=400, detail=message)
     
     try:
-        # 유사 문서 검색
+        # 1. 벡터스토어 상태 확인
+        vectorstore_status = vectorstore.get_press_release_status()
+        search_method = "🤖 AI 벡터 검색" if vectorstore_status.get("loaded") else "📊 기본 검색"
+        
+        # 2. 유사 문서 검색
         similar_docs = await vectorstore.search_press_release(
             query=request.title,
             top_k=3
         )
         
-        # 유사 문서 텍스트 결합
-        examples_combined = "\n\n---\n\n".join([
-            doc.get('content', '')[:1000]  # 각 문서 1000자까지
-            for doc in similar_docs
-        ])
+        # 3. 참조 문서 정보 구성
+        references = []
+        examples_for_prompt = []
         
-        # 내용 포인트 처리
+        for i, doc in enumerate(similar_docs):
+            content = doc.get('content', '')
+            similarity = doc.get('similarity', 0.0)
+            
+            # 참조 문서 정보
+            references.append({
+                "index": i + 1,
+                "similarity": round(similarity, 4),
+                "doc_id": doc.get('metadata', {}).get('id', f'doc_{i+1}'),
+                "preview": content[:200] + "..." if len(content) > 200 else content,
+                "full_content": content
+            })
+            
+            # 프롬프트용 예시 (전체 내용, 최대 1000자)
+            examples_for_prompt.append(content[:1000])
+        
+        # 4. 프롬프트 생성 (기존 개선된 버전)
+        examples_combined = "\n\n---\n\n".join(examples_for_prompt)
         content_points = [line.strip() for line in request.content.strip().split("\n") if line.strip()]
         joined_points = "\n- ".join(content_points)
         
-        # 길이 지시 (자 단위)
+        # 길이 지시
         length_chars = {
             "짧게": 600,
             "중간": 800,
@@ -126,8 +164,10 @@ async def generate_press_release(request: GenerateRequest):
             f"{additional_instructions}"
         )
         
-        # 최종 사용자 메시지
-        user_message = f"""아래는 참고용 보도자료 예시입니다:
+        # 최종 프롬프트
+        full_prompt = f"""{system_prompt}
+
+아래는 참고용 보도자료 예시입니다:
 
 {examples_combined}
 
@@ -136,17 +176,62 @@ async def generate_press_release(request: GenerateRequest):
 {user_query_prompt}
 """
         
-        # GPT로 생성 (시스템 프롬프트 포함)
-        full_prompt = f"{system_prompt}\n\n{user_message}"
+        # 5. GPT로 생성
         result = await openai_service.generate_text(
             prompt=full_prompt,
             max_tokens=2000,
-            temperature=0.5  # 더 일관적인 결과를 위해 0.5로 조정
+            temperature=0.5
         )
         
-        return {"result": result}
+        # 6. 생성 시간 계산
+        generation_time = round(time.time() - start_time, 2)
+        
+        # 7. Supabase 로깅
+        supabase_log_id = None
+        try:
+            # 파일 저장
+            safe_title = request.title[:20].replace(" ", "_").replace("/", "_") if request.title else "보도자료"
+            file_name = f"{safe_title}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            file_bytes = result.encode('utf-8')
+            
+            log_result = await supabase_service.log_press_release(
+                file_bytes=file_bytes,
+                file_name=file_name,
+                metadata={
+                    "title": request.title,
+                    "department": request.department,
+                    "manager": request.manager,
+                    "paragraphs": request.paragraphs,
+                    "length": request.length,
+                    "search_method": search_method,
+                    "references_count": len(references),
+                    "generation_time": generation_time
+                }
+            )
+            supabase_log_id = log_result.get("id") if log_result else None
+        except Exception as e:
+            print(f"⚠️ Supabase 로깅 실패: {e}")
+        
+        # 8. 응답 반환
+        return GenerateResponse(
+            result=result,
+            references=references,
+            search_method=search_method,
+            vectorstore_status=vectorstore_status,
+            generation_time=generation_time,
+            supabase_log_id=supabase_log_id
+        )
         
     except Exception as e:
+        # 에러 로깅
+        try:
+            await supabase_service.log_error(
+                feature_name="보도자료 생성기",
+                error_message=str(e)
+            )
+        except:
+            pass
+        
         raise HTTPException(status_code=500, detail=str(e))
 
 
