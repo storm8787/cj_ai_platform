@@ -53,8 +53,26 @@ class VectorStoreService:
             _faiss_index = faiss.read_index(index_path)
             
             with open(metadata_path, "rb") as f:
-                _metadata = pickle.load(f)
-            
+                loaded = pickle.load(f)
+
+            # ✅ pkl이 dict인 경우: 대부분 {"documents":[...], ...} 형태
+            if isinstance(loaded, dict):
+                if "documents" in loaded and isinstance(loaded["documents"], list):
+                    _metadata = loaded["documents"]
+                else:
+                    # 혹시 dict가 doc_id -> doc 형태면 values로 리스트화
+                    _metadata = list(loaded.values())
+            elif isinstance(loaded, list):
+                _metadata = loaded
+            else:
+                _metadata = []
+
+            # (권장) 인덱스 개수랑 메타 길이 불일치 로그
+            if _faiss_index is not None and _metadata is not None:
+                if hasattr(_faiss_index, "ntotal") and len(_metadata) != _faiss_index.ntotal:
+                    print(f"⚠️ 메타데이터 길이({len(_metadata)})와 인덱스 ntotal({_faiss_index.ntotal}) 불일치")
+
+            ###
             print(f"✅ 보도자료 벡터스토어 로드: {_faiss_index.ntotal}개 문서")
             self.press_release_loaded = True
             return True
@@ -199,8 +217,9 @@ class VectorStoreService:
         return {
             "loaded": self.press_release_loaded,
             "document_count": _faiss_index.ntotal if _faiss_index else 0,
+            "metadata_count": len(_metadata) if _metadata else 0,
             "path": settings.VECTORSTORE_PATH
-        }
+            }
     
     def get_election_law_status(self) -> Dict:
         """선거법 벡터스토어 상태"""
