@@ -26,6 +26,22 @@ def get_embedding_model():
     return _embedding_model
 
 
+def _unwrap_metadata(loaded):
+    """
+    pkl 로드 결과를 '문서 리스트(list[dict])' 형태로 통일
+    - {"documents":[...]} 형태(dict) 지원
+    - list 자체 지원
+    - dict(doc_id -> doc) 형태면 values로 리스트화
+    """
+    if isinstance(loaded, dict):
+        if "documents" in loaded and isinstance(loaded["documents"], list):
+            return loaded["documents"]
+        return list(loaded.values())
+    if isinstance(loaded, list):
+        return loaded
+    return []
+
+
 class VectorStoreService:
     """벡터스토어 검색 서비스"""
 
@@ -33,6 +49,9 @@ class VectorStoreService:
         self.press_release_loaded = False
         self.election_law_loaded = False
 
+    # =========================
+    # 보도자료 (유지: 건드리지 않음)
+    # =========================
     def _load_press_release_vectorstore(self):
         """보도자료 벡터스토어 로드"""
         global _faiss_index, _metadata
@@ -60,7 +79,6 @@ class VectorStoreService:
                 if "documents" in loaded and isinstance(loaded["documents"], list):
                     _metadata = loaded["documents"]
                 else:
-                    # 혹시 dict가 doc_id -> doc 형태면 values로 리스트화
                     _metadata = list(loaded.values())
             elif isinstance(loaded, list):
                 _metadata = loaded
@@ -99,20 +117,22 @@ class VectorStoreService:
 
             results = []
             for score, idx in zip(distances[0], indices[0]):
-                if idx < len(_metadata):
-                    doc = _metadata[idx]
-                    similarity = float(score)  # ✅ dist 환산 제거, score 그대로 사용
+                if idx < 0 or idx >= len(_metadata):
+                    continue
 
-                    content = doc.get("page_content", "") or doc.get("content", "")
-                    title = doc.get("title", "") or doc.get("metadata", {}).get("title", "")
+                doc = _metadata[idx]
+                similarity = float(score)  # ✅ score 그대로 사용
 
-                    if content:
-                        results.append({
-                            "title": title,
-                            "content": content,
-                            "similarity": similarity,
-                            "metadata": doc.get("metadata", {})
-                        })
+                content = doc.get("page_content", "") or doc.get("content", "")
+                title = doc.get("title", "") or doc.get("metadata", {}).get("title", "")
+
+                if content:
+                    results.append({
+                        "title": title,
+                        "content": content,
+                        "similarity": similarity,
+                        "metadata": doc.get("metadata", {})
+                    })
 
             return results
 
@@ -129,7 +149,64 @@ class VectorStoreService:
             "metadata_count": len(_metadata) if _metadata else 0,
             "path": settings.VECTORSTORE_PATH
         }
-    
+
+    # =========================
+    # 선거법 (여기만 추가/수정)
+    # =========================
+    def _load_election_law_vectorstore(self, target: str = "all") -> bool:
+        """선거법 벡터스토어 로드"""
+        global _election_indexes, _election_metadata
+
+        if target in _election_indexes:
+            return True
+
+        try:
+            import faiss
+
+            file_map = {
+                "all": ("election_law_faiss.index", "documents_metadata.pkl"),
+                "law": ("election_law_law_faiss.index", "documents_metadata_law.pkl"),
+                "panli": ("election_law_panli_faiss.index", "documents_metadata_panli.pkl"),
+                "written": ("election_law_written_faiss.index", "documents_metadata_written.pkl"),
+                "internet": ("election_law_internet_faiss.index", "documents_metadata_internet.pkl"),
+                "guidance": ("election_law_guidance_faiss.index", "documents_metadata_guidance.pkl"),
+            }
+
+            if target not in file_map:
+                target = "all"
+
+            index_file, metadata_file = file_map[target]
+            index_path = os.path.join(settings.ELECTION_VECTORSTORE_PATH, index_file)
+            metadata_path = os.path.join(settings.ELECTION_VECTORSTORE_PATH, metadata_file)
+
+            if not os.path.exists(index_path):
+                print(f"⚠️ (선거법:{target}) 인덱스 파일 없음: {index_path}")
+                return False
+            if not os.path.exists(metadata_path):
+                print(f"⚠️ (선거법:{target}) 메타데이터 파일 없음: {metadata_path}")
+                return False
+
+            _election_indexes[target] = faiss.read_index(index_path)
+
+            with open(metadata_path, "rb") as f:
+                loaded = pickle.load(f)
+
+            # ✅ dict이면 documents로 풀어서 리스트화
+            _election_metadata[target] = _unwrap_metadata(loaded)
+
+            if hasattr(_election_indexes[target], "ntotal") and len(_election_metadata[target]) != _election_indexes[target].ntotal:
+                print(
+                    f"⚠️ (선거법:{target}) 메타({len(_election_metadata[target])}) != ntotal({_election_indexes[target].ntotal})"
+                )
+
+            print(f"✅ 선거법 벡터스토어 로드 ({target}): {_election_indexes[target].ntotal}개 문서")
+            self.election_law_loaded = True
+            return True
+
+        except Exception as e:
+            print(f"❌ 선거법 벡터스토어 로드 실패 ({target}): {e}")
+            return False
+
     async def search_election_law(self, query: str, target: str = "all", top_k: int = 5) -> List[Dict]:
         """선거법 문서 검색 (코사인처럼: normalize + score 그대로)"""
         if not self._load_election_law_vectorstore(target):
@@ -155,12 +232,11 @@ class VectorStoreService:
                     continue
 
                 doc = metadata[idx]
-                similarity = float(score)  # ✅ IP score 그대로
+                similarity = float(score)
 
                 content = doc.get("page_content", "") or doc.get("content", "")
                 doc_type = doc.get("type") or doc.get("metadata", {}).get("doc_type") or target
 
-                # (선택) 최소 점수 컷은 운영하면서 조정
                 if content and similarity >= 0.35:
                     results.append({
                         "content": content,
@@ -174,16 +250,6 @@ class VectorStoreService:
         except Exception as e:
             print(f"❌ 선거법 검색 오류: {e}")
             return []
-
-    def get_press_release_status(self) -> Dict:
-        """보도자료 벡터스토어 상태"""
-        self._load_press_release_vectorstore()
-        return {
-            "loaded": self.press_release_loaded,
-            "document_count": _faiss_index.ntotal if _faiss_index else 0,
-            "metadata_count": len(_metadata) if _metadata else 0,
-            "path": settings.VECTORSTORE_PATH
-        }
 
     def get_election_law_status(self) -> Dict:
         """선거법 벡터스토어 상태"""
