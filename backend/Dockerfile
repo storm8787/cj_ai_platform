@@ -13,8 +13,13 @@ WORKDIR /app
 # 의존성 먼저 설치 (캐시 활용)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org -r requirements.txt
-# 애플리케이션 코드 복사
+
+# 애플리케이션 코드 복사 (vectorstore 파일 포함)
 COPY . .
+
+# 벡터스토어 디렉토리가 제대로 복사되었는지 확인
+RUN echo "Checking vectorstore files..." && \
+    ls -lah /app/data/vectorstores/ || echo "Vectorstore directory not found"
 
 # 포트 노출
 EXPOSE 8000
