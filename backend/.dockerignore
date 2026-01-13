@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Env files
+.env
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Docs
+docs/
+*.md
+
+# 주의: data 폴더는 포함해야 함 (vectorstore 파일)
+# data/ 를 제외하지 않음!
