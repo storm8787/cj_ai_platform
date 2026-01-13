@@ -130,52 +130,51 @@ class VectorStoreService:
             "path": settings.VECTORSTORE_PATH
         }
     
-    async def search_election_law(
-        self,
-        query: str,
-        target: str = "all",
-        top_k: int = 5
-    ) -> List[Dict]:
-        """선거법 문서 검색"""
+    async def search_election_law(self, query: str, target: str = "all", top_k: int = 5) -> List[Dict]:
+        """선거법 문서 검색 (코사인처럼: normalize + score 그대로)"""
         if not self._load_election_law_vectorstore(target):
             return []
-        
+
         try:
+            import faiss
+
             model = get_embedding_model()
             query_embedding = model.encode([query])[0]
             query_embedding = np.array([query_embedding]).astype("float32")
-            
-            # FAISS 검색
+
+            faiss.normalize_L2(query_embedding)
+
             index = _election_indexes[target]
             metadata = _election_metadata[target]
-            
+
             distances, indices = index.search(query_embedding, top_k)
-            
+
             results = []
-            for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
-                if idx < len(metadata):
-                    doc = metadata[idx]
-                    #similarity = 1 / (1 + dist)
-                    similarity = float(dist)   # ✅ IP score (정규화면 cosine과 거의 동일)
-                    
-                    # page_content와 content 둘 다 지원
-                    content = doc.get("page_content", "") or doc.get("content", "")
-                    
-                    # 최소 유사도 필터링
-                    if similarity >= 0.35 and content:
-                        results.append({
-                            "content": content,
-                            "similarity": float(similarity),
-                            "type": doc.get("type", target),
-                            "metadata": doc.get("metadata", {})
-                        })
-            
+            for score, idx in zip(distances[0], indices[0]):
+                if idx < 0 or idx >= len(metadata):
+                    continue
+
+                doc = metadata[idx]
+                similarity = float(score)  # ✅ IP score 그대로
+
+                content = doc.get("page_content", "") or doc.get("content", "")
+                doc_type = doc.get("type") or doc.get("metadata", {}).get("doc_type") or target
+
+                # (선택) 최소 점수 컷은 운영하면서 조정
+                if content and similarity >= 0.35:
+                    results.append({
+                        "content": content,
+                        "similarity": similarity,
+                        "type": doc_type,
+                        "metadata": doc.get("metadata", {})
+                    })
+
             return results
-            
+
         except Exception as e:
             print(f"❌ 선거법 검색 오류: {e}")
             return []
-    
+
     def get_press_release_status(self) -> Dict:
         """보도자료 벡터스토어 상태"""
         self._load_press_release_vectorstore()
@@ -184,8 +183,8 @@ class VectorStoreService:
             "document_count": _faiss_index.ntotal if _faiss_index else 0,
             "metadata_count": len(_metadata) if _metadata else 0,
             "path": settings.VECTORSTORE_PATH
-            }
-    
+        }
+
     def get_election_law_status(self) -> Dict:
         """선거법 벡터스토어 상태"""
         status = {
@@ -193,10 +192,10 @@ class VectorStoreService:
             "indexes": {},
             "path": settings.ELECTION_VECTORSTORE_PATH
         }
-        
+
         for target in ["all", "law", "panli", "written", "internet", "guidance"]:
             self._load_election_law_vectorstore(target)
             if target in _election_indexes:
                 status["indexes"][target] = _election_indexes[target].ntotal
-        
+
         return status
