@@ -62,7 +62,7 @@ export default function Dashboard() {
           <p className="text-lg sm:text-xl text-slate-300 mb-8 leading-relaxed max-w-2xl mx-auto">
             인공지능 기술을 활용한 스마트 행정 서비스로
             <br />
-            더 빠르고 정확한 시민 서비스를 제공합니다.
+            더 빠르고 정확한 행정 서비스를 제공합니다.
           </p>
 
           {/* CTA Button - Single Button */}
