@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-slate-50 text-gray-900;
+    @apply bg-slate-950 text-gray-900;
   }
 }
 
@@ -110,15 +110,15 @@
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+  @apply bg-slate-900;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-cyan-400 rounded-full;
+  @apply bg-cyan-500 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-cyan-500;
+  @apply bg-cyan-600;
 }
 
 /* 텍스트 선택 색상 */
@@ -129,16 +129,4 @@
 /* 포커스 링 제거 (커스텀 스타일 사용) */
 *:focus {
   outline: none;
-}
-
-/* 다크 네이비 그라데이션 헬퍼 */
-.bg-navy-gradient {
-  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0f172a 100%);
-}
-
-.text-gradient-cyan {
-  background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
