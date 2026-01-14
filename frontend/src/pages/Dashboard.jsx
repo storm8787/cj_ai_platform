@@ -1,134 +1,158 @@
-import { Link } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
+import { Link } from 'react-router-dom';
+import { Newspaper, FileText, Scale, ArrowRight } from 'lucide-react';
 
 const tools = [
   {
-    icon: "📰",
-    title: "충주시 뉴스",
-    description: "충주시 관련 뉴스를 자동 수집하고 AI가 요약합니다",
-    path: "/news",
+    icon: '📰',
+    title: '충주시 뉴스',
+    description: '충주시 관련 뉴스를 자동으로 수집하고 AI가 요약합니다',
+    path: '/news',
+    color: 'from-blue-500 to-blue-600'
   },
   {
-    icon: "📝",
-    title: "보도자료 생성기",
-    description: "GPT 기반 자동 보도자료 작성 시스템",
-    path: "/press-release",
+    icon: '📝',
+    title: '보도자료 생성기',
+    description: 'GPT 기반 자동 보도자료 작성 시스템',
+    path: '/press-release',
+    color: 'from-blue-600 to-blue-700'
   },
   {
-    icon: "⚖️",
-    title: "선거법 챗봇",
-    description: "선거법 관련 질의 응답을 빠르고 정확하게 지원합니다",
-    path: "/election-law",
-  },
+    icon: '⚖️',
+    title: '선거법 챗봇',
+    description: '대화형 선거법 질의응답 시스템',
+    path: '/election-law',
+    color: 'from-blue-700 to-blue-800'
+  }
 ];
 
 export default function Dashboard() {
-  const scrollToTools = () => {
-    const el = document.getElementById("tools");
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
   return (
-    <div className="space-y-10">
-      {/* Hero */}
-      <section className="hero-surface rounded-3xl p-8 sm:p-10">
-        <div className="max-w-3xl">
-          <p className="badge mb-5">CJ · Smart Admin</p>
+    <div className="space-y-8 animate-fadeIn">
+      {/* Header Section */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl shadow-xl p-12 text-center text-white">
+        <h1 className="text-4xl font-bold mb-3">충주시 AI 연구소</h1>
+        <p className="text-xl text-blue-100 mb-6">
+          인공지능으로 더 스마트한 행정서비스를 만들어갑니다
+        </p>
+        
+        <div className="inline-flex items-center gap-4 bg-white/10 backdrop-blur-md px-6 py-3 rounded-full">
+          <div className="flex gap-2">
+            <div className="w-8 h-8 bg-yellow-400 rounded-full flex items-center justify-center">
+              📰
+            </div>
+            <div className="w-8 h-8 bg-blue-400 rounded-full flex items-center justify-center">
+              📝
+            </div>
+            <div className="w-8 h-8 bg-green-400 rounded-full flex items-center justify-center">
+              ⚖️
+            </div>
+          </div>
+          <span className="text-white font-semibold">3가지 AI 도구 서비스</span>
+        </div>
+      </div>
 
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-            충주를 위한 AI 행정 서비스
-          </h1>
+      {/* Intro Section */}
+      <div className="bg-blue-50 rounded-2xl p-8 text-center border border-blue-100">
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">
+          AI 기반 스마트 업무도구
+        </h2>
+        <p className="text-gray-700 leading-relaxed max-w-3xl mx-auto">
+          충주시는 최신 인공지능 기술을 활용하여 공무원들의 업무 효율성을 높이고,
+          <br />
+          시민들에게 더 나은 행정서비스를 제공하기 위한 다양한 AI 도구들을 개발했습니다.
+        </p>
+      </div>
 
-          <p className="mt-4 text-base sm:text-lg text-white/75 whitespace-pre-line">
-            인공지능 기술을 활용한 스마트 행정 서비스로{"\n"}
-            더 빠르고 정확한 시민 서비스를 제공합니다.
-          </p>
+      {/* Tools Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {tools.map((tool, index) => (
+          <Link
+            key={index}
+            to={tool.path}
+            className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-2 border border-gray-100"
+          >
+            {/* Icon */}
+            <div className={`w-16 h-16 bg-gradient-to-br ${tool.color} rounded-2xl flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform shadow-md`}>
+              {tool.icon}
+            </div>
 
-          <div className="mt-7 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={scrollToTools}
-              className="btn-primary inline-flex items-center gap-2"
-            >
-              서비스 시작 <ArrowRight className="h-4 w-4" />
-            </button>
+            {/* Title */}
+            <h3 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
+              {tool.title}
+            </h3>
 
-            <p className="text-sm text-white/60">
-              아래 카드에서 원하는 서비스를 선택할 수 있습니다.
+            {/* Description */}
+            <p className="text-gray-600 mb-4 leading-relaxed">
+              {tool.description}
+            </p>
+
+            {/* Arrow */}
+            <div className="flex items-center text-blue-600 font-semibold group-hover:gap-2 transition-all">
+              <span>시작하기</span>
+              <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      {/* Contact Section */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl shadow-xl p-10 text-center text-white">
+        <h2 className="text-2xl font-bold mb-3">문의 및 지원</h2>
+        <p className="text-blue-100 mb-6">
+          AI 도구 사용에 대한 문의사항이나 기술 지원이 필요하시면 언제든지 연락해 주세요.
+        </p>
+        
+        <div className="flex flex-wrap justify-center gap-4">
+          <a
+            href="mailto:storm8787@korea.kr"
+            className="inline-flex items-center gap-2 bg-white text-blue-600 px-6 py-3 rounded-full font-semibold hover:bg-blue-50 transition-all hover:scale-105 shadow-md"
+          >
+            📧 이메일 문의
+          </a>
+          <a
+            href="tel:0438505312"
+            className="inline-flex items-center gap-2 bg-white text-blue-600 px-6 py-3 rounded-full font-semibold hover:bg-blue-50 transition-all hover:scale-105 shadow-md"
+          >
+            📞 전화 문의
+          </a>
+        </div>
+      </div>
+
+      {/* Features List */}
+      <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-100">
+        <h3 className="text-xl font-bold text-gray-900 mb-6 text-center">
+          💡 주요 특징
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <span className="text-2xl">🚀</span>
+            </div>
+            <h4 className="font-semibold text-gray-900 mb-2">빠른 처리</h4>
+            <p className="text-sm text-gray-600">
+              AI 기반 자동화로 업무 시간을 대폭 단축
+            </p>
+          </div>
+          <div className="text-center">
+            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <span className="text-2xl">🎯</span>
+            </div>
+            <h4 className="font-semibold text-gray-900 mb-2">높은 정확도</h4>
+            <p className="text-sm text-gray-600">
+              충주시 데이터 학습으로 맞춤형 결과 제공
+            </p>
+          </div>
+          <div className="text-center">
+            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <span className="text-2xl">💻</span>
+            </div>
+            <h4 className="font-semibold text-gray-900 mb-2">쉬운 사용</h4>
+            <p className="text-sm text-gray-600">
+              직관적인 인터페이스로 누구나 쉽게 사용
             </p>
           </div>
         </div>
-      </section>
-
-      {/* Tools Grid (카드형 대시보드 유지) */}
-      <section id="tools" className="scroll-mt-10">
-        <div className="mb-5">
-          <h2 className="text-xl sm:text-2xl font-bold text-white">
-            서비스 목록
-          </h2>
-          <p className="mt-1 text-sm text-white/60">
-            필요한 AI 업무 도구를 선택하여 바로 시작하세요.
-          </p>
-        </div>
-
-        <div className="grid gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {tools.map((tool) => (
-            <Link
-              key={tool.title}
-              to={tool.path}
-              className="tool-card group"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="icon-chip">{tool.icon}</div>
-                <div className="opacity-60 group-hover:opacity-100 transition-opacity">
-                  <ArrowRight className="h-5 w-5 text-white" />
-                </div>
-              </div>
-
-              <h3 className="mt-5 text-lg font-bold text-white">
-                {tool.title}
-              </h3>
-              <p className="mt-2 text-sm leading-relaxed text-white/70">
-                {tool.description}
-              </p>
-
-              <div className="mt-6 text-sm font-semibold text-white/80 group-hover:text-white">
-                바로 시작하기
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      {/* Contact (가로길이 짧음 해결: full-width 카드로) */}
-      <section className="contact-surface rounded-3xl p-8 sm:p-10 w-full">
-        <div className="flex flex-col lg:flex-row gap-8 lg:items-center lg:justify-between">
-          <div className="max-w-2xl">
-            <h2 className="text-2xl font-extrabold text-white">
-              문의 및 지원
-            </h2>
-            <p className="mt-3 text-white/70 leading-relaxed">
-              AI 도구 사용 중 문의사항이나 기술 지원이 필요하시면 아래 채널로 연락해 주세요.
-              업무 환경에 맞춰 빠르게 지원하겠습니다.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <a
-              href="mailto:storm8787@korea.kr"
-              className="btn-ghost"
-            >
-              이메일 문의
-            </a>
-            <a
-              href="tel:043-000-0000"
-              className="btn-ghost"
-            >
-              전화 문의
-            </a>
-          </div>
-        </div>
-      </section>
+      </div>
     </div>
   );
 }
