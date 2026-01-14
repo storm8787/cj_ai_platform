@@ -20,8 +20,7 @@ const services = [
     icon: '⚖️',
     title: '선거법 챗봇',
     description: '대화형 선거법 질의응답 시스템',
-    path: '/election-law',
-    badge: 'NEW'
+    path: '/election-law',    
   }
 ];
 
