@@ -60,10 +60,10 @@ export const electionLawApi = {
 
 // ===== 뉴스 API =====
 export const newsApi = {
-  // 뉴스 목록 조회
-  getList: () => api.get('/api/news/list'),
+  // 뉴스 목록 조회 (Gist에서)
+  getList: () => api.get('/api/news'),
   
-  // 뉴스 새로고침 트리거
+  // 뉴스 새로고침 (GitHub Actions 트리거)
   refresh: () => api.post('/api/news/refresh'),
   
   // AI 요약 생성
