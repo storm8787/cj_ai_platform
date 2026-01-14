@@ -1,0 +1,35 @@
+name: 충주시 뉴스 자동 스크랩
+
+on:
+  schedule:
+    - cron: '0 21 * * *'  # 매일 06시 KST
+    - cron: '0 3 * * *'   # 매일 12시 KST
+  
+  workflow_dispatch:  # 수동 실행 (프론트엔드에서 트리거)
+
+jobs:
+  scrape-news:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 코드 체크아웃
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Python 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: 📦 패키지 설치
+      run: |
+        pip install requests numpy openai
+    
+    - name: 🔍 뉴스 스크랩 실행
+      env:
+        NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+        NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        GIST_ID: ${{ secrets.GIST_ID }}
+      run: |
+        python news_scraper_api.py
