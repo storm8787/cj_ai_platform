@@ -4,27 +4,27 @@
 
 @layer base {
   body {
-    @apply bg-gradient-to-br from-blue-50 to-blue-100 text-gray-900;
+    @apply bg-slate-50 text-gray-900;
   }
 }
 
 @layer components {
   /* 버튼 스타일 */
   .btn-primary {
-    @apply px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg 
-           font-semibold shadow-md hover:from-blue-700 hover:to-blue-800 
+    @apply px-6 py-3 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg 
+           font-semibold shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40
            transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-secondary {
-    @apply px-6 py-3 bg-white text-blue-600 border-2 border-blue-600 rounded-lg 
-           font-semibold hover:bg-blue-50 transition-all duration-200;
+    @apply px-6 py-3 bg-white text-cyan-600 border-2 border-cyan-600 rounded-lg 
+           font-semibold hover:bg-cyan-50 transition-all duration-200;
   }
 
   /* 입력 필드 */
   .input-field {
     @apply px-4 py-2 border border-gray-300 rounded-lg 
-           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+           focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent
            disabled:bg-gray-100 disabled:cursor-not-allowed;
   }
 
@@ -40,6 +40,10 @@
   /* 뱃지 */
   .badge {
     @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold;
+  }
+
+  .badge-cyan {
+    @apply badge bg-cyan-100 text-cyan-700;
   }
 
   .badge-blue {
@@ -110,19 +114,31 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-blue-400 rounded-full;
+  @apply bg-cyan-400 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-blue-500;
+  @apply bg-cyan-500;
 }
 
 /* 텍스트 선택 색상 */
 ::selection {
-  @apply bg-blue-200 text-blue-900;
+  @apply bg-cyan-200 text-cyan-900;
 }
 
 /* 포커스 링 제거 (커스텀 스타일 사용) */
 *:focus {
   outline: none;
+}
+
+/* 다크 네이비 그라데이션 헬퍼 */
+.bg-navy-gradient {
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0f172a 100%);
+}
+
+.text-gradient-cyan {
+  background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
