@@ -3,7 +3,7 @@ import axios from 'axios';
 // Azure Container Apps 백엔드 URL
 // 로컬 개발: http://localhost:8000
 // 프로덕션: Azure Container Apps URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://cj-ai-backend.ashysky-a846c5bf.koreacentral.azurecontainerapps.io';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -60,14 +60,12 @@ export const electionLawApi = {
 
 // ===== 뉴스 API =====
 export const newsApi = {
-  // 뉴스 목록 조회 (Gist에서)
-  getList: () => api.get('/api/news'),
+  // /api/news → /api/news/list 로 수정
+  getList: () => api.get('/api/news/list'),
   
-  // 뉴스 새로고침 (GitHub Actions 트리거)
   refresh: () => api.post('/api/news/refresh'),
   
-  // AI 요약 생성
-  summarize: (data) => api.post('/api/news/summarize', data),
+  summarize: (data) => api.post('/api/news/summarize'),
 };
 
 export default api;
