@@ -76,6 +76,7 @@ export default function PressRelease() {
         충주시의 8,000여 건 보도자료를 학습한 AI가 충주시 스타일의 보도자료를 자동 생성합니다.
       </p>
 
+
       {/* 시스템 정보 */}
       {vectorstoreStatus && (
         <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
