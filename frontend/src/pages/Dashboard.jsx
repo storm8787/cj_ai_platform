@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Newspaper, FileText, Scale, ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 
 const services = [
   {
@@ -32,10 +32,18 @@ const stats = [
 ];
 
 export default function Dashboard() {
+  // 스크롤 함수
+  const scrollToServices = () => {
+    document.getElementById('services')?.scrollIntoView({ 
+      behavior: 'smooth',
+      block: 'start'
+    });
+  };
+
   return (
     <div className="min-h-screen">
-      {/* Hero Section - Dark Navy Background */}
-      <section className="relative bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 text-white py-20 -mt-8 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8">
+      {/* Hero Section - Darker Navy Background */}
+      <section className="relative bg-slate-950 text-white py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto text-center">
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-cyan-500/10 border border-cyan-500/20 rounded-full mb-6">
@@ -57,22 +65,16 @@ export default function Dashboard() {
             더 빠르고 정확한 시민 서비스를 제공합니다.
           </p>
 
-          {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-            <Link
-              to="/news"
+          {/* CTA Button - Single Button */}
+          <div className="flex justify-center mb-16">
+            <button
+              onClick={scrollToServices}
               className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold rounded-lg transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40"
             >
               <Sparkles size={20} />
-              서비스 시작하기
+              서비스 알아보기
               <ArrowRight size={20} />
-            </Link>
-            <a
-              href="#services"
-              className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-transparent border-2 border-slate-600 hover:border-cyan-500 text-white font-semibold rounded-lg transition-all"
-            >
-              자세히 알아보기
-            </a>
+            </button>
           </div>
 
           {/* Stats */}
@@ -89,9 +91,6 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
-
-        {/* Decorative Gradient */}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-50 via-transparent to-transparent pointer-events-none"></div>
       </section>
 
       {/* Services Section - Light Background */}
@@ -189,7 +188,7 @@ export default function Dashboard() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-16 bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 text-white -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8">
+      <section className="py-16 bg-slate-950 text-white px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto text-center">
           <h2 className="text-3xl sm:text-4xl font-bold mb-4">
             지금 바로 시작하세요
@@ -206,7 +205,7 @@ export default function Dashboard() {
             </a>
             <a
               href="tel:0438505312"
-              className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-transparent border-2 border-slate-600 hover:border-cyan-500 text-white font-semibold rounded-lg transition-all"
+              className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-transparent border-2 border-slate-700 hover:border-cyan-500 text-white font-semibold rounded-lg transition-all"
             >
               📞 전화 문의
             </a>
