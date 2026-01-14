@@ -119,7 +119,7 @@ function NewsViewer() {
         <div className="flex items-center gap-3">
           <Newspaper className="text-green-600" size={28} />
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">충주시 뉴스</h2>
+            <h2 className="text-xl font-semibold text-white-900">충주시 뉴스</h2>
             <p className="text-sm text-gray-500">
               {newsData?.last_updated && `마지막 업데이트: ${newsData.last_updated}`}
               {newsData?.total_count > 0 && ` · 총 ${newsData.total_count}건`}
