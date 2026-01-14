@@ -94,7 +94,7 @@ function ElectionLaw() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Scale className="text-purple-600" size={24} />
-          <h2 className="text-xl font-semibold text-gray-900">선거법 챗봇</h2>
+          <h2 className="text-xl font-semibold text-white-900">선거법 챗봇</h2>
         </div>
         
         {/* 검색 대상 선택 */}
