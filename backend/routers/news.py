@@ -31,9 +31,7 @@ class NewsResponse(BaseModel):
 # ============================================
 # 뉴스 목록 조회 (Gist에서)
 # ============================================
-
-@router.get("", response_model=NewsResponse)
-@router.get("/", response_model=NewsResponse)
+@router.get("/list", response_model=NewsResponse)
 async def get_news_list():
     """
     GitHub Gist에서 뉴스 목록 조회
