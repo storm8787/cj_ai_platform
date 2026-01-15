@@ -70,22 +70,22 @@ export default function PressRelease() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto">
-      <h1 className="text-3xl font-bold mb-2 text_cyan-100">📰 보도자료 생성기</h1>
-      <p className="text-cyan-100/80 mb-6">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <h1 className="text-2xl font-bold mb-2 text-white">📰 보도자료 생성기</h1>
+      <p className="text-slate-400 mb-6">
         충주시의 8,000여 건 보도자료를 학습한 AI가 충주시 스타일의 보도자료를 자동 생성합니다.
       </p>
 
 
       {/* 시스템 정보 */}
       {vectorstoreStatus && (
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <h3 className="font-semibold text-blue-900 mb-2">🔧 시스템 정보</h3>
-          <div className="text-sm text-blue-800 space-y-1">
+        <div className="mb-6 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
+          <h3 className="font-semibold text-cyan-300 mb-2">🔧 시스템 정보</h3>
+          <div className="text-sm text-slate-300 space-y-1">
             <div>
               • AI 검색: {vectorstoreStatus.loaded ? 
-                <span className="text-green-600 font-semibold">✅ 활성화</span> : 
-                <span className="text-orange-600">⚠️ 비활성화 (기본 검색 사용)</span>
+                <span className="text-green-400 font-semibold">✅ 활성화</span> : 
+                <span className="text-orange-400">⚠️ 비활성화 (기본 검색 사용)</span>
               }
             </div>
             {vectorstoreStatus.loaded && (
@@ -117,7 +117,7 @@ export default function PressRelease() {
                 value={formData.title}
                 onChange={handleChange}
                 required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 placeholder="제목을 입력하세요"
               />
               <p className="text-xs text-gray-500 mt-1">
@@ -135,7 +135,7 @@ export default function PressRelease() {
                 name="department"
                 value={formData.department}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 placeholder="예: 자치행정과"
               />
               <p className="text-xs text-gray-500 mt-1">
@@ -153,7 +153,7 @@ export default function PressRelease() {
                 name="manager"
                 value={formData.manager}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 placeholder="예: 김태균"
               />
             </div>
@@ -167,7 +167,7 @@ export default function PressRelease() {
                 name="paragraphs"
                 value={formData.paragraphs}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500"
               >
                 <option value="4개이상">4개 이상</option>
                 <option value="3개">3개</option>
@@ -185,7 +185,7 @@ export default function PressRelease() {
                 name="length"
                 value={formData.length}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500"
               >
                 <option value="길게">길게 (~1,300자)</option>
                 <option value="중간">중간 (~1,100자)</option>
@@ -204,7 +204,7 @@ export default function PressRelease() {
                 onChange={handleChange}
                 required
                 rows={6}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 placeholder="한 줄에 하나씩 입력하세요&#10;예:&#10;2026년 예산 확정&#10;전년 대비 5% 증가&#10;복지 분야 중점 투자"
               />
             </div>
@@ -219,7 +219,7 @@ export default function PressRelease() {
                 value={formData.additional}
                 onChange={handleChange}
                 rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 placeholder="추가 요청사항을 입력하세요 (선택)"
               />
             </div>
@@ -231,7 +231,7 @@ export default function PressRelease() {
               className={`w-full py-3 px-4 rounded-md text-white font-semibold ${
                 loading 
                   ? 'bg-gray-400 cursor-not-allowed' 
-                  : 'bg-blue-600 hover:bg-blue-700'
+                  : 'bg-cyan-600 hover:bg-cyan-700'
               }`}
             >
               {loading ? '생성 중...' : '🚀 보도자료 생성하기'}
@@ -261,7 +261,7 @@ export default function PressRelease() {
 
           {loading && (
             <div className="flex flex-col items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-600 mb-4"></div>
               <p className="text-gray-600">🔍 유사 문서 검색 중...</p>
               <p className="text-gray-600 mt-2">✍️ AI가 보도자료를 작성하고 있습니다...</p>
               <p className="text-sm text-gray-500 mt-2">최대 1분 정도 소요됩니다</p>
@@ -297,7 +297,7 @@ export default function PressRelease() {
                   value={result}
                   readOnly
                   rows={20}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono text-sm"
                 />
               </div>
 
@@ -350,7 +350,7 @@ export default function PressRelease() {
                       <div className="mt-2 space-y-1 text-sm">
                         <div>
                           <span className="text-gray-600">유사도 점수:</span>
-                          <span className="ml-2 font-semibold text-blue-600">
+                          <span className="ml-2 font-semibold text-cyan-600">
                             {(ref.similarity * 100).toFixed(2)}%
                           </span>
                         </div>
@@ -395,9 +395,9 @@ export default function PressRelease() {
       )}
 
       {/* 안내 정보 */}
-      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h3 className="font-semibold text-blue-900 mb-2">💡 사용 팁</h3>
-        <ul className="text-sm text-blue-800 space-y-1">
+      <div className="mt-6 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-4">
+        <h3 className="font-semibold text-cyan-300 mb-2">💡 사용 팁</h3>
+        <ul className="text-sm text-slate-300 space-y-1">
           <li>• 제목은 참고용이며, AI가 내용에 맞게 새로 작성합니다</li>
           <li>• 담당자 인용문은 "[이름] [부서]장" 형식으로 자동 생성됩니다 (예: 김태균 자치행정과장)</li>
           <li>• 문체는 보도자료 스타일의 간접화법을 사용합니다 (~했다, ~라고 밝혔다)</li>
