@@ -22,7 +22,7 @@ const services = [
     title: '공적조서 생성기',
     description: 'GPT가 공무원 공적조서를 자동으로 작성합니다',
     path: '/merit-report',
-    badge: 'NEW'
+    badge: null
   },
   // 두 번째 줄
   {
@@ -30,14 +30,14 @@ const services = [
     title: 'AI 통계분석 챗봇',
     description: '엑셀 데이터를 업로드하고 자연어로 분석하세요',
     path: '/data-analysis',
-    badge: 'NEW'
+    badge: null
   },
   {
     icon: '🌐',
     title: '다국어 번역기',
     description: 'HWPX 문서를 DeepL + GPT로 고품질 번역',
     path: '/translator',
-    badge: 'NEW'
+    badge: null
   },
   {
     icon: '⚖️',
