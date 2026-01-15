@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from config import settings
 from routers import press_release, election_law, news, health
+from routers import merit_report, data_analysis, translator
 
 
 @asynccontextmanager
@@ -42,6 +43,9 @@ app.include_router(health.router, prefix="/api", tags=["Health"])
 app.include_router(press_release.router, prefix="/api/press-release", tags=["Press Release"])
 app.include_router(election_law.router, prefix="/api/election-law", tags=["Election Law"])
 app.include_router(news.router, prefix="/api/news", tags=["News"])
+app.include_router(merit_report.router, prefix="/api/merit-report", tags=["공적조서"])
+app.include_router(data_analysis.router, prefix="/api/data-analysis", tags=["통계분석"])
+app.include_router(translator.router, prefix="/api/translator", tags=["번역기"])
 
 
 @app.get("/")
