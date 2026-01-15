@@ -21,3 +21,11 @@ pydantic-settings==2.1.0
 
 # Async
 aiohttp==3.9.3
+
+deepl>=1.16.0
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-experimental>=0.0.47
+lxml>=5.0.0
+pyarrow>=14.0.0
+```
