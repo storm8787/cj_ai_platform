@@ -228,7 +228,7 @@ export default function PressRelease() {
             <button
               type="submit"
               disabled={loading}
-              className={`w-full py-3 px-4 rounded-md text-white font-semibold ${
+              className={`w-full py-3 px-4 rounded-lg text-white font-semibold flex items-center justify-center gap-2 ${
                 loading 
                   ? 'bg-gray-400 cursor-not-allowed' 
                   : 'bg-cyan-600 hover:bg-cyan-700'
