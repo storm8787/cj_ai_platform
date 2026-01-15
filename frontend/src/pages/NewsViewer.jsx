@@ -22,16 +22,26 @@ function NewsViewer() {
   const loadNews = async () => {
     setLoading(true);
     setError('');
-    
-    try {
-      const response = await newsApi.getList();
-      setNewsData(response.data);
-    } catch (err) {
-      console.error('뉴스 로드 실패:', err);
-      setError('뉴스를 불러오는데 실패했습니다.');
-    } finally {
-      setLoading(false);
+  
+    // 최대 3번 재시도 (콜드스타트 대응)
+    for (let i = 0; i < 3; i++) {
+      try {
+        const response = await newsApi.getList();
+        setNewsData(response.data);
+        setLoading(false);
+        return; // 성공하면 종료
+      } catch (err) {
+        console.log(`뉴스 로드 시도 ${i + 1}/3 실패`);
+        if (i < 2) {
+          await new Promise(r => setTimeout(r, 2000)); // 2초 대기 후 재시도
+        }
+      }
     }
+  
+    // 3번 다 실패하면
+    console.error('뉴스 로드 실패');
+    setError('뉴스를 불러오는데 실패했습니다.');
+    setLoading(false);
   };
 
   // 뉴스 새로고침 (GitHub Actions 트리거)
