@@ -3,20 +3,24 @@ Azure Container Apps 백엔드 설정
 """
 import os
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
     """애플리케이션 설정"""
     
-    # API 키
+    # OpenAI API
     OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    
+    # DeepL API (번역기용)
+    DEEPL_API_KEY: str = ""
     
     # Supabase
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
     
-    # GitHub (뉴스 새로고침용)
+    # GitHub (뉴스 관련)
     GITHUB_TOKEN: str = ""
     GIST_ID: str = ""
     GITHUB_REPO: str = ""
@@ -28,8 +32,7 @@ class Settings(BaseSettings):
     VECTORSTORE_PATH: str = "/app/data/vectorstores"
     ELECTION_VECTORSTORE_PATH: str = "/app/data/election_law/vectorstores"
     
-    # OpenAI 설정
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    # 임베딩 모델
     EMBEDDING_MODEL: str = "jhgan/ko-sroberta-multitask"
     
     @property
