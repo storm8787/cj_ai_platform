@@ -1,13 +1,12 @@
 import axios from 'axios';
 
-// Azure Container Apps 백엔드 URL
-// 로컬 개발: http://localhost:8000
-// 프로덕션: Azure Container Apps URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://cj-ai-backend.ashysky-a846c5bf.koreacentral.azurecontainerapps.io';
+// API 베이스 URL
+const API_BASE_URL = import.meta.env.VITE_API_URL 
+  || 'https://cj-ai-backend.ashysky-a846c5bf.koreacentral.azurecontainerapps.io';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 60000, // 60초 타임아웃 (AI 응답 대기)
+  timeout: 120000, // 120초 타임아웃 (번역 등 긴 작업용)
   headers: {
     'Content-Type': 'application/json',
   },
@@ -34,38 +33,49 @@ api.interceptors.response.use(
 // ===== 헬스 체크 =====
 export const checkHealth = () => api.get('/api/health');
 
+// ===== 뉴스 API =====
+export const newsApi = {
+  getList: () => api.get('/api/news/list'),
+  refresh: () => api.post('/api/news/refresh'),
+  summarize: (data) => api.post('/api/news/summarize', data),
+};
+
 // ===== 보도자료 API =====
 export const pressReleaseApi = {
-  // 유사 문서 검색
   searchSimilar: (data) => api.post('/api/press-release/search-similar', data),
-  
-  // 보도자료 생성
   generate: (data) => api.post('/api/press-release/generate', data),
-  
-  // 벡터스토어 상태
   getStatus: () => api.get('/api/press-release/status'),
 };
 
 // ===== 선거법 챗봇 API =====
 export const electionLawApi = {
-  // 질문 답변
   askQuestion: (data) => api.post('/api/election-law/ask', data),
-  
-  // 검색 대상 목록
   getTargets: () => api.get('/api/election-law/targets'),
-  
-  // 벡터스토어 상태
   getStatus: () => api.get('/api/election-law/status'),
 };
 
-// ===== 뉴스 API =====
-export const newsApi = {
-  // /api/news → /api/news/list 로 수정
-  getList: () => api.get('/api/news/list'),
-  
-  refresh: () => api.post('/api/news/refresh'),
-  
-  summarize: (data) => api.post('/api/news/summarize'),
+// ===== 공적조서 생성기 API =====
+export const meritReportApi = {
+  generate: (data) => api.post('/api/merit-report/generate', data),
+};
+
+// ===== AI 통계분석 챗봇 API =====
+export const dataAnalysisApi = {
+  upload: (formData) => api.post('/api/data-analysis/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  analyze: (data) => api.post('/api/data-analysis/analyze', data),
+  deleteFile: (fileId) => api.delete(`/api/data-analysis/file/${fileId}`),
+};
+
+// ===== 다국어 번역기 API =====
+export const translatorApi = {
+  getLanguages: () => api.get('/api/translator/languages'),
+  translate: (formData) => api.post('/api/translator/translate', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    responseType: 'arraybuffer', // 파일 다운로드용
+    timeout: 300000, // 5분 타임아웃
+  }),
 };
 
 export default api;
