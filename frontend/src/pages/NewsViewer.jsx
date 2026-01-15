@@ -58,7 +58,7 @@ function NewsViewer() {
 
   // AI 요약 생성
   const handleSummarize = async (news) => {
-    if (summaries[news.id]) return; // 이미 요약이 있으면 스킵
+    if (summaries[news.id]) return;
     
     setSummaryLoading(news.id);
     
@@ -98,8 +98,10 @@ function NewsViewer() {
   // 로딩 상태
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 size={32} className="animate-spin text-primary-600" />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 size={32} className="animate-spin text-cyan-400" />
+        </div>
       </div>
     );
   }
@@ -113,226 +115,231 @@ function NewsViewer() {
   }
 
   return (
-    <div className="space-y-6 animate-fadeIn">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3">
-          <Newspaper className="text-green-600" size={28} />
-          <div>
-            <h2 className="text-xl font-semibold text-white-900">충주시 뉴스</h2>
-            <p className="text-sm text-white-500">
-              {newsData?.last_updated && `마지막 업데이트: ${newsData.last_updated}`}
-              {newsData?.total_count > 0 && ` · 총 ${newsData.total_count}건`}
-            </p>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="space-y-6 animate-fadeIn">
+        {/* 헤더 */}
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <Newspaper className="text-cyan-400" size={28} />
+            <div>
+              <h1 className="text-2xl font-bold text-white">충주시 뉴스</h1>
+              <p className="text-sm text-slate-400">
+                {newsData?.last_updated && `마지막 업데이트: ${newsData.last_updated}`}
+                {newsData?.total_count > 0 && ` · 총 ${newsData.total_count}건`}
+              </p>
+            </div>
           </div>
-        </div>
-        
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="btn-secondary flex items-center gap-2"
-        >
-          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
-          {refreshing ? '업데이트 중...' : '뉴스 업데이트'}
-        </button>
-      </div>
-
-      {/* 에러 메시지 */}
-      {error && (
-        <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* 뉴스 없음 */}
-      {newsList.length === 0 && !loading && (
-        <div className="text-center py-12">
-          <Newspaper size={48} className="mx-auto text-gray-300 mb-4" />
-          <p className="text-gray-500">수집된 뉴스가 없습니다.</p>
-          <button onClick={handleRefresh} className="mt-4 btn-primary">
-            뉴스 업데이트
+          
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+            {refreshing ? '업데이트 중...' : '뉴스 업데이트'}
           </button>
         </div>
-      )}
 
-      {/* 뉴스 그리드 (행 단위 처리) */}
-      {newsRows.map((row, rowIndex) => {
-        const rowIds = row.map(n => n.id);
-        const selectedInRow = rowIds.includes(selectedNewsId);
-        const selectedNews = selectedInRow ? row.find(n => n.id === selectedNewsId) : null;
+        {/* 에러 메시지 */}
+        {error && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
 
-        return (
-          <div key={rowIndex}>
-            {/* 카드 행 */}
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {row.map((news) => {
-                const isSelected = news.id === selectedNewsId;
-                const title = decodeHtml(news.title);
-                const press = decodeHtml(news.press);
-                const summary = decodeHtml(news.summary);
+        {/* 뉴스 없음 */}
+        {newsList.length === 0 && !loading && (
+          <div className="text-center py-12">
+            <Newspaper size={48} className="mx-auto text-slate-600 mb-4" />
+            <p className="text-slate-400">수집된 뉴스가 없습니다.</p>
+            <button 
+              onClick={handleRefresh} 
+              className="mt-4 px-6 py-2 bg-cyan-500 hover:bg-cyan-600 text-white font-medium rounded-lg transition-colors"
+            >
+              뉴스 업데이트
+            </button>
+          </div>
+        )}
 
-                return (
-                  <div
-                    key={news.id}
-                    className={`
-                      card cursor-pointer transition-all duration-200
-                      ${isSelected 
-                        ? 'ring-2 ring-green-500 bg-green-50' 
-                        : 'hover:shadow-md hover:border-green-200'}
-                    `}
-                    onClick={() => handleCardClick(news.id)}
-                  >
-                    {/* 제목 */}
-                    <h3 className="font-semibold text-gray-900 line-clamp-2 mb-2 min-h-[3rem]">
-                      {isSelected && <span className="text-green-600 mr-1">▼</span>}
-                      {title}
+        {/* 뉴스 그리드 (행 단위 처리) */}
+        {newsRows.map((row, rowIndex) => {
+          const rowIds = row.map(n => n.id);
+          const selectedInRow = rowIds.includes(selectedNewsId);
+          const selectedNews = selectedInRow ? row.find(n => n.id === selectedNewsId) : null;
+
+          return (
+            <div key={rowIndex}>
+              {/* 카드 행 */}
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {row.map((news) => {
+                  const isSelected = news.id === selectedNewsId;
+                  const title = decodeHtml(news.title);
+                  const press = decodeHtml(news.press);
+                  const summary = decodeHtml(news.summary);
+
+                  return (
+                    <div
+                      key={news.id}
+                      className={`
+                        bg-white rounded-xl p-5 cursor-pointer transition-all duration-200 border-2
+                        ${isSelected 
+                          ? 'border-cyan-400 bg-cyan-50 shadow-lg shadow-cyan-500/10' 
+                          : 'border-slate-200 hover:shadow-md hover:border-cyan-200'}
+                      `}
+                      onClick={() => handleCardClick(news.id)}
+                    >
+                      {/* 제목 */}
+                      <h3 className="font-semibold text-gray-900 line-clamp-2 mb-2 min-h-[3rem]">
+                        {isSelected && <span className="text-cyan-600 mr-1">▼</span>}
+                        {title}
+                      </h3>
+                      
+                      {/* 메타 정보 */}
+                      <div className="flex items-center gap-3 text-sm text-gray-500 mb-2">
+                        <span className="flex items-center gap-1">
+                          <Building2 size={14} />
+                          {press}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Calendar size={14} />
+                          {news.date}
+                        </span>
+                      </div>
+
+                      {/* 요약 미리보기 */}
+                      <p className="text-sm text-gray-600 line-clamp-3">
+                        {summary}
+                      </p>
+
+                      {/* 버튼 */}
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        {isSelected ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedNewsId(null);
+                            }}
+                            className="w-full py-2 text-sm text-gray-600 hover:text-gray-800 
+                                     flex items-center justify-center gap-1"
+                          >
+                            <X size={16} />
+                            닫기
+                          </button>
+                        ) : (
+                          <button
+                            className="w-full py-2 text-sm text-cyan-600 hover:text-cyan-700 
+                                     flex items-center justify-center gap-1"
+                          >
+                            <ChevronDown size={16} />
+                            자세히 보기
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 선택된 뉴스 상세 */}
+              {selectedNews && (
+                <div className="mt-4 p-6 bg-white rounded-xl border-2 border-cyan-300 shadow-lg animate-fadeIn">
+                  {/* 상세 헤더 */}
+                  <div className="flex items-start justify-between mb-4">
+                    <h3 className="text-xl font-bold text-gray-900 flex-1 pr-4">
+                      📰 {decodeHtml(selectedNews.title)}
                     </h3>
-                    
-                    {/* 메타 정보 */}
-                    <div className="flex items-center gap-3 text-sm text-gray-500 mb-2">
-                      <span className="flex items-center gap-1">
-                        <Building2 size={14} />
-                        {press}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar size={14} />
-                        {news.date}
-                      </span>
-                    </div>
-
-                    {/* 요약 미리보기 */}
-                    <p className="text-sm text-gray-600 line-clamp-3">
-                      {summary}
-                    </p>
-
-                    {/* 버튼 */}
-                    <div className="mt-3 pt-3 border-t border-gray-100">
-                      {isSelected ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedNewsId(null);
-                          }}
-                          className="w-full py-2 text-sm text-gray-600 hover:text-gray-800 
-                                   flex items-center justify-center gap-1"
-                        >
-                          <X size={16} />
-                          닫기
-                        </button>
-                      ) : (
-                        <button
-                          className="w-full py-2 text-sm text-green-600 hover:text-green-700 
-                                   flex items-center justify-center gap-1"
-                        >
-                          <ChevronDown size={16} />
-                          자세히 보기
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      onClick={() => setSelectedNewsId(null)}
+                      className="p-1 hover:bg-gray-100 rounded"
+                    >
+                      <X size={20} className="text-gray-400" />
+                    </button>
                   </div>
-                );
-              })}
-            </div>
 
-            {/* 선택된 뉴스 상세 (해당 행 아래에 표시) */}
-            {selectedNews && (
-              <div className="mt-4 p-6 bg-white rounded-xl border-2 border-green-200 shadow-lg animate-fadeIn">
-                {/* 상세 헤더 */}
-                <div className="flex items-start justify-between mb-4">
-                  <h3 className="text-xl font-bold text-gray-900 flex-1 pr-4">
-                    📰 {decodeHtml(selectedNews.title)}
-                  </h3>
-                  <button
-                    onClick={() => setSelectedNewsId(null)}
-                    className="p-1 hover:bg-gray-100 rounded"
-                  >
-                    <X size={20} className="text-gray-400" />
-                  </button>
-                </div>
+                  {/* 메타 정보 */}
+                  <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
+                    <span className="flex items-center gap-1">
+                      <Building2 size={16} />
+                      {decodeHtml(selectedNews.press)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar size={16} />
+                      {selectedNews.date}
+                    </span>
+                  </div>
 
-                {/* 메타 정보 */}
-                <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
-                  <span className="flex items-center gap-1">
-                    <Building2 size={16} />
-                    {decodeHtml(selectedNews.press)}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Calendar size={16} />
-                    {selectedNews.date}
-                  </span>
-                </div>
+                  {/* AI 요약 버튼 & 결과 */}
+                  <div className="mb-4">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSummarize(selectedNews);
+                      }}
+                      disabled={summaryLoading === selectedNews.id || summaries[selectedNews.id]}
+                      className={`
+                        flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium
+                        transition-colors duration-200
+                        ${summaries[selectedNews.id]
+                          ? 'bg-cyan-100 text-cyan-700'
+                          : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}
+                      `}
+                    >
+                      {summaryLoading === selectedNews.id ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          AI 요약 생성 중...
+                        </>
+                      ) : summaries[selectedNews.id] ? (
+                        <>
+                          <Sparkles size={16} />
+                          AI 요약 완료
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={16} />
+                          AI 요약 생성
+                        </>
+                      )}
+                    </button>
 
-                {/* AI 요약 버튼 & 결과 */}
-                <div className="mb-4">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSummarize(selectedNews);
-                    }}
-                    disabled={summaryLoading === selectedNews.id || summaries[selectedNews.id]}
-                    className={`
-                      flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium
-                      transition-colors duration-200
-                      ${summaries[selectedNews.id]
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}
-                    `}
-                  >
-                    {summaryLoading === selectedNews.id ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        AI 요약 생성 중...
-                      </>
-                    ) : summaries[selectedNews.id] ? (
-                      <>
-                        <Sparkles size={16} />
-                        AI 요약 완료
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        AI 요약 생성
-                      </>
+                    {/* AI 요약 결과 */}
+                    {summaries[selectedNews.id] && (
+                      <div className="mt-3 p-4 bg-purple-50 rounded-lg border border-purple-100">
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                          {summaries[selectedNews.id]}
+                        </p>
+                      </div>
                     )}
-                  </button>
+                  </div>
 
-                  {/* AI 요약 결과 */}
-                  {summaries[selectedNews.id] && (
-                    <div className="mt-3 p-4 bg-purple-50 rounded-lg border border-purple-100">
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-                        {summaries[selectedNews.id]}
+                  {/* 본문 */}
+                  <div className="mb-4">
+                    <h4 className="font-semibold text-gray-900 mb-2">📄 본문</h4>
+                    <div className="p-4 bg-gray-50 rounded-lg max-h-64 overflow-y-auto">
+                      <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                        {decodeHtml(selectedNews.content)}
                       </p>
                     </div>
-                  )}
-                </div>
-
-                {/* 본문 */}
-                <div className="mb-4">
-                  <h4 className="font-semibold text-gray-900 mb-2">📄 본문</h4>
-                  <div className="p-4 bg-gray-50 rounded-lg max-h-64 overflow-y-auto">
-                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                      {decodeHtml(selectedNews.content)}
-                    </p>
                   </div>
-                </div>
 
-                {/* 원문 링크 */}
-                <a
-                  href={selectedNews.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 
-                           text-sm font-medium"
-                >
-                  <ExternalLink size={16} />
-                  원문 보기
-                </a>
-              </div>
-            )}
-          </div>
-        );
-      })}
+                  {/* 원문 링크 */}
+                  <a
+                    href={selectedNews.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center gap-2 text-cyan-600 hover:text-cyan-700 
+                             text-sm font-medium"
+                  >
+                    <ExternalLink size={16} />
+                    원문 보기
+                  </a>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
