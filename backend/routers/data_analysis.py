@@ -37,6 +37,65 @@ class AnalyzeResponse(BaseModel):
     success: bool
 
 
+def safe_preview(df: pd.DataFrame, rows: int = 10) -> List[Dict[str, Any]]:
+    """
+    미리보기 데이터 생성 - 모든 키와 값을 문자열로 변환
+    """
+    # 컬럼명을 문자열로 변환
+    df_copy = df.head(rows).copy()
+    df_copy.columns = df_copy.columns.astype(str)
+    
+    # 모든 값을 문자열로 변환 (None, NaN 처리)
+    preview = []
+    for _, row in df_copy.iterrows():
+        row_dict = {}
+        for col in df_copy.columns:
+            val = row[col]
+            if pd.isna(val):
+                row_dict[str(col)] = ""
+            else:
+                row_dict[str(col)] = str(val)
+        preview.append(row_dict)
+    
+    return preview
+
+
+def read_excel_file(contents: bytes, filename: str) -> pd.DataFrame:
+    """
+    엑셀 파일 읽기 - xls/xlsx 모두 지원
+    """
+    try:
+        if filename.endswith('.csv'):
+            # CSV 파일 - 여러 인코딩 시도
+            for encoding in ['utf-8', 'cp949', 'euc-kr', 'utf-8-sig']:
+                try:
+                    return pd.read_csv(io.BytesIO(contents), encoding=encoding)
+                except UnicodeDecodeError:
+                    continue
+            raise ValueError("CSV 파일 인코딩을 인식할 수 없습니다.")
+        
+        elif filename.endswith('.xls'):
+            # .xls 파일 - xlrd 대신 openpyxl 엔진 시도, 실패시 xlrd
+            try:
+                # 먼저 openpyxl로 시도 (일부 .xls도 읽을 수 있음)
+                return pd.read_excel(io.BytesIO(contents), engine='openpyxl')
+            except Exception:
+                try:
+                    # xlrd로 시도
+                    return pd.read_excel(io.BytesIO(contents), engine='xlrd')
+                except ImportError:
+                    raise ValueError(
+                        ".xls 파일은 지원이 제한됩니다. "
+                        ".xlsx 또는 .csv로 변환 후 업로드해주세요."
+                    )
+        else:
+            # .xlsx 파일 - openpyxl 사용
+            return pd.read_excel(io.BytesIO(contents), engine='openpyxl')
+            
+    except Exception as e:
+        raise ValueError(f"파일 읽기 실패: {str(e)}")
+
+
 @router.post("/upload", response_model=FileInfoResponse)
 async def upload_file(file: UploadFile = File(...)):
     """
@@ -49,10 +108,11 @@ async def upload_file(file: UploadFile = File(...)):
         # 파일 읽기
         contents = await file.read()
         
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(io.BytesIO(contents))
-        else:
-            df = pd.read_excel(io.BytesIO(contents))
+        # 엑셀/CSV 파일 읽기
+        df = read_excel_file(contents, file.filename)
+        
+        # 컬럼명이 숫자인 경우 문자열로 변환 (Pydantic 호환)
+        df.columns = df.columns.astype(str)
         
         # 임시 파일로 저장
         file_id = str(uuid.uuid4())[:8]
@@ -65,14 +125,14 @@ async def upload_file(file: UploadFile = File(...)):
         for i, col in enumerate(df.columns, 1):
             columns.append({
                 "index": i,
-                "name": col,
+                "name": str(col),  # 문자열로 변환
                 "dtype": str(df[col].dtype),
                 "null_count": int(df[col].isnull().sum()),
                 "unique_count": int(df[col].nunique())
             })
         
-        # 미리보기 (첫 10행)
-        preview = df.head(10).fillna("").to_dict(orient='records')
+        # 미리보기 (첫 10행) - 안전한 변환 사용
+        preview = safe_preview(df, 10)
         
         return FileInfoResponse(
             file_id=file_id,
@@ -83,6 +143,8 @@ async def upload_file(file: UploadFile = File(...)):
             preview=preview
         )
         
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 처리 실패: {str(e)}")
 
