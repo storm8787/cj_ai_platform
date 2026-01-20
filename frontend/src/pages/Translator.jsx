@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Languages, Upload, Download, Loader2, FileText, Settings } from 'lucide-react';
 import { translatorApi } from '../services/api';
 
@@ -10,6 +10,10 @@ function Translator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+
+  const fileInputRef = useRef(null);
+  const dropZoneRef = useRef(null);
 
   // 지원 언어 로드
   useEffect(() => {
@@ -49,18 +53,61 @@ function Translator() {
     }
   };
 
-  // 파일 선택
+  // 드래그 이벤트 핸들러
+  const handleDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (dropZoneRef.current && !dropZoneRef.current.contains(e.relatedTarget)) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) {
+      validateAndSetFile(droppedFile);
+    }
+  }, []);
+
+  // 파일 유효성 검사 및 설정
+  const validateAndSetFile = (selectedFile) => {
+    if (!selectedFile.name.endsWith('.hwpx')) {
+      setError('HWPX 파일만 지원합니다.');
+      setFile(null);
+      return;
+    }
+    
+    // 파일 크기 제한 (50MB)
+    if (selectedFile.size > 50 * 1024 * 1024) {
+      setError('파일 크기는 50MB 이하만 가능합니다.');
+      return;
+    }
+    
+    setFile(selectedFile);
+    setError('');
+    setSuccess('');
+  };
+
+  // 파일 선택 (input 이벤트)
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
-      if (!selectedFile.name.endsWith('.hwpx')) {
-        setError('HWPX 파일만 지원합니다.');
-        setFile(null);
-        return;
-      }
-      setFile(selectedFile);
-      setError('');
-      setSuccess('');
+      validateAndSetFile(selectedFile);
     }
   };
 
@@ -121,46 +168,60 @@ function Translator() {
       </div>
 
       <div className="bg-white rounded-xl shadow-lg p-8">
-        {/* 파일 업로드 */}
+        {/* 파일 업로드 - 드래그앤드롭 지원 */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
             📄 HWPX 파일 선택
           </label>
           
-          <label className="block">
-            <div className={`
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".hwpx"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+          
+          <div
+            ref={dropZoneRef}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`
               border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
-              transition-colors
+              transition-all duration-200
               ${file 
                 ? 'border-cyan-400 bg-cyan-50' 
-                : 'border-gray-300 hover:border-cyan-400 hover:bg-cyan-50'}
-            `}>
-              <input
-                type="file"
-                accept=".hwpx"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              
-              {file ? (
-                <div className="flex items-center justify-center gap-3">
-                  <FileText size={32} className="text-cyan-600" />
-                  <div className="text-left">
-                    <p className="font-medium text-gray-900">{file.name}</p>
-                    <p className="text-sm text-gray-500">
-                      {(file.size / 1024).toFixed(1)} KB
-                    </p>
-                  </div>
+                : isDragging
+                  ? 'border-cyan-500 bg-cyan-100 scale-[1.02] shadow-lg'
+                  : 'border-gray-300 hover:border-cyan-400 hover:bg-cyan-50'}
+            `}
+          >
+            {file ? (
+              <div className="flex items-center justify-center gap-3">
+                <FileText size={32} className="text-cyan-600" />
+                <div className="text-left">
+                  <p className="font-medium text-gray-900">{file.name}</p>
+                  <p className="text-sm text-gray-500">
+                    {(file.size / 1024).toFixed(1)} KB
+                  </p>
                 </div>
-              ) : (
-                <div>
-                  <Upload size={32} className="mx-auto text-gray-400 mb-2" />
-                  <p className="text-gray-600">클릭하여 파일 선택</p>
-                  <p className="text-sm text-gray-400 mt-1">HWPX 파일만 지원</p>
-                </div>
-              )}
-            </div>
-          </label>
+              </div>
+            ) : isDragging ? (
+              <div>
+                <Upload size={32} className="mx-auto text-cyan-600 mb-2 animate-bounce" />
+                <p className="text-cyan-700 font-medium">여기에 파일을 놓으세요!</p>
+              </div>
+            ) : (
+              <div>
+                <Upload size={32} className="mx-auto text-gray-400 mb-2" />
+                <p className="text-gray-600 font-medium">파일을 드래그하거나 클릭</p>
+                <p className="text-sm text-gray-400 mt-1">HWPX 파일만 지원 (최대 50MB)</p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 옵션 */}
