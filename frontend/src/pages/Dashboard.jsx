@@ -8,21 +8,24 @@ const services = [
     title: '충주시 뉴스',
     description: '충주시 관련 뉴스를 자동으로 수집하고 AI가 요약합니다',
     path: '/news',
-    badge: null
+    badge: null,
+    disabled: false
   },
   {
     icon: '📝',
     title: '보도자료 생성기',
     description: 'GPT 기반 자동 보도자료 작성 시스템',
     path: '/press-release',
-    badge: null
+    badge: null,
+    disabled: false
   },
   {
     icon: '🏅',
     title: '공적조서 생성기',
     description: 'GPT가 공무원 공적조서를 자동으로 작성합니다',
     path: '/merit-report',
-    badge: null
+    badge: null,
+    disabled: false
   },
   // 두 번째 줄
   {
@@ -30,26 +33,63 @@ const services = [
     title: 'AI 통계분석 챗봇',
     description: '엑셀 데이터를 업로드하고 자연어로 분석하세요',
     path: '/data-analysis',
-    badge: null
+    badge: null,
+    disabled: false
   },
   {
     icon: '🌐',
     title: '다국어 번역기',
     description: 'HWPX 문서를 DeepL + GPT로 고품질 번역',
     path: '/translator',
-    badge: null
+    badge: null,
+    disabled: false
   },
   {
     icon: '⚖️',
     title: '선거법 챗봇',
     description: '대화형 선거법 질의응답 시스템',
     path: '/election-law',
-    badge: null
+    badge: null,
+    disabled: false
+  },
+  // 세 번째 줄
+  {
+    icon: '🎙️',
+    title: '회의 요약기',
+    description: '회의 녹음/텍스트를 AI가 자동으로 요약합니다',
+    path: '/meeting-summary',
+    badge: '준비중',
+    disabled: true
+  },
+  {
+    icon: '📢',
+    title: '홍보문구 생성기',
+    description: '카카오채널용 홍보 문구를 AI가 자동 생성',
+    path: '/kakao-promo',
+    badge: null,
+    disabled: false
+  },
+  {
+    icon: '📍',
+    title: '주소-좌표 변환기',
+    description: '카카오 API 기반 주소 ↔ 좌표 일괄 변환',
+    path: '/address-geocoder',
+    badge: null,
+    disabled: false
+  },
+  // 네 번째 줄
+  {
+    icon: '📑',
+    title: '엑셀 취합기',
+    description: '여러 엑셀 파일을 하나로 병합합니다',
+    path: '/excel-merger',
+    badge: null,
+    disabled: false
   }
 ];
 
 const stats = [
-  { value: '6+', label: 'AI 서비스' },
+  { value: '10', label: 'AI 서비스' },
   { value: '24/7', label: '실시간 운영' },
   { value: '100%', label: '무료 이용' }
 ];
@@ -132,39 +172,75 @@ export default function Dashboard() {
           {/* Service Cards */}
           <div className="grid md:grid-cols-3 gap-6">
             {services.map((service, index) => (
-              <Link
-                key={index}
-                to={service.path}
-                className="group relative bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-slate-200 hover:border-cyan-300"
-              >
-                {/* Badge */}
-                {service.badge && (
-                  <div className="absolute top-4 right-4 px-3 py-1 bg-cyan-100 text-cyan-600 text-xs font-semibold rounded-full">
-                    {service.badge}
+              service.disabled ? (
+                // 준비중인 서비스 (클릭 불가)
+                <div
+                  key={index}
+                  className="group relative bg-white rounded-2xl p-8 shadow-md border border-slate-200 opacity-70 cursor-not-allowed"
+                >
+                  {/* Badge */}
+                  {service.badge && (
+                    <div className="absolute top-4 right-4 px-3 py-1 bg-orange-100 text-orange-600 text-xs font-semibold rounded-full">
+                      {service.badge}
+                    </div>
+                  )}
+
+                  {/* Icon */}
+                  <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl flex items-center justify-center text-3xl mb-6">
+                    {service.icon}
                   </div>
-                )}
 
-                {/* Icon */}
-                <div className="w-16 h-16 bg-gradient-to-br from-cyan-100 to-blue-100 rounded-2xl flex items-center justify-center text-3xl mb-6 group-hover:scale-110 transition-transform">
-                  {service.icon}
+                  {/* Title */}
+                  <h3 className="text-xl font-bold text-slate-500 mb-3">
+                    {service.title}
+                  </h3>
+
+                  {/* Description */}
+                  <p className="text-slate-400 leading-relaxed mb-4">
+                    {service.description}
+                  </p>
+
+                  {/* Arrow */}
+                  <div className="flex items-center text-slate-400 font-semibold">
+                    <span>준비중</span>
+                  </div>
                 </div>
+              ) : (
+                // 활성화된 서비스
+                <Link
+                  key={index}
+                  to={service.path}
+                  className="group relative bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-slate-200 hover:border-cyan-300"
+                >
+                  {/* Badge */}
+                  {service.badge && (
+                    <div className="absolute top-4 right-4 px-3 py-1 bg-cyan-100 text-cyan-600 text-xs font-semibold rounded-full">
+                      {service.badge}
+                    </div>
+                  )}
 
-                {/* Title */}
-                <h3 className="text-xl font-bold text-slate-900 mb-3 group-hover:text-cyan-600 transition-colors">
-                  {service.title}
-                </h3>
+                  {/* Icon */}
+                  <div className="w-16 h-16 bg-gradient-to-br from-cyan-100 to-blue-100 rounded-2xl flex items-center justify-center text-3xl mb-6 group-hover:scale-110 transition-transform">
+                    {service.icon}
+                  </div>
 
-                {/* Description */}
-                <p className="text-slate-600 leading-relaxed mb-4">
-                  {service.description}
-                </p>
+                  {/* Title */}
+                  <h3 className="text-xl font-bold text-slate-900 mb-3 group-hover:text-cyan-600 transition-colors">
+                    {service.title}
+                  </h3>
 
-                {/* Arrow */}
-                <div className="flex items-center text-cyan-600 font-semibold group-hover:gap-2 transition-all">
-                  <span>시작하기</span>
-                  <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                </div>
-              </Link>
+                  {/* Description */}
+                  <p className="text-slate-600 leading-relaxed mb-4">
+                    {service.description}
+                  </p>
+
+                  {/* Arrow */}
+                  <div className="flex items-center text-cyan-600 font-semibold group-hover:gap-2 transition-all">
+                    <span>시작하기</span>
+                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                  </div>
+                </Link>
+              )
             ))}
           </div>
         </div>
