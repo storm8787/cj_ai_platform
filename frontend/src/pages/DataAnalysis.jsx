@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   BarChart3, Upload, Send, Bot, User, Loader2, 
   FileSpreadsheet, Trash2, Table, Hash 
@@ -17,20 +17,78 @@ function DataAnalysis() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
   
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const dropZoneRef = useRef(null);
 
   // 스크롤 자동 이동
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 파일 업로드
+  // 드래그 이벤트 핸들러
+  const handleDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // dropZone 영역을 벗어났을 때만 isDragging을 false로
+    if (dropZoneRef.current && !dropZoneRef.current.contains(e.relatedTarget)) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) {
+      validateAndUploadFile(droppedFile);
+    }
+  }, []);
+
+  // 파일 유효성 검사 및 업로드
+  const validateAndUploadFile = (file) => {
+    const validExtensions = ['.xlsx', '.xls', '.csv'];
+    const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+    
+    if (!validExtensions.includes(fileExtension)) {
+      setError('xlsx, xls, csv 파일만 지원합니다.');
+      return;
+    }
+    
+    // 파일 크기 제한 (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      setError('파일 크기는 10MB 이하만 가능합니다.');
+      return;
+    }
+    
+    setError('');
+    uploadFile(file);
+  };
+
+  // 파일 업로드 (input 이벤트)
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    validateAndUploadFile(file);
+  };
 
+  // 실제 업로드 로직
+  const uploadFile = async (file) => {
     setUploading(true);
     setError('');
 
@@ -44,7 +102,7 @@ function DataAnalysis() {
       // 업로드 성공 메시지
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `✅ "${response.data.file_name}" 파일이 업로드되었습니다!\n\n📊 행: ${response.data.row_count}개\n📋 열: ${response.data.col_count}개\n\n이제 데이터에 대해 자유롭게 질문해보세요!`
+        content: `✅ "${response.data.file_name}" 파일이 업로드되었습니다!\n\n📊 행: ${response.data.row_count.toLocaleString()}개\n📋 열: ${response.data.col_count}개\n\n이제 데이터에 대해 자유롭게 질문해보세요!`
       }]);
     } catch (err) {
       setError(err.response?.data?.detail || '파일 업로드에 실패했습니다.');
@@ -141,7 +199,7 @@ function DataAnalysis() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 좌측: 파일 업로드 & 정보 */}
         <div className="lg:col-span-1 space-y-4">
-          {/* 파일 업로드 */}
+          {/* 파일 업로드 - 드래그앤드롭 지원 */}
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <Upload size={20} />
@@ -157,14 +215,21 @@ function DataAnalysis() {
               id="file-upload"
             />
             
-            <label
-              htmlFor="file-upload"
+            <div
+              ref={dropZoneRef}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
               className={`
                 block w-full p-6 border-2 border-dashed rounded-xl text-center cursor-pointer
-                transition-colors
+                transition-all duration-200
                 ${uploading 
-                  ? 'border-gray-300 bg-gray-50' 
-                  : 'border-cyan-300 hover:border-cyan-500 hover:bg-cyan-50'}
+                  ? 'border-gray-300 bg-gray-50 pointer-events-none' 
+                  : isDragging
+                    ? 'border-cyan-500 bg-cyan-50 scale-[1.02] shadow-lg'
+                    : 'border-cyan-300 hover:border-cyan-500 hover:bg-cyan-50'}
               `}
             >
               {uploading ? (
@@ -172,17 +237,22 @@ function DataAnalysis() {
                   <Loader2 size={32} className="animate-spin text-cyan-600 mb-2" />
                   <p className="text-gray-600">업로드 중...</p>
                 </div>
+              ) : isDragging ? (
+                <div className="flex flex-col items-center">
+                  <Upload size={32} className="text-cyan-600 mb-2 animate-bounce" />
+                  <p className="text-cyan-700 font-medium">여기에 파일을 놓으세요!</p>
+                </div>
               ) : (
                 <div className="flex flex-col items-center">
                   <FileSpreadsheet size={32} className="text-cyan-600 mb-2" />
-                  <p className="text-gray-700 font-medium">파일 선택</p>
-                  <p className="text-sm text-gray-500 mt-1">xlsx, xls, csv</p>
+                  <p className="text-gray-700 font-medium">파일을 드래그하거나 클릭</p>
+                  <p className="text-sm text-gray-500 mt-1">xlsx, xls, csv (최대 10MB)</p>
                 </div>
               )}
-            </label>
+            </div>
 
             {error && (
-              <p className="mt-3 text-sm text-red-600">{error}</p>
+              <p className="mt-3 text-sm text-red-600 bg-red-50 p-2 rounded-lg">{error}</p>
             )}
           </div>
 
@@ -197,7 +267,7 @@ function DataAnalysis() {
               <div className="space-y-3">
                 <div className="flex justify-between">
                   <span className="text-gray-600">파일명</span>
-                  <span className="font-medium text-gray-900 truncate max-w-[150px]">
+                  <span className="font-medium text-gray-900 truncate max-w-[150px]" title={fileInfo.file_name}>
                     {fileInfo.file_name}
                   </span>
                 </div>
@@ -217,7 +287,7 @@ function DataAnalysis() {
                 <div className="max-h-48 overflow-y-auto space-y-1">
                   {fileInfo.columns.map((col, idx) => (
                     <div key={idx} className="flex items-center justify-between text-sm py-1">
-                      <span className="text-gray-600 truncate max-w-[120px]">{col.name}</span>
+                      <span className="text-gray-600 truncate max-w-[120px]" title={col.name}>{col.name}</span>
                       <span className="text-xs text-gray-400">{col.dtype}</span>
                     </div>
                   ))}
