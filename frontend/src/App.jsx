@@ -7,6 +7,9 @@ import ElectionLaw from './pages/ElectionLaw';
 import MeritReport from './pages/MeritReport';
 import DataAnalysis from './pages/DataAnalysis';
 import Translator from './pages/Translator';
+import AddressGeocoder from './pages/AddressGeocoder';
+import KakaoPromo from './pages/KakaoPromo';
+import ExcelMerger from './pages/ExcelMerger';
 
 function App() {
   return (
@@ -19,6 +22,9 @@ function App() {
         <Route path="/merit-report" element={<MeritReport />} />
         <Route path="/data-analysis" element={<DataAnalysis />} />
         <Route path="/translator" element={<Translator />} />
+        <Route path="/address-geocoder" element={<AddressGeocoder />} />
+        <Route path="/kakao-promo" element={<KakaoPromo />} />
+        <Route path="/excel-merger" element={<ExcelMerger />} />
       </Routes>
     </Layout>
   );
