@@ -78,4 +78,50 @@ export const translatorApi = {
   }),
 };
 
+// ===== 주소-좌표 변환기 API =====
+export const addressGeocoderApi = {
+  // 단일 변환
+  addressToCoord: (data) => api.post('/api/geocoder/address-to-coord', data),
+  coordToAddress: (data) => api.post('/api/geocoder/coord-to-address', data),
+  
+  // 파일 변환
+  fileAddressToCoord: (formData) => api.post('/api/geocoder/file/address-to-coord', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    responseType: 'arraybuffer',
+    timeout: 180000, // 3분 타임아웃
+  }),
+  fileCoordToAddress: (formData) => api.post('/api/geocoder/file/coord-to-address', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    responseType: 'arraybuffer',
+    timeout: 180000,
+  }),
+  
+  // 템플릿 다운로드
+  downloadTemplate: (type) => api.get(`/api/geocoder/template/${type}`, {
+    responseType: 'arraybuffer',
+  }),
+};
+
+// ===== 카카오 홍보문구 생성기 API =====
+export const kakaoPromoApi = {
+  getCategories: () => api.get('/api/kakao-promo/categories'),
+  generate: (data) => api.post('/api/kakao-promo/generate', data),
+  generateWithImage: (formData) => api.post('/api/kakao-promo/generate-with-image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000, // 1분 타임아웃
+  }),
+};
+
+// ===== 엑셀 취합기 API =====
+export const excelMergerApi = {
+  merge: (formData) => api.post('/api/excel-merger/merge', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    responseType: 'arraybuffer',
+    timeout: 180000, // 3분 타임아웃
+  }),
+  preview: (formData) => api.post('/api/excel-merger/preview', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+};
+
 export default api;
