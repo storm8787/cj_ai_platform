@@ -70,7 +70,7 @@ export default function PressRelease() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <h1 className="text-2xl font-bold mb-2 text-white">📰 보도자료 생성기</h1>
       <p className="text-slate-400 mb-6">
         충주시의 8,000여 건 보도자료를 학습한 AI가 충주시 스타일의 보도자료를 자동 생성합니다.
