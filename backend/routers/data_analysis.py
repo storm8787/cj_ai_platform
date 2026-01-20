@@ -62,7 +62,7 @@ def safe_preview(df: pd.DataFrame, rows: int = 10) -> List[Dict[str, Any]]:
 
 def read_excel_file(contents: bytes, filename: str) -> pd.DataFrame:
     """
-    엑셀 파일 읽기 - xls/xlsx 모두 지원
+    엑셀 파일 읽기 - xls/xlsx/csv 지원
     """
     try:
         if filename.endswith('.csv'):
@@ -167,30 +167,40 @@ async def analyze_data(request: AnalyzeRequest):
         # LangChain imports
         from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
         from langchain_openai import ChatOpenAI
-        from langchain.agents.agent_types import AgentType
         
         # 데이터프레임 로드
         df = pd.read_parquet(temp_path)
         
-        # Agent 생성
-        agent = create_pandas_dataframe_agent(
-            ChatOpenAI(
-                temperature=0,
-                model="gpt-4o-mini",
-                openai_api_key=settings.OPENAI_API_KEY
-            ),
-            df,
-            verbose=False,
-            agent_type=AgentType.OPENAI_FUNCTIONS,
-            allow_dangerous_code=True,
-            handle_parsing_errors=True
+        # LLM 설정 (langchain_openai 최신 스타일)
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            api_key=settings.OPENAI_API_KEY,
         )
         
-        # 질문 실행
-        response = agent.run(request.question)
+        # Pandas Agent 생성
+        # - agent_type / allow_dangerous_code / handle_parsing_errors 제거
+        agent = create_pandas_dataframe_agent(
+            llm,
+            df,
+            verbose=False,
+        )
+        
+        # 질문 실행 (run → invoke)
+        result = agent.invoke({"input": request.question})
+        
+        # 결과에서 텍스트만 추출
+        if isinstance(result, dict):
+            answer = (
+                result.get("output")
+                or result.get("output_text")
+                or str(result)
+            )
+        else:
+            answer = str(result)
         
         return AnalyzeResponse(
-            answer=response,
+            answer=answer,
             success=True
         )
         
@@ -200,6 +210,7 @@ async def analyze_data(request: AnalyzeRequest):
             detail="LangChain 패키지가 설치되지 않았습니다. pip install langchain langchain-openai langchain-experimental"
         )
     except Exception as e:
+        # HTTP 200 안에서 에러 메시지를 내려서 프론트에서 그대로 표시 가능
         return AnalyzeResponse(
             answer=f"분석 중 오류가 발생했습니다: {str(e)}",
             success=False
