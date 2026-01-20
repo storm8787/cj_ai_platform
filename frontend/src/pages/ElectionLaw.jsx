@@ -89,7 +89,7 @@ function ElectionLaw() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="h-[calc(100vh-12rem)] flex flex-col animate-fadeIn">
         {/* 상단 컨트롤 */}
         <div className="flex items-center justify-between mb-4">
