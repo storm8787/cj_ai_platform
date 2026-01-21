@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from config import settings
 from routers import press_release, election_law, news, health
 from routers import merit_report, data_analysis, translator
-from routers import address_geocoder, kakao_promo, excel_merger
+from routers import address_geocoder, kakao_promo, excel_merger, meeting_summarizer
 
 
 @asynccontextmanager
@@ -53,6 +53,7 @@ app.include_router(translator.router, prefix="/api/translator", tags=["번역기
 app.include_router(address_geocoder.router, prefix="/api/geocoder", tags=["주소-좌표 변환"])
 app.include_router(kakao_promo.router, prefix="/api/kakao-promo", tags=["카카오 홍보문구"])
 app.include_router(excel_merger.router, prefix="/api/excel-merger", tags=["엑셀 취합기"])
+app.include_router(meeting_summarizer.router, prefix="/api/meeting", tags=["회의요약기"])
 
 
 @app.get("/")
