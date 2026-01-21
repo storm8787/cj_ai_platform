@@ -318,3 +318,12 @@ async def download_template(template_type: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+@router.get("/debug-key")
+async def debug_key():
+    """API 키 확인용 (디버깅 후 삭제)"""
+    key = getattr(settings, 'KAKAO_API_KEY', '')
+    return {
+        "key_exists": bool(key),
+        "key_length": len(key) if key else 0,
+        "key_prefix": key[:4] + "..." if key and len(key) > 4 else "없음"
+    }
