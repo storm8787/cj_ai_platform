@@ -124,4 +124,17 @@ export const excelMergerApi = {
   }),
 };
 
+// ===== 회의요약기 API =====
+export const meetingSummarizerApi = {
+  getModes: () => api.get('/api/meeting/modes'),
+  getSystemInfo: () => api.get('/api/meeting/system-info'),
+  summarize: (data) => api.post('/api/meeting/summarize', data, {
+    timeout: 180000, // 3분 타임아웃
+  }),
+  summarizeFile: (formData) => api.post('/api/meeting/summarize-file', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,
+  }),
+};
+
 export default api;
