@@ -9,13 +9,15 @@ import pandas as pd
 import httpx
 import io
 import re
+import os
 
 from config import settings
 
 router = APIRouter()
 
 # 카카오 API 키 (config.py에 추가 필요)
-KAKAO_API_KEY = getattr(settings, 'KAKAO_API_KEY', '')
+#KAKAO_API_KEY = getattr(settings, 'KAKAO_API_KEY', '')
+KAKAO_API_KEY = os.environ.get('KAKAO_API_KEY', '')
 
 # 충주시 행정동 중심좌표 DB
 DONG_COORDS = {
