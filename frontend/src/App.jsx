@@ -10,6 +10,7 @@ import Translator from './pages/Translator';
 import AddressGeocoder from './pages/AddressGeocoder';
 import KakaoPromo from './pages/KakaoPromo';
 import ExcelMerger from './pages/ExcelMerger';
+import MeetingSummarizer from './pages/MeetingSummarizer';
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
         <Route path="/address-geocoder" element={<AddressGeocoder />} />
         <Route path="/kakao-promo" element={<KakaoPromo />} />
         <Route path="/excel-merger" element={<ExcelMerger />} />
+        <Route path="/meeting-summary" element={<MeetingSummarizer />} />
       </Routes>
     </Layout>
   );
