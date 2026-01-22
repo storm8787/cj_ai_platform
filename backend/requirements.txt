@@ -4,7 +4,7 @@ uvicorn[standard]==0.27.1
 python-multipart==0.0.9
 
 # AI & ML
-openai==1.12.0
+openai>=1.12.0
 sentence-transformers==2.3.1
 faiss-cpu==1.7.4
 torch>=2.6.0
@@ -30,7 +30,7 @@ pyarrow>=14.0.0
 openpyxl>=3.1.0
 xlrd>=2.0.1
 
-# Force rebuild: 2026-01-22
+# LangChain
 langchain==0.2.16
 langchain-openai==0.1.25
 langchain-experimental==0.0.65
