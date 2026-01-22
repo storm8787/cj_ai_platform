@@ -155,8 +155,10 @@ async def analyze_data(request: AnalyzeRequest):
     LangChain Pandas Agent로 데이터 분석
     """
     print(f"[DEBUG] analyze 시작 - file_id: {request.file_id}")  # 추가
+    print(f"[DEBUG] temp_files 목록: {list(temp_files.keys())}")  # 이 줄 추가
     # 파일 확인
     if request.file_id not in temp_files:
+        print(f"[DEBUG] 파일 없음! 요청된 ID: {request.file_id}")  # 이 줄 추가
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다. 다시 업로드해주세요.")
     
     temp_path = temp_files[request.file_id]
