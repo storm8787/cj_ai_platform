@@ -12,6 +12,8 @@ import uuid
 
 from config import settings
 
+from langchain.agents.agent_types import AgentType  # import 추가
+
 router = APIRouter()
 
 # 임시 파일 저장소 (실제 운영에서는 Redis 등 사용 권장)
@@ -195,9 +197,10 @@ async def analyze_data(request: AnalyzeRequest):
         agent = create_pandas_dataframe_agent(
             llm,
             df,
-            verbose=False,
-            allow_dangerous_code=True,  # 이 줄 추가            
-            #agent_type="openai-tools",  # 이 방식으로 시도
+            verbose=True,
+            agent_type=AgentType.OPENAI_FUNCTIONS,
+            allow_dangerous_code=True,
+            handle_parsing_errors=True,
         )
         print("[DEBUG] Agent 생성 완료")  # 추가
         
