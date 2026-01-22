@@ -3,8 +3,20 @@
 @tailwind utilities;
 
 @layer base {
+  /* 페이지 전체 레이아웃 (wide layout) */
+  html, body, #root {
+    @apply h-full w-full;
+  }
+
   body {
     @apply bg-slate-950 text-gray-900;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* 전체 컨테이너 최대 너비 설정 */
+  #root {
+    @apply max-w-full;
   }
 }
 
