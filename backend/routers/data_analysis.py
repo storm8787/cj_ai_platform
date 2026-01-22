@@ -167,32 +167,44 @@ async def analyze_data(request: AnalyzeRequest):
         raise HTTPException(status_code=404, detail="파일이 만료되었습니다. 다시 업로드해주세요.")
     
     try:
+        print("[DEBUG] try 블록 진입")  # 추가
+
         # LangChain imports
+        print("[DEBUG] LangChain import 시작")  # 추가
         from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
         from langchain_openai import ChatOpenAI
+        print("[DEBUG] LangChain import 성공")  # 추가
         
         # 데이터프레임 로드
         df = pd.read_parquet(temp_path)
-        
+        print(f"[DEBUG] DataFrame 로드 완료 - shape: {df.shape}")  # 추가
+
         # LLM 설정 (langchain_openai 최신 스타일)
+        print("[DEBUG] LLM 생성 시작")  # 추가
         llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
             api_key=settings.OPENAI_API_KEY,
         )
+        print("[DEBUG] LLM 생성 완료")  # 추가
+
         
         # Pandas Agent 생성
         # - agent_type / allow_dangerous_code / handle_parsing_errors 제거
+        print("[DEBUG] Agent 생성 시작")  # 추가
         agent = create_pandas_dataframe_agent(
             llm,
             df,
             verbose=False,
             allow_dangerous_code=True,  # 이 줄 추가            
         )
+        print("[DEBUG] Agent 생성 완료")  # 추가
         
         # 질문 실행 (run → invoke)
+        print(f"[DEBUG] 질문 실행: {request.question}")  # 추가
         result = agent.invoke({"input": request.question})
-        
+        print(f"[DEBUG] 결과 받음")  # 추가
+
         # 결과에서 텍스트만 추출
         if isinstance(result, dict):
             answer = (
@@ -209,12 +221,14 @@ async def analyze_data(request: AnalyzeRequest):
         )
         
     except ImportError:
+        print(f"[DEBUG] ImportError: {e}")  # 추가
         raise HTTPException(
             status_code=500, 
             detail="LangChain 패키지가 설치되지 않았습니다. pip install langchain langchain-openai langchain-experimental"
         )
     except Exception as e:
         import traceback
+        print("[DEBUG] Exception 발생!")  # 추가
         traceback.print_exc()  # 이 줄 추가 - 터미널에 전체 에러 출력
         return AnalyzeResponse(
             answer=f"분석 중 오류가 발생했습니다: {str(e)}",
