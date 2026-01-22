@@ -184,6 +184,7 @@ async def analyze_data(request: AnalyzeRequest):
             llm,
             df,
             verbose=False,
+            allow_dangerous_code=True,  # 이 줄 추가
         )
         
         # 질문 실행 (run → invoke)
