@@ -210,7 +210,8 @@ async def analyze_data(request: AnalyzeRequest):
             detail="LangChain 패키지가 설치되지 않았습니다. pip install langchain langchain-openai langchain-experimental"
         )
     except Exception as e:
-        # HTTP 200 안에서 에러 메시지를 내려서 프론트에서 그대로 표시 가능
+        import traceback
+        traceback.print_exc()  # 이 줄 추가 - 터미널에 전체 에러 출력
         return AnalyzeResponse(
             answer=f"분석 중 오류가 발생했습니다: {str(e)}",
             success=False
