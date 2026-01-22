@@ -221,7 +221,7 @@ async def analyze_data(request: AnalyzeRequest):
             success=True
         )
         
-    except ImportError:
+    except ImportError as e:
         print(f"[DEBUG] ImportError: {e}")  # 추가
         raise HTTPException(
             status_code=500, 
