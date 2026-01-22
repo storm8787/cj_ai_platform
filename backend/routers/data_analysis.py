@@ -196,8 +196,8 @@ async def analyze_data(request: AnalyzeRequest):
             llm,
             df,
             verbose=False,
-            #allow_dangerous_code=True,  # 이 줄 추가            
-            agent_type="openai-tools",  # 이 방식으로 시도
+            allow_dangerous_code=True,  # 이 줄 추가            
+            #agent_type="openai-tools",  # 이 방식으로 시도
         )
         print("[DEBUG] Agent 생성 완료")  # 추가
         
