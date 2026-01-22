@@ -15,7 +15,7 @@ import MeetingSummarizer from './pages/MeetingSummarizer';
 
 // 페이지별 타이틀 매핑
 const pageTitles = {
-  '/': '대시보드',
+  '/': '충주시 AI 플랫폼',
   '/news': '뉴스 조회',
   '/press-release': '보도자료 생성',
   '/election-law': '선거법 챗봇',
@@ -34,7 +34,7 @@ function App() {
   // 페이지 이동 시 타이틀 변경
   useEffect(() => {
     const pageTitle = pageTitles[location.pathname] || '충주시 AI 플랫폼';
-    document.title = `${pageTitle} - 충주시 AI 플랫폼`;
+    document.title = pageTitle;
   }, [location]);
 
   return (
