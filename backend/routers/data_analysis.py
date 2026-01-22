@@ -183,8 +183,7 @@ async def analyze_data(request: AnalyzeRequest):
         agent = create_pandas_dataframe_agent(
             llm,
             df,
-            verbose=False,
-            allow_dangerous_code=True,  # 이 줄 추가
+            verbose=False,            
         )
         
         # 질문 실행 (run → invoke)
