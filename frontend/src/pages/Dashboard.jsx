@@ -58,8 +58,8 @@ const services = [
     title: '회의 요약기',
     description: '회의 녹음/텍스트를 AI가 자동으로 요약합니다',
     path: '/meeting-summary',
-    badge: '준비중',
-    disabled: true
+    badge: null,
+    disabled: false
   },
   {
     icon: '📢',
