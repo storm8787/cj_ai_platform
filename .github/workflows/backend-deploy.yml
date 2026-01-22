@@ -30,3 +30,17 @@ jobs:
         tags: |
           ghcr.io/${{ github.repository_owner }}/cj-ai-backend:latest
           ghcr.io/${{ github.repository_owner }}/cj-ai-backend:${{ github.sha }}
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Deploy to Azure Container Apps
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          az containerapp update \
+            --name cj-ai-backend \
+            --resource-group rg-cj-ai-platform \
+            --image ghcr.io/${{ github.repository_owner }}/cj-ai-backend:${{ github.sha }}
