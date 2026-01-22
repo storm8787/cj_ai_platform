@@ -2,6 +2,9 @@
 충주시 AI 플랫폼 - FastAPI 백엔드
 Azure Container Apps 배포용
 """
+import langchain_experimental
+print(f"🔍 langchain_experimental version: {langchain_experimental.__version__}")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -10,7 +13,6 @@ from config import settings
 from routers import press_release, election_law, news, health
 from routers import merit_report, data_analysis, translator
 from routers import address_geocoder, kakao_promo, excel_merger, meeting_summarizer
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
