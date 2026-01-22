@@ -116,16 +116,16 @@ export default function Dashboard() {
 
           {/* Main Title */}
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-4">
-            <span className="text-white">충주를 위한</span>
+            <span className="text-white">AI 기반</span>
             <br />
-            <span className="text-cyan-400">AI 행정 서비스</span>
+            <span className="text-cyan-400">행정 업무 지원 플랫폼</span>
           </h1>
 
           {/* Subtitle */}
           <p className="text-lg sm:text-xl text-slate-300 mb-8 leading-relaxed max-w-2xl mx-auto">
-            인공지능 기술을 활용한 스마트 행정 서비스로
+            충주시 행정 업무를 지원하는
             <br />
-            더 빠르고 정확한 행정 서비스를 제공합니다.
+            AI 기반 업무 자동화 서비스입니다.
           </p>
 
           {/* CTA Button - Single Button */}
