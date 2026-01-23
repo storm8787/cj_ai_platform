@@ -190,10 +190,10 @@ async def analyze_data(request: AnalyzeRequest):
         )
         print("[DEBUG] LLM 생성 완료")  # 추가
 
-        #try:
-        #    from langchain.agents.agent_types import AgentType
-        #except ImportError:
-        #    from langchain.agents import AgentType
+        try:
+            from langchain.agents.agent_types import AgentType
+        except ImportError:
+            from langchain.agents import AgentType
         
         # Pandas Agent 생성
         # - agent_type / allow_dangerous_code / handle_parsing_errors 제거
@@ -202,9 +202,9 @@ async def analyze_data(request: AnalyzeRequest):
             llm,
             df,
             verbose=True,
-            #agent_type=AgentType.OPENAI_FUNCTIONS,
+            agent_type=AgentType.OPENAI_FUNCTIONS,
             allow_dangerous_code=True,
-            #handle_parsing_errors=True,
+            handle_parsing_errors=True,
         )
         print("[DEBUG] Agent 생성 완료")  # 추가
         
