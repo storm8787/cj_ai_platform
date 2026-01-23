@@ -170,7 +170,7 @@ export default function Dashboard() {
           </div>
 
           {/* Service Cards */}
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-4 gap-6">
             {services.map((service, index) => (
               service.disabled ? (
                 // 준비중인 서비스 (클릭 불가)
