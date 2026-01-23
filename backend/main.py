@@ -2,8 +2,8 @@
 충주시 AI 플랫폼 - FastAPI 백엔드
 Azure Container Apps 배포용
 """
-import langchain_experimental
-print(f"🔍 langchain_experimental version: {langchain_experimental.__version__}")
+#import langchain_experimental
+#print(f"🔍 langchain_experimental version: {langchain_experimental.__version__}")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
