@@ -68,6 +68,14 @@ const services = [
     disabled: false
   },
   {
+    icon: '📄',
+    title: '업무보고 생성기',
+    description: '공무원 스타일의 업무보고서를 AI가 자동 생성',
+    path: '/report-writer',
+    badge: null,
+    disabled: false
+  },
+  {
     icon: '📍',
     title: '주소-좌표 변환기',
     description: '카카오 API 기반 주소 ↔ 좌표 일괄 변환',
