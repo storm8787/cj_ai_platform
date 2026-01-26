@@ -13,6 +13,7 @@ import KakaoPromo from './pages/KakaoPromo';
 import ExcelMerger from './pages/ExcelMerger';
 import MeetingSummarizer from './pages/MeetingSummarizer';
 import ReportWriter from './pages/ReportWriter';
+import About from './pages/About';
 
 // 페이지별 타이틀 매핑
 const pageTitles = {
@@ -53,6 +54,7 @@ function App() {
         <Route path="/excel-merger" element={<ExcelMerger />} />
         <Route path="/meeting-summary" element={<MeetingSummarizer />} />
         <Route path="/report-writer" element={<ReportWriter />} />
+        <Route path="/about" element={<About />} />
       </Routes>
     </Layout>
   );
