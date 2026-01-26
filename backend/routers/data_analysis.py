@@ -39,6 +39,42 @@ class AnalyzeResponse(BaseModel):
     success: bool
 
 
+# ===========================================
+# 🎯 AI Agent 사전 지시사항 (핵심!)
+# ===========================================
+AGENT_PREFIX = """You are a helpful data analysis assistant that analyzes pandas DataFrames.
+
+## 중요 규칙 (MUST FOLLOW):
+
+### 1. NaN/빈 값 처리
+- 컬럼에 데이터가 있는지 확인할 때 반드시 dropna()를 사용하여 NaN을 제외하고 확인
+- 단 하나라도 실제 값이 있으면 "데이터가 있다"고 답변
+- 예: df["컬럼명"].dropna() 로 실제 값 확인
+
+### 2. 데이터 존재 여부 확인 방법
+```python
+# 올바른 방법
+non_null_values = df["컬럼명"].dropna()
+if len(non_null_values) > 0:
+    print("데이터가 있습니다:", non_null_values.tolist())
+```
+
+### 3. 답변 언어
+- 모든 답변은 한국어로 작성
+- 친절하고 상세하게 답변
+
+### 4. 관련 데이터 찾기
+- "법령", "근거", "관련법" 등의 질문이 오면 관련 컬럼들을 모두 확인
+- 부분 일치도 확인 (컬럼명에 해당 키워드가 포함되어 있는지)
+
+### 5. 결과 보여주기
+- 데이터가 있으면 실제 값을 보여줌
+- 어떤 행에 있는지 구체적으로 알려줌
+
+Remember: NaN이 많아도 실제 값이 하나라도 있으면 "있다"고 답해야 합니다!
+"""
+
+
 def safe_preview(df: pd.DataFrame, rows: int = 10) -> List[Dict[str, Any]]:
     """
     미리보기 데이터 생성 - 모든 키와 값을 문자열로 변환
@@ -156,11 +192,11 @@ async def analyze_data(request: AnalyzeRequest):
     """
     LangChain Pandas Agent로 데이터 분석
     """
-    print(f"[DEBUG] analyze 시작 - file_id: {request.file_id}")  # 추가
-    #print(f"[DEBUG] temp_files 목록: {list(temp_files.keys())}")  # 이 줄 추가
+    print(f"[DEBUG] analyze 시작 - file_id: {request.file_id}")
+    
     # 파일 확인
     if request.file_id not in temp_files:
-        print(f"[DEBUG] 파일 없음! 요청된 ID: {request.file_id}")  # 이 줄 추가
+        print(f"[DEBUG] 파일 없음! 요청된 ID: {request.file_id}")
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다. 다시 업로드해주세요.")
     
     temp_path = temp_files[request.file_id]
@@ -169,35 +205,34 @@ async def analyze_data(request: AnalyzeRequest):
         raise HTTPException(status_code=404, detail="파일이 만료되었습니다. 다시 업로드해주세요.")
     
     try:
-        print("[DEBUG] try 블록 진입")  # 추가
+        print("[DEBUG] try 블록 진입")
 
         # LangChain imports
-        print("[DEBUG] LangChain import 시작")  # 추가
+        print("[DEBUG] LangChain import 시작")
         from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
         from langchain_openai import ChatOpenAI
-        print("[DEBUG] LangChain import 성공")  # 추가
+        print("[DEBUG] LangChain import 성공")
         
         # 데이터프레임 로드
         df = pd.read_parquet(temp_path)
-        print(f"[DEBUG] DataFrame 로드 완료 - shape: {df.shape}")  # 추가
+        print(f"[DEBUG] DataFrame 로드 완료 - shape: {df.shape}")
 
-        # LLM 설정 (langchain_openai 최신 스타일)
-        print("[DEBUG] LLM 생성 시작")  # 추가
+        # LLM 설정
+        print("[DEBUG] LLM 생성 시작")
         llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
             api_key=settings.OPENAI_API_KEY,
         )
-        print("[DEBUG] LLM 생성 완료")  # 추가
+        print("[DEBUG] LLM 생성 완료")
 
         try:
             from langchain.agents.agent_types import AgentType
         except ImportError:
             from langchain.agents import AgentType
         
-        # Pandas Agent 생성
-        # - agent_type / allow_dangerous_code / handle_parsing_errors 제거
-        print("[DEBUG] Agent 생성 시작")  # 추가
+        # Pandas Agent 생성 (prefix 추가!)
+        print("[DEBUG] Agent 생성 시작")
         agent = create_pandas_dataframe_agent(
             llm,
             df,
@@ -205,13 +240,14 @@ async def analyze_data(request: AnalyzeRequest):
             agent_type=AgentType.OPENAI_FUNCTIONS,
             allow_dangerous_code=True,
             handle_parsing_errors=True,
+            prefix=AGENT_PREFIX,  # 🎯 핵심: 사전 지시사항 추가!
         )
-        print("[DEBUG] Agent 생성 완료")  # 추가
+        print("[DEBUG] Agent 생성 완료")
         
-        # 질문 실행 (run → invoke)
-        print(f"[DEBUG] 질문 실행: {request.question}")  # 추가
+        # 질문 실행
+        print(f"[DEBUG] 질문 실행: {request.question}")
         result = agent.invoke({"input": request.question})
-        print(f"[DEBUG] 결과 받음")  # 추가
+        print(f"[DEBUG] 결과 받음")
 
         # 결과에서 텍스트만 추출
         if isinstance(result, dict):
@@ -229,15 +265,15 @@ async def analyze_data(request: AnalyzeRequest):
         )
         
     except ImportError as e:
-        print(f"[DEBUG] ImportError: {e}")  # 추가
+        print(f"[DEBUG] ImportError: {e}")
         raise HTTPException(
             status_code=500, 
             detail="LangChain 패키지가 설치되지 않았습니다. pip install langchain langchain-openai langchain-experimental"
         )
     except Exception as e:
         import traceback
-        print("[DEBUG] Exception 발생!")  # 추가
-        traceback.print_exc()  # 이 줄 추가 - 터미널에 전체 에러 출력
+        print("[DEBUG] Exception 발생!")
+        traceback.print_exc()
         return AnalyzeResponse(
             answer=f"분석 중 오류가 발생했습니다: {str(e)}",
             success=False
