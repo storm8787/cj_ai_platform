@@ -67,7 +67,10 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
             <Link
               key={index}
               to={item.path}
-              onClick={onClose}
+              onClick={(e) => {
+                e.stopPropagation();  // 이벤트 버블링 방지
+                onClose();
+              }}
               className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
             >
               <span className="text-lg">{item.icon}</span>
