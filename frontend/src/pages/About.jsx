@@ -106,7 +106,7 @@ export default function About() {
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span><strong>운영기관:</strong> 충주시청 자치행정과</span>
+                  <span><strong>운영기관:</strong> 충주시청 정보통신과</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
@@ -127,7 +127,7 @@ export default function About() {
               <ul className="space-y-3 text-slate-600">
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span>반복적인 문서 작업 자동화 (보도자료, 공적조서, 회의록)</span>
+                  <span>반복적인 문서 작업 자동화 </span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
@@ -230,46 +230,7 @@ export default function About() {
             ))}
           </div>
         </div>
-      </section>
-
-      {/* 시스템 아키텍처 */}
-      <section className="py-16 bg-white">
-        <div className="max-w-5xl mx-auto px-4">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-slate-900 mb-4">시스템 아키텍처</h2>
-            <p className="text-slate-600">Azure 클라우드 기반 안정적인 서비스 구조</p>
-          </div>
-
-          <div className="bg-slate-50 rounded-2xl p-8 border border-slate-200">
-            <pre className="text-xs sm:text-sm text-slate-600 overflow-x-auto font-mono leading-relaxed">
-{`┌─────────────────────────────────────────────────────────────┐
-│                      Azure Cloud                              │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │     Azure Static Web Apps (Frontend)                │    │
-│  │     React + Vite + TailwindCSS                      │    │
-│  └──────────────────────┬──────────────────────────────┘    │
-│                         │                                    │
-│                         │ API 요청                           │
-│                         ▼                                    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │     Azure Container Apps (Backend)                  │    │
-│  │     FastAPI + Python 3.11 + FAISS                   │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                         │                                    │
-└─────────────────────────┼────────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
-        ▼                 ▼                 ▼
-┌───────────────┐  ┌──────────────┐  ┌─────────────┐
-│   Supabase    │  │  OpenAI API  │  │  Kakao API  │
-│  Storage/DB   │  │  GPT-4o      │  │  주소검색   │
-└───────────────┘  └──────────────┘  └─────────────┘`}
-            </pre>
-          </div>
-        </div>
-      </section>
+      </section>      
 
       {/* 문의처 */}
       <section className="py-16 bg-slate-50">
