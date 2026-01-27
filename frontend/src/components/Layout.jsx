@@ -66,8 +66,15 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
     e.preventDefault();
     e.stopPropagation();
     console.log('클릭됨!', path);  // 디버깅
+    // ✅ 이동 전 상태 확인
+    console.log('이동 전 pathname:', window.location.pathname);
     onClose();
     navigate(path);
+
+    // ✅ 이동 후 상태 확인(라우터 반영 타이밍 때문에 setTimeout으로 한 번 더 확인)
+    setTimeout(() => {
+      console.log('이동 후 pathname:', window.location.pathname);
+    }, 0);
   };
 
   return (
