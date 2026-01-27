@@ -1,4 +1,4 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Home, Info, Cpu, MessageSquare } from 'lucide-react';
 
@@ -27,7 +27,10 @@ const communityMenus = [
 // 드롭다운 컴포넌트
 function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
   const dropdownRef = useRef(null);
+  const navigate = useNavigate();
+  const timeoutRef = useRef(null);
 
+  // 외부 클릭 감지
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -38,11 +41,36 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [onClose]);
 
+  // 마우스 진입 시 열기
+  const handleMouseEnter = () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    onToggle();
+  };
+
+  // 마우스 이탈 시 딜레이 후 닫기
+  const handleMouseLeave = () => {
+    timeoutRef.current = setTimeout(() => {
+      onClose();
+    }, 150); // 150ms 딜레이
+  };
+
+  // 메뉴 아이템 클릭
+  const handleItemClick = (path) => {
+    onClose();
+    navigate(path);
+  };
+
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div 
+      className="relative" 
+      ref={dropdownRef}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <button
         onClick={onToggle}
-        onMouseEnter={onToggle}
         className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
           isOpen 
             ? 'text-cyan-400 bg-slate-800' 
@@ -59,23 +87,16 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
 
       {/* 드롭다운 메뉴 */}
       {isOpen && (
-        <div 
-          className="absolute top-full left-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2 z-50"
-          onMouseLeave={onClose}
-        >
+        <div className="absolute top-full left-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2 z-50">
           {items.map((item, index) => (
-            <Link
+            <button
               key={index}
-              to={item.path}
-              onClick={(e) => {
-                e.stopPropagation();  // 이벤트 버블링 방지
-                onClose();
-              }}
-              className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+              onClick={() => handleItemClick(item.path)}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors text-left"
             >
               <span className="text-lg">{item.icon}</span>
               <span>{item.title}</span>
-            </Link>
+            </button>
           ))}
         </div>
       )}
@@ -88,12 +109,17 @@ export default function Layout({ children }) {
   const [openMenu, setOpenMenu] = useState(null);
 
   const handleToggle = (menu) => {
-    setOpenMenu(openMenu === menu ? null : menu);
+    setOpenMenu(prev => prev === menu ? null : menu);
   };
 
   const handleClose = () => {
     setOpenMenu(null);
   };
+
+  // 페이지 이동 시 메뉴 닫기
+  useEffect(() => {
+    setOpenMenu(null);
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen bg-slate-950">
@@ -161,7 +187,7 @@ export default function Layout({ children }) {
               />
             </nav>
 
-            {/* 모바일 메뉴 버튼 (선택사항) */}
+            {/* 모바일 메뉴 버튼 */}
             <button className="md:hidden text-slate-300 hover:text-white">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
