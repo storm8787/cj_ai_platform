@@ -42,12 +42,16 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
   }, [onClose]);
 
   // 마우스 진입 시 열기
+  // 마우스 진입 시 열기(닫혀있을 때만)
   const handleMouseEnter = () => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
-    onToggle();
+
+    // ✅ 이미 열려있으면 아무 것도 안 함(닫히지 않게)
+    if (!isOpen) onToggle();
   };
+
 
   // 마우스 이탈 시 - 일단 비활성화
   const handleMouseLeave = () => {
