@@ -25,7 +25,7 @@ const communityMenus = [
 ];
 
 // 드롭다운 컴포넌트
-function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
+function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onOpen, onClose }) {
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const timeoutRef = useRef(null);
@@ -44,14 +44,11 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
   // 마우스 진입 시 열기
   // 마우스 진입 시 열기(닫혀있을 때만)
   const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-    // ✅ 이미 열려있으면 아무 것도 안 함(닫히지 않게)
-    if (!isOpen) onToggle();
+    // ✅ hover는 무조건 "열기"
+    if (!isOpen) onOpen();
   };
-
 
   // 마우스 이탈 시 - 일단 비활성화
   const handleMouseLeave = () => {
@@ -105,6 +102,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
         <div className="absolute top-full left-0 w-56 pt-2 z-50">
           {/* 투명 브릿지 - 마우스 이동 경로 확보 */}
           <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2">
+          onClickCapture={() => console.log('✅ 드롭다운 박스 클릭 캡처됨')}
           {items.map((item, index) => (
             <Link
               key={index}
@@ -194,10 +192,10 @@ export default function Layout({ children }) {
                 icon={Cpu}
                 items={aiServices}
                 isOpen={openMenu === 'services'}
-                onToggle={() => handleToggle('services')}
+                onToggle={() => handleToggle('services')}     // 클릭은 토글
+                onOpen={() => setOpenMenu('services')}        // hover는 열기
                 onClose={handleClose}
-              />
-
+              >
               {/* 소통공간 드롭다운 */}
               <DropdownMenu
                 label="소통공간"
@@ -205,6 +203,7 @@ export default function Layout({ children }) {
                 items={communityMenus}
                 isOpen={openMenu === 'community'}
                 onToggle={() => handleToggle('community')}
+                onOpen={() => setOpenMenu('community')}        // hover는 열기
                 onClose={handleClose}
               />
             </nav>
