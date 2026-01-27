@@ -87,7 +87,9 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
 
       {/* 드롭다운 메뉴 */}
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2 z-50">
+        <div className="absolute top-full left-0 w-56 pt-2 z-50">
+          {/* 투명 브릿지 - 마우스 이동 경로 확보 */}
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2">
           {items.map((item, index) => (
             <button
               key={index}
@@ -98,6 +100,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
               <span>{item.title}</span>
             </button>
           ))}
+          </div>
         </div>
       )}
     </div>
