@@ -3,7 +3,7 @@ import {
   CheckCircle, ArrowRight, Mail, Phone, MapPin,
   Database, Cloud, Bot, FileText
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 // AI 서비스 목록
 const services = [
@@ -53,6 +53,20 @@ const features = [
 ];
 
 export default function About() {
+  const navigate = useNavigate();
+
+  // 서비스 둘러보기 클릭 시 메인 페이지 AI 서비스 섹션으로 이동
+  const handleGoToServices = () => {
+    navigate('/');
+    // 약간의 딜레이 후 스크롤 (페이지 로드 대기)
+    setTimeout(() => {
+      const servicesSection = document.getElementById('services');
+      if (servicesSection) {
+        servicesSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
+  };
+
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
@@ -106,11 +120,11 @@ export default function About() {
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span><strong>운영기관:</strong> 충주시청 정보통신과</span>
+                  <span><strong>운영기관:</strong> 충주시청 자치행정과</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span><strong>서비스 시작:</strong> 2026년 1월</span>
+                  <span><strong>서비스 시작:</strong> 2024년 1월</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
@@ -127,7 +141,7 @@ export default function About() {
               <ul className="space-y-3 text-slate-600">
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span>반복적인 문서 작업 자동화 </span>
+                  <span>반복적인 문서 작업 자동화 (보도자료, 공적조서, 회의록)</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
@@ -230,7 +244,46 @@ export default function About() {
             ))}
           </div>
         </div>
-      </section>      
+      </section>
+
+      {/* 시스템 아키텍처 */}
+      <section className="py-16 bg-white">
+        <div className="max-w-5xl mx-auto px-4">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold text-slate-900 mb-4">시스템 아키텍처</h2>
+            <p className="text-slate-600">Azure 클라우드 기반 안정적인 서비스 구조</p>
+          </div>
+
+          <div className="bg-slate-50 rounded-2xl p-8 border border-slate-200">
+            <pre className="text-xs sm:text-sm text-slate-600 overflow-x-auto font-mono leading-relaxed">
+{`┌─────────────────────────────────────────────────────────────┐
+│                      Azure Cloud                              │
+│                                                               │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │     Azure Static Web Apps (Frontend)                │    │
+│  │     React + Vite + TailwindCSS                      │    │
+│  └──────────────────────┬──────────────────────────────┘    │
+│                         │                                    │
+│                         │ API 요청                           │
+│                         ▼                                    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │     Azure Container Apps (Backend)                  │    │
+│  │     FastAPI + Python 3.11 + FAISS                   │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                         │                                    │
+└─────────────────────────┼────────────────────────────────────┘
+                          │
+        ┌─────────────────┼─────────────────┐
+        │                 │                 │
+        ▼                 ▼                 ▼
+┌───────────────┐  ┌──────────────┐  ┌─────────────┐
+│   Supabase    │  │  OpenAI API  │  │  Kakao API  │
+│  Storage/DB   │  │  GPT-4o      │  │  주소검색   │
+└───────────────┘  └──────────────┘  └─────────────┘`}
+            </pre>
+          </div>
+        </div>
+      </section>
 
       {/* 문의처 */}
       <section className="py-16 bg-slate-50">
@@ -246,7 +299,7 @@ export default function About() {
                 <Building2 className="text-cyan-600" size={28} />
               </div>
               <h3 className="font-bold text-slate-900 mb-2">담당부서</h3>
-              <p className="text-slate-600">충주시청 정보통신과</p>
+              <p className="text-slate-600">충주시청 자치행정과</p>
             </div>
 
             <div className="bg-white rounded-2xl p-6 text-center shadow-sm border border-slate-100">
@@ -275,13 +328,13 @@ export default function About() {
           <p className="text-slate-300 mb-8">
             AI 기반 행정 서비스로 업무 효율을 높이고 시민 만족도를 향상시키세요
           </p>
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 px-8 py-4 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold rounded-xl transition-all shadow-lg shadow-cyan-500/25"
+          <button
+            onClick={handleGoToServices}
+            className="inline-flex items-center gap-2 px-8 py-4 bg-cyan-500 hover:bg-cyan-600 text-white font-semibold rounded-xl transition-all shadow-lg shadow-cyan-500/25 cursor-pointer"
           >
             서비스 둘러보기
             <ArrowRight size={20} />
-          </Link>
+          </button>
         </div>
       </section>
     </div>
