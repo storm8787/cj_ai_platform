@@ -25,53 +25,25 @@ const communityMenus = [
 ];
 
 // 드롭다운 컴포넌트
-function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onOpen, onClose }) {
+function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
-  const timeoutRef = useRef(null);
-
-  // 외부 클릭 감지
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        onClose();
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [onClose]);
 
   // 마우스 진입 시 열기
-  // 마우스 진입 시 열기(닫혀있을 때만)
   const handleMouseEnter = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-
-    // ✅ hover는 무조건 "열기"
-    if (!isOpen) onOpen();
+    onOpen();
   };
 
-  // 마우스 이탈 시 - 일단 비활성화
+  // 마우스 이탈 시 닫기 (딜레이 없음)
   const handleMouseLeave = () => {
-    // 테스트를 위해 비활성화
-    // timeoutRef.current = setTimeout(() => {
-    //   onClose();
-    // }, 150);
+    onClose();
   };
 
-  // 메뉴 아이템 클릭
-  const handleItemClick = (e, path) => {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log('클릭됨!', path);  // 디버깅
-    // ✅ 이동 전 상태 확인
-    console.log('이동 전 pathname:', window.location.pathname);
+  // 메뉴 아이템 클릭 - navigate 사용
+  const handleItemClick = (path) => {
+    console.log('클릭!', path);
     onClose();
     navigate(path);
-
-    // ✅ 이동 후 상태 확인(라우터 반영 타이밍 때문에 setTimeout으로 한 번 더 확인)
-    setTimeout(() => {
-      console.log('이동 후 pathname:', window.location.pathname);
-    }, 0);
   };
 
   return (
@@ -82,7 +54,6 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onOpen, onCl
       onMouseLeave={handleMouseLeave}
     >
       <button
-        onClick={onToggle}
         className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
           isOpen 
             ? 'text-cyan-400 bg-slate-800' 
@@ -97,26 +68,23 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onOpen, onCl
         />
       </button>
 
-      {/* 드롭다운 메뉴 */}
+      {/* 드롭다운 메뉴 - z-index 9999로 최상위 */}
       {isOpen && (
-        <div className="absolute top-full left-0 w-56 pt-2 z-50">
-          {/* 투명 브릿지 - 마우스 이동 경로 확보 */}
+        <div 
+          className="absolute top-full left-0 w-56 pt-2"
+          style={{ zIndex: 9999 }}
+        >
           <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2">
-          onClickCapture={() => console.log('✅ 드롭다운 박스 클릭 캡처됨')}
-          {items.map((item, index) => (
-            <Link
-              key={index}
-              to={item.path}
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose(); // 드롭다운 닫기
-              }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors text-left"
-            >
-              <span className="text-lg">{item.icon}</span>
-              <span>{item.title}</span>
-            </Link>
-          ))}
+            {items.map((item, index) => (
+              <div
+                key={index}
+                onClick={() => handleItemClick(item.path)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <span className="text-lg">{item.icon}</span>
+                <span>{item.title}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -128,8 +96,8 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [openMenu, setOpenMenu] = useState(null);
 
-  const handleToggle = (menu) => {
-    setOpenMenu(prev => prev === menu ? null : menu);
+  const handleOpen = (menu) => {
+    setOpenMenu(menu);
   };
 
   const handleClose = () => {
@@ -192,18 +160,17 @@ export default function Layout({ children }) {
                 icon={Cpu}
                 items={aiServices}
                 isOpen={openMenu === 'services'}
-                onToggle={() => handleToggle('services')}     // 클릭은 토글
-                onOpen={() => setOpenMenu('services')}        // hover는 열기
+                onOpen={() => handleOpen('services')}
                 onClose={handleClose}
-              >
+              />
+
               {/* 소통공간 드롭다운 */}
               <DropdownMenu
                 label="소통공간"
                 icon={MessageSquare}
                 items={communityMenus}
                 isOpen={openMenu === 'community'}
-                onToggle={() => handleToggle('community')}
-                onOpen={() => setOpenMenu('community')}        // hover는 열기
+                onOpen={() => handleOpen('community')}
                 onClose={handleClose}
               />
             </nav>
