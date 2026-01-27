@@ -99,14 +99,18 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
           {/* 투명 브릿지 - 마우스 이동 경로 확보 */}
           <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2">
           {items.map((item, index) => (
-            <button
+            <Link
               key={index}
-              onClick={(e) => handleItemClick(e, item.path)}
+              to={item.path}
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose(); // 드롭다운 닫기
+              }}
               className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors text-left"
             >
               <span className="text-lg">{item.icon}</span>
               <span>{item.title}</span>
-            </button>
+            </Link>
           ))}
           </div>
         </div>
