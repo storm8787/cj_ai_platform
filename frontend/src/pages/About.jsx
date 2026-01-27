@@ -120,11 +120,11 @@ export default function About() {
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span><strong>운영기관:</strong> 충주시청 자치행정과</span>
+                  <span><strong>운영기관:</strong> 충주시청 정보통신과</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span><strong>서비스 시작:</strong> 2024년 1월</span>
+                  <span><strong>서비스 시작:</strong> 2026년 1월</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
@@ -260,7 +260,7 @@ export default function About() {
                 <Building2 className="text-cyan-600" size={28} />
               </div>
               <h3 className="font-bold text-slate-900 mb-2">담당부서</h3>
-              <p className="text-slate-600">충주시청 자치행정과</p>
+              <p className="text-slate-600">충주시청 정보통신과</p>
             </div>
 
             <div className="bg-white rounded-2xl p-6 text-center shadow-sm border border-slate-100">
