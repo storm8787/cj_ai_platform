@@ -49,15 +49,19 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
     onToggle();
   };
 
-  // 마우스 이탈 시 딜레이 후 닫기
+  // 마우스 이탈 시 - 일단 비활성화
   const handleMouseLeave = () => {
-    timeoutRef.current = setTimeout(() => {
-      onClose();
-    }, 150); // 150ms 딜레이
+    // 테스트를 위해 비활성화
+    // timeoutRef.current = setTimeout(() => {
+    //   onClose();
+    // }, 150);
   };
 
   // 메뉴 아이템 클릭
-  const handleItemClick = (path) => {
+  const handleItemClick = (e, path) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('클릭됨!', path);  // 디버깅
     onClose();
     navigate(path);
   };
@@ -93,7 +97,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onToggle, onClose }) {
           {items.map((item, index) => (
             <button
               key={index}
-              onClick={() => handleItemClick(item.path)}
+              onClick={(e) => handleItemClick(e, item.path)}
               className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors text-left"
             >
               <span className="text-lg">{item.icon}</span>
