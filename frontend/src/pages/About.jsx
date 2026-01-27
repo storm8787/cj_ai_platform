@@ -244,46 +244,7 @@ export default function About() {
             ))}
           </div>
         </div>
-      </section>
-
-      {/* 시스템 아키텍처 */}
-      <section className="py-16 bg-white">
-        <div className="max-w-5xl mx-auto px-4">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-slate-900 mb-4">시스템 아키텍처</h2>
-            <p className="text-slate-600">Azure 클라우드 기반 안정적인 서비스 구조</p>
-          </div>
-
-          <div className="bg-slate-50 rounded-2xl p-8 border border-slate-200">
-            <pre className="text-xs sm:text-sm text-slate-600 overflow-x-auto font-mono leading-relaxed">
-{`┌─────────────────────────────────────────────────────────────┐
-│                      Azure Cloud                              │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │     Azure Static Web Apps (Frontend)                │    │
-│  │     React + Vite + TailwindCSS                      │    │
-│  └──────────────────────┬──────────────────────────────┘    │
-│                         │                                    │
-│                         │ API 요청                           │
-│                         ▼                                    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │     Azure Container Apps (Backend)                  │    │
-│  │     FastAPI + Python 3.11 + FAISS                   │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                         │                                    │
-└─────────────────────────┼────────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
-        ▼                 ▼                 ▼
-┌───────────────┐  ┌──────────────┐  ┌─────────────┐
-│   Supabase    │  │  OpenAI API  │  │  Kakao API  │
-│  Storage/DB   │  │  GPT-4o      │  │  주소검색   │
-└───────────────┘  └──────────────┘  └─────────────┘`}
-            </pre>
-          </div>
-        </div>
-      </section>
+      </section>     
 
       {/* 문의처 */}
       <section className="py-16 bg-slate-50">
