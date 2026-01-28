@@ -26,7 +26,7 @@ const communityMenus = [
 ];
 
 // 드롭다운 컴포넌트
-function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
+function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, active}) {
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
 
@@ -54,7 +54,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <button className={`nav-link ${isOpen ? 'nav-link-active' : ''}`}>
+      <button className={`nav-link ${(isOpen || active) ? 'nav-link-active' : ''}`}>
         <Icon size={18} />
         <span>{label}</span>
         <ChevronDown 
@@ -108,6 +108,15 @@ export default function Layout({ children }) {
     setOpenMenu(null);
   }, [location.pathname]);
 
+  // ✅ 여기!!! (return 바로 위)
+  const isServicesActive = aiServices.some(
+    (s) => location.pathname === s.path
+  );
+
+  const isCommunityActive = communityMenus.some(
+    (s) => location.pathname === s.path
+  );
+
   return (
     <div className="min-h-screen bg-slate-950">
       {/* Header */}
@@ -139,12 +148,8 @@ export default function Layout({ children }) {
               {/* 시스템 소개 */}
               <Link
                 to="/about"
-                className={`flex items-center gap-1.5 px-4 py-2 text-xl font-bold rounded-lg transition-all ${
-                  location.pathname === '/about'
-                    ? 'text-cyan-400 bg-slate-800'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
+                className={`nav-link ${location.pathname === '/about' ? 'nav-link-active' : ''}`}
+                >
                 <Info size={18} />
                 <span>시스템 소개</span>
               </Link>
@@ -157,6 +162,7 @@ export default function Layout({ children }) {
                 isOpen={openMenu === 'services'}
                 onOpen={() => handleOpen('services')}
                 onClose={handleClose}
+                active={isServicesActive}
               />
 
               {/* 소통공간 드롭다운 */}
@@ -167,6 +173,7 @@ export default function Layout({ children }) {
                 isOpen={openMenu === 'community'}
                 onOpen={() => handleOpen('community')}
                 onClose={handleClose}
+                active={isCommunityActive}
               />
             </nav>
 
