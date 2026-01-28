@@ -54,13 +54,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <button
-        className={`flex items-center gap-1.5 px-4 py-2 text-xl font-bold rounded-lg transition-all ${
-          isOpen 
-            ? 'text-cyan-400 bg-slate-800' 
-            : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-        }`}
-      >
+      <button className={`nav-link ${isOpen ? 'nav-link-active' : ''}`}>
         <Icon size={18} />
         <span>{label}</span>
         <ChevronDown 
@@ -70,25 +64,24 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
       </button>
 
       {/* 드롭다운 메뉴 - z-index 9999로 최상위 */}
-      {isOpen && (
-        <div 
-          className="absolute top-full left-0 w-56 pt-2"
-          style={{ zIndex: 9999 }}
-        >
-          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2">
-            {items.map((item, index) => (
-              <div
-                key={index}
-                onClick={() => handleItemClick(item.path)}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-              >
+      <div 
+        className={`dropdown-menu ${isOpen ? 'dropdown-menu-open' : ''}`}
+        style={{ zIndex: 9999 }}
+      >
+        <div className="dropdown-content py-2">
+          {items.map((item, index) => (
+            <div
+              key={index}
+              onClick={() => handleItemClick(item.path)}
+              className="dropdown-item"
+            >
                 <span className="text-lg">{item.icon}</span>
                 <span>{item.title}</span>
               </div>
             ))}
           </div>
         </div>
-      )}
+      
     </div>
   );
 }
@@ -118,7 +111,7 @@ export default function Layout({ children }) {
   return (
     <div className="min-h-screen bg-slate-950">
       {/* Header */}
-      <header className="bg-slate-950 shadow-2xl border-b border-slate-800 sticky top-0 z-50">
+      <header className="glass-header sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             {/* 로고 */}
@@ -137,15 +130,11 @@ export default function Layout({ children }) {
               {/* 홈으로 */}
               <Link
                 to="/"
-                className={`flex items-center gap-1.5 px-4 py-2 text-xl font-bold rounded-lg transition-all ${
-                  location.pathname === '/'
-                    ? 'text-cyan-400 bg-slate-800'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
+                className={`nav-link ${location.pathname === '/' ? 'nav-link-active' : ''}`}
+                >
                 <Home size={18} />
                 <span>홈으로</span>
-              </Link>
+                </Link>
 
               {/* 시스템 소개 */}
               <Link
@@ -188,10 +177,8 @@ export default function Layout({ children }) {
                   {user.email}
                 </span>
               )}
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800/50 transition-all"
-              >
+              <button onClick={handleLogout} className="btn-logout">
+
                 <LogOut size={16} />
                 <span>로그아웃</span>
               </button>
