@@ -117,4 +117,4 @@ class SupabaseService:
 
 
 # 싱글톤 인스턴스
-supabase_service = SupabaseService()
+#supabase_service = SupabaseService()
