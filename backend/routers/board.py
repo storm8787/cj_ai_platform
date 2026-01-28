@@ -245,9 +245,12 @@ async def create_board_with_file(
     if file:
         file_content = await file.read()
         file_name = file.filename
-        # 파일명에서 특수문자 제거
-        safe_filename = "".join(c for c in file_name if c.isalnum() or c in '._-')
-        storage_path = f"{board_type}/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_filename}"
+        # 파일 확장자 추출
+        file_ext = file_name.split('.')[-1] if '.' in file_name else 'bin'
+        # UUID로 안전한 파일명 생성
+        import uuid
+        safe_filename = f"{uuid.uuid4().hex}.{file_ext}"
+        storage_path = f"{board_type}/{datetime.now().strftime('%Y%m%d')}_{safe_filename}"
         
         async with httpx.AsyncClient() as client:
             upload_response = await client.post(
