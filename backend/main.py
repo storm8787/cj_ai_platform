@@ -16,6 +16,8 @@ from routers import address_geocoder, kakao_promo, excel_merger, meeting_summari
 from routers import report_writer
 from routers import auth  # 추가
 
+from routers import board
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """애플리케이션 시작/종료 시 실행"""
@@ -61,6 +63,7 @@ app.include_router(meeting_summarizer.router, prefix="/api/meeting", tags=["회�
 app.include_router(report_writer.router, prefix="/api/report-writer", tags=["업무보고"])
 
 app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
+app.include_router(board.router, prefix="/api/board", tags=["게시판"])
 
 @app.get("/")
 async def root():
