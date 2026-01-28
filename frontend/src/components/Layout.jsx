@@ -1,224 +1,94 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Home, Info, Cpu, MessageSquare, LogOut, User } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { Home, Info, Settings, MessageSquare, User, LogOut } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
 
-// AI 서비스 목록
-const aiServices = [
-  { icon: '📰', title: '충주시 뉴스', path: '/news' },
-  { icon: '📝', title: '보도자료 생성기', path: '/press-release' },
-  { icon: '🏅', title: '공적조서 생성기', path: '/merit-report' },
-  { icon: '📊', title: 'AI 통계분석 챗봇', path: '/data-analysis' },
-  { icon: '🌐', title: '다국어 번역기', path: '/translator' },
-  { icon: '⚖️', title: '선거법 챗봇', path: '/election-law' },
-  { icon: '🎙️', title: '회의 요약기', path: '/meeting-summary' },
-  { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
-  { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
-  { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
-  { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },
-];
-
-// 소통공간 메뉴
-const communityMenus = [
-  { icon: '📢', title: '공지사항', path: '/board/notice' },
-  { icon: '❓', title: '묻고답하기', path: '/board/qna' },
-  { icon: '📁', title: '자료실', path: '/board/archive' },
-];
-
-// 드롭다운 메뉴 컴포넌트
-function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, align = 'left' }) {
-  const dropdownRef = useRef(null);
-  const navigate = useNavigate();
-
-  // 드롭다운 외부 클릭 시 닫기
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        onClose();
-      }
-    };
-    if (isOpen) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen, onClose]);
-
-  const handleItemClick = (e, path) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onClose();
-    navigate(path);
-  };
-
-  const menuAlignClass = align === 'right' ? 'right-0' : 'left-0';
-
-  return (
-    <div
-      className="relative"
-      ref={dropdownRef}
-      onMouseEnter={onOpen}
-      onMouseLeave={onClose}
-    >
-      <button
-        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-          isOpen ? 'text-cyan-400 bg-slate-800' : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-        }`}
-      >
-        <Icon size={18} />
-        <span>{label}</span>
-        <ChevronDown size={16} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <div className={`absolute top-full ${menuAlignClass} w-56 pt-2`} style={{ zIndex: 9999 }}>
-          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
-            {items.map((item, index) => (
-              <button
-                key={index}
-                onClick={(e) => handleItemClick(e, item.path)}
-                className="w-full px-4 py-3 text-left flex items-center gap-3 hover:bg-slate-800 transition-colors group"
-              >
-                <span className="text-lg">{item.icon}</span>
-                <span className="text-sm text-slate-300 group-hover:text-white">{item.title}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default function Layout({ children }) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [openMenu, setOpenMenu] = useState(null);
+export default function Layout() {
   const { user, logout } = useAuth();
-
-  const handleOpen = (menu) => setOpenMenu(menu);
-  const handleClose = () => setOpenMenu(null);
+  const navigate = useNavigate();
 
   const handleLogout = async () => {
     await logout();
-    navigate('/login');
+    navigate("/login");
   };
 
-  useEffect(() => {
-    setOpenMenu(null);
-  }, [location.pathname]);
+  const navItemClass = ({ isActive }) =>
+    `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition
+     ${
+       isActive
+         ? "bg-cyan-500/15 text-cyan-300"
+         : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
+     }`;
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      {/* Header */}
-      <header className="bg-slate-950 shadow-2xl border-b border-slate-800 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* ✅ 좌: 로고 / 우: (위 사용자) + (아래 메뉴) */}
-          <div className="py-4 flex items-start justify-between gap-6">
-            {/* Left: Brand */}
-            <Link to="/" className="flex items-center space-x-3 group shrink-0">
-              <div className="w-12 h-12 bg-cyan-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg shadow-cyan-500/30">
-                <span className="text-2xl">🏛️</span>
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-white">충주시 AI 플랫폼</h1>
-                <p className="text-xs text-cyan-300">Chungju AI Platform</p>
-              </div>
-            </Link>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      {/* ================= Header ================= */}
+      <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/80 backdrop-blur-xl">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+          {/* Left: Logo */}
+          <div
+            className="flex items-center gap-3 cursor-pointer"
+            onClick={() => navigate("/")}
+          >
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
+              <Home className="text-cyan-300" />
+            </div>
+            <div>
+              <div className="font-bold text-white">충주시 AI 플랫폼</div>
+              <div className="text-xs text-slate-400">Chungju AI Platform</div>
+            </div>
+          </div>
 
-            {/* Right: User(Top) + Menu(Bottom) */}
-            <div className="flex flex-col items-end gap-3 w-full">
-              {/* Top: User box */}
-              <div className="flex items-center gap-3 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-2">
-                <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center">
+          {/* Right: User + Menu (Card) */}
+          <div className="flex flex-col items-end">
+            <div className="bg-slate-900/40 border border-slate-800 rounded-2xl px-3 py-2 backdrop-blur-xl">
+              {/* User Row */}
+              <div className="flex items-center justify-end gap-2">
+                <div className="w-8 h-8 rounded-lg bg-slate-800/70 flex items-center justify-center">
                   <User size={16} className="text-slate-300" />
                 </div>
-                <div className="flex flex-col leading-tight text-right">
-                  <span className="text-xs text-slate-400">사용자</span>
-                  <span className="text-sm text-slate-200">
-                    {user?.email || '로그인 정보 없음'}
-                  </span>
-                </div>
-
-                <div className="h-6 w-px bg-slate-800 mx-1" />
-
+                <span className="text-sm text-slate-200">{user?.email}</span>
                 <button
                   onClick={handleLogout}
-                  className="flex items-center gap-1.5 px-2 py-1 text-sm font-medium text-slate-300 hover:text-red-300 rounded-lg hover:bg-slate-800/50 transition-all"
+                  className="ml-2 flex items-center gap-1.5 px-2 py-1 text-sm font-medium
+                             text-slate-300 hover:text-red-300
+                             rounded-lg hover:bg-slate-800/50 transition-all"
                 >
                   <LogOut size={16} />
-                  <span>로그아웃</span>
+                  로그아웃
                 </button>
               </div>
 
-              {/* Bottom: Menu row (right aligned) */}
+              {/* Divider */}
+              <div className="my-2 h-px bg-slate-800" />
+
+              {/* Menu Row */}
               <nav className="hidden md:flex items-center gap-1 justify-end">
-                <Link
-                  to="/"
-                  className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                    location.pathname === '/'
-                      ? 'text-cyan-400 bg-slate-800'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Home size={18} />
-                  <span>홈으로</span>
-                </Link>
-
-                <Link
-                  to="/about"
-                  className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                    location.pathname === '/about'
-                      ? 'text-cyan-400 bg-slate-800'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Info size={18} />
-                  <span>시스템 소개</span>
-                </Link>
-
-                {/* 드롭다운은 오른쪽 정렬로 열리게 align="right" */}
-                <DropdownMenu
-                  label="AI 서비스"
-                  icon={Cpu}
-                  items={aiServices}
-                  isOpen={openMenu === 'services'}
-                  onOpen={() => handleOpen('services')}
-                  onClose={handleClose}
-                  align="right"
-                />
-
-                <DropdownMenu
-                  label="소통공간"
-                  icon={MessageSquare}
-                  items={communityMenus}
-                  isOpen={openMenu === 'community'}
-                  onOpen={() => handleOpen('community')}
-                  onClose={handleClose}
-                  align="right"
-                />
+                <NavLink to="/" className={navItemClass}>
+                  <Home size={16} />
+                  홈으로
+                </NavLink>
+                <NavLink to="/about" className={navItemClass}>
+                  <Info size={16} />
+                  시스템 소개
+                </NavLink>
+                <NavLink to="/services" className={navItemClass}>
+                  <Settings size={16} />
+                  AI 서비스
+                </NavLink>
+                <NavLink to="/community" className={navItemClass}>
+                  <MessageSquare size={16} />
+                  소통공간
+                </NavLink>
               </nav>
-
-              {/* Mobile menu button (필요시 추후 확장) */}
-              <button className="md:hidden text-slate-300 hover:text-white">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main>{children}</main>
-
-      {/* Footer */}
-      <footer className="bg-slate-950 text-slate-400 border-t border-slate-800 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="text-center text-sm">
-            <p>© 2026 충주시 AI 플랫폼 · All rights reserved.</p>
-            <p className="mt-1">AI 기반 스마트 업무도구로 더 나은 행정서비스를 만들어갑니다</p>
-          </div>
-        </div>
-      </footer>
+      {/* ================= Main ================= */}
+      <main>
+        <Outlet />
+      </main>
     </div>
   );
 }
