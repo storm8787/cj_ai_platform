@@ -1,63 +1,116 @@
-import { Routes, Route, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
+
+// Pages
+import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import NewsViewer from './pages/NewsViewer';
 import PressRelease from './pages/PressRelease';
-import ElectionLaw from './pages/ElectionLaw';
 import MeritReport from './pages/MeritReport';
 import DataAnalysis from './pages/DataAnalysis';
 import Translator from './pages/Translator';
-import AddressGeocoder from './pages/AddressGeocoder';
-import KakaoPromo from './pages/KakaoPromo';
-import ExcelMerger from './pages/ExcelMerger';
+import ElectionLaw from './pages/ElectionLaw';
 import MeetingSummarizer from './pages/MeetingSummarizer';
+import KakaoPromo from './pages/KakaoPromo';
 import ReportWriter from './pages/ReportWriter';
+import AddressGeocoder from './pages/AddressGeocoder';
+import ExcelMerger from './pages/ExcelMerger';
 import About from './pages/About';
+import NotFound from './pages/NotFound';
 
-// 페이지별 타이틀 매핑
-const pageTitles = {
-  '/': '충주시 AI 플랫폼',
-  '/news': '뉴스 조회',
-  '/press-release': '보도자료 생성',
-  '/election-law': '선거법 챗봇',
-  '/merit-report': '표창장 생성',
-  '/data-analysis': 'AI 통계분석',
-  '/translator': '다국어 번역',
-  '/address-geocoder': '주소-좌표 변환',
-  '/kakao-promo': '카카오 홍보문구',
-  '/excel-merger': '엑셀 취합',
-  '/meeting-summary': '회의록 요약'
-};
+// 보호된 라우트 컴포넌트
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, loading } = useAuth();
 
-function App() {
-  const location = useLocation();
+  // 로딩 중일 때 스피너 표시
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-400">로딩 중...</p>
+        </div>
+      </div>
+    );
+  }
 
-  // 페이지 이동 시 타이틀 변경
-  useEffect(() => {
-    const pageTitle = pageTitles[location.pathname] || '충주시 AI 플랫폼';
-    document.title = pageTitle;
-  }, [location]);
+  // 인증 안 되면 로그인 페이지로
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
 
+  return children;
+}
+
+// 이미 로그인한 사용자는 메인으로
+function PublicRoute({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+
+  return children;
+}
+
+function AppRoutes() {
   return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/news" element={<NewsViewer />} />
-        <Route path="/press-release" element={<PressRelease />} />
-        <Route path="/election-law" element={<ElectionLaw />} />
-        <Route path="/merit-report" element={<MeritReport />} />
-        <Route path="/data-analysis" element={<DataAnalysis />} />
-        <Route path="/translator" element={<Translator />} />
-        <Route path="/address-geocoder" element={<AddressGeocoder />} />
-        <Route path="/kakao-promo" element={<KakaoPromo />} />
-        <Route path="/excel-merger" element={<ExcelMerger />} />
-        <Route path="/meeting-summary" element={<MeetingSummarizer />} />
-        <Route path="/report-writer" element={<ReportWriter />} />
-        <Route path="/about" element={<About />} />
-      </Routes>
-    </Layout>
+    <Routes>
+      {/* 로그인 페이지 (비인증 사용자만) */}
+      <Route 
+        path="/login" 
+        element={
+          <PublicRoute>
+            <Login />
+          </PublicRoute>
+        } 
+      />
+
+      {/* 보호된 라우트들 (인증 필요) */}
+      <Route 
+        path="/*" 
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/news" element={<NewsViewer />} />
+                <Route path="/press-release" element={<PressRelease />} />
+                <Route path="/merit-report" element={<MeritReport />} />
+                <Route path="/data-analysis" element={<DataAnalysis />} />
+                <Route path="/translator" element={<Translator />} />
+                <Route path="/election-law" element={<ElectionLaw />} />
+                <Route path="/meeting-summary" element={<MeetingSummarizer />} />
+                <Route path="/kakao-promo" element={<KakaoPromo />} />
+                <Route path="/report-writer" element={<ReportWriter />} />
+                <Route path="/address-geocoder" element={<AddressGeocoder />} />
+                <Route path="/excel-merger" element={<ExcelMerger />} />
+                <Route path="/about" element={<About />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Layout>
+          </ProtectedRoute>
+        } 
+      />
+    </Routes>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <Router>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </Router>
+  );
+}
