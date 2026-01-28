@@ -55,7 +55,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
       onMouseLeave={handleMouseLeave}
     >
       <button
-        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+        className={`flex items-center gap-1.5 px-4 py-2 text-xl font-bold rounded-lg transition-all ${
           isOpen 
             ? 'text-cyan-400 bg-slate-800' 
             : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
@@ -137,7 +137,7 @@ export default function Layout({ children }) {
               {/* 홈으로 */}
               <Link
                 to="/"
-                className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                className={`flex items-center gap-1.5 px-4 py-2 text-xl font-bold rounded-lg transition-all ${
                   location.pathname === '/'
                     ? 'text-cyan-400 bg-slate-800'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
@@ -150,7 +150,7 @@ export default function Layout({ children }) {
               {/* 시스템 소개 */}
               <Link
                 to="/about"
-                className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                className={`flex items-center gap-1.5 px-4 py-2 text-xl font-bold rounded-lg transition-all ${
                   location.pathname === '/about'
                     ? 'text-cyan-400 bg-slate-800'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
