@@ -6,6 +6,9 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["'Pretendard'", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
+      },
       colors: {
         primary: {
           50: '#f0fdf4',
