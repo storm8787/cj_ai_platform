@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Home, Info, Cpu, MessageSquare } from 'lucide-react';
+import { ChevronDown, Home, Info, Cpu, MessageSquare, LogOut } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 // AI 서비스 목록
 const aiServices = [
@@ -95,6 +96,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
 export default function Layout({ children }) {
   const location = useLocation();
   const [openMenu, setOpenMenu] = useState(null);
+  const { user, logout } = useAuth();
 
   const handleOpen = (menu) => {
     setOpenMenu(menu);
@@ -102,6 +104,10 @@ export default function Layout({ children }) {
 
   const handleClose = () => {
     setOpenMenu(null);
+  };
+
+  const handleLogout = async () => {
+    await logout();
   };
 
   // 페이지 이동 시 메뉴 닫기
@@ -174,6 +180,22 @@ export default function Layout({ children }) {
                 onClose={handleClose}
               />
             </nav>
+
+            {/* 사용자 정보 & 로그아웃 */}
+            <div className="hidden md:flex items-center gap-3">
+              {user && (
+                <span className="text-sm text-slate-400">
+                  {user.email}
+                </span>
+              )}
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800/50 transition-all"
+              >
+                <LogOut size={16} />
+                <span>로그아웃</span>
+              </button>
+            </div>
 
             {/* 모바일 메뉴 버튼 */}
             <button className="md:hidden text-slate-300 hover:text-white">
