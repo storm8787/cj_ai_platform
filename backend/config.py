@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # DeepL API (번역기용)
     DEEPL_API_KEY: str = ""
     
+    # Kakao API (주소-좌표 변환용)
+    KAKAO_API_KEY: str = ""
+    
     # Supabase
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
@@ -34,6 +37,9 @@ class Settings(BaseSettings):
     
     # 임베딩 모델
     EMBEDDING_MODEL: str = "jhgan/ko-sroberta-multitask"
+
+    SUPABASE_URL: str = "https://hhlelnlvprymnymvdnsn.supabase.co"
+    SUPABASE_KEY: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhobGVsbmx2cHJ5bW55bXZkbnNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MjEwMTMsImV4cCI6MjA4NTA5NzAxM30.DoFjVf9pUCF_1giQAKlMYLJZbsqEk-gM4DKsZ5_dfbE"
     
     @property
     def cors_origins_list(self) -> List[str]:
