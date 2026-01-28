@@ -10,6 +10,8 @@ export default {
         sans: ["'Pretendard'", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
       },
       colors: {
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
         primary: {
           50: '#f0fdf4',
           100: '#dcfce7',
