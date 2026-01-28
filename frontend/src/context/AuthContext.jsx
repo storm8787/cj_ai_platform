@@ -23,7 +23,7 @@ export function AuthProvider({ children }) {
     }
 
     try {
-      const response = await api.get('/auth/verify', {
+      const response = await api.get('/api/auth/verify', {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -49,7 +49,7 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     try {
-      const response = await api.post('/auth/login', { email, password });
+      const response = await api.post('/api/auth/login', { email, password });
       
       if (response.data.success) {
         localStorage.setItem('access_token', response.data.access_token);
@@ -70,7 +70,7 @@ export function AuthProvider({ children }) {
 
   const signup = async (email, password) => {
     try {
-      const response = await api.post('/auth/signup', { email, password });
+      const response = await api.post('/api/auth/signup', { email, password });
       
       if (response.data.success) {
         // 이메일 확인이 필요한 경우
@@ -104,7 +104,7 @@ export function AuthProvider({ children }) {
     
     try {
       if (token) {
-        await api.post('/auth/logout', null, {
+        await api.post('/api/auth/logout', null, {
           headers: { Authorization: `Bearer ${token}` }
         });
       }
@@ -120,7 +120,7 @@ export function AuthProvider({ children }) {
 
   const refreshAccessToken = async (refreshToken) => {
     try {
-      const response = await api.post('/auth/refresh', { refresh_token: refreshToken });
+      const response = await api.post('/api/auth/refresh', { refresh_token: refreshToken });
       
       if (response.data.success) {
         localStorage.setItem('access_token', response.data.access_token);
