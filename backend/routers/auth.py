@@ -225,15 +225,7 @@ async def refresh_token(refresh_token: str):
         raise HTTPException(status_code=500, detail=f"토큰 갱신 오류: {str(e)}")
 
 
-@router.get("/status")
-async def get_status():
-    """서비스 상태 확인"""
-    return {
-        "status": "active",
-        "service": "인증 서비스",
-        "supabase_url": SUPABASE_URL[:30] + "..." if SUPABASE_URL else "Not configured"
-    }
-@router.get("/me", response_model=dict)
+@router.get("/me")
 async def get_current_user(authorization: Optional[str] = Header(None)):
     """현재 사용자 정보 + 권한 조회"""
     if not authorization:
@@ -255,12 +247,15 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
         
         # 2. 프로필(권한) 가져오기
         profile_response = await client.get(
-            f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}&select=*",
+            f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}&select=role",
             headers={**HEADERS, "Authorization": f"Bearer {token}"}
         )
         
-        profile = profile_response.json()
-        role = profile[0]['role'] if profile else 'user'
+        role = 'user'
+        if profile_response.status_code == 200:
+            profile = profile_response.json()
+            if profile and len(profile) > 0:
+                role = profile[0].get('role', 'user')
         
         return {
             "id": user['id'],
@@ -268,3 +263,13 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
             "role": role,
             "isAdmin": role == 'admin'
         }
+
+
+@router.get("/status")
+async def get_status():
+    """서비스 상태 확인"""
+    return {
+        "status": "active",
+        "service": "인증 서비스",
+        "supabase_url": SUPABASE_URL[:30] + "..." if SUPABASE_URL else "Not configured"
+    }
