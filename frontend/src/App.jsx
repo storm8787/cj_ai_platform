@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 
@@ -77,27 +77,114 @@ function AppRoutes() {
 
       {/* 보호된 라우트들 (인증 필요) */}
       <Route 
-        path="/*" 
+        path="/" 
         element={
           <ProtectedRoute>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/news" element={<NewsViewer />} />
-                <Route path="/press-release" element={<PressRelease />} />
-                <Route path="/merit-report" element={<MeritReport />} />
-                <Route path="/data-analysis" element={<DataAnalysis />} />
-                <Route path="/translator" element={<Translator />} />
-                <Route path="/election-law" element={<ElectionLaw />} />
-                <Route path="/meeting-summary" element={<MeetingSummarizer />} />
-                <Route path="/kakao-promo" element={<KakaoPromo />} />
-                <Route path="/report-writer" element={<ReportWriter />} />
-                <Route path="/address-geocoder" element={<AddressGeocoder />} />
-                <Route path="/excel-merger" element={<ExcelMerger />} />
-                <Route path="/about" element={<About />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Layout>
+            <Layout><Dashboard /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/news" 
+        element={
+          <ProtectedRoute>
+            <Layout><NewsViewer /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/press-release" 
+        element={
+          <ProtectedRoute>
+            <Layout><PressRelease /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/merit-report" 
+        element={
+          <ProtectedRoute>
+            <Layout><MeritReport /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/data-analysis" 
+        element={
+          <ProtectedRoute>
+            <Layout><DataAnalysis /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/translator" 
+        element={
+          <ProtectedRoute>
+            <Layout><Translator /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/election-law" 
+        element={
+          <ProtectedRoute>
+            <Layout><ElectionLaw /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/meeting-summary" 
+        element={
+          <ProtectedRoute>
+            <Layout><MeetingSummarizer /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/kakao-promo" 
+        element={
+          <ProtectedRoute>
+            <Layout><KakaoPromo /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/report-writer" 
+        element={
+          <ProtectedRoute>
+            <Layout><ReportWriter /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/address-geocoder" 
+        element={
+          <ProtectedRoute>
+            <Layout><AddressGeocoder /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/excel-merger" 
+        element={
+          <ProtectedRoute>
+            <Layout><ExcelMerger /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/about" 
+        element={
+          <ProtectedRoute>
+            <Layout><About /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="*" 
+        element={
+          <ProtectedRoute>
+            <Layout><NotFound /></Layout>
           </ProtectedRoute>
         } 
       />
@@ -107,10 +194,8 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <Router>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </Router>
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
   );
 }
