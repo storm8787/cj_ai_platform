@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { HelpCircle, Plus, Eye, MessageCircle, ChevronLeft, ChevronRight, Search, CheckCircle } from 'lucide-react';
 
+
+
 export default function QnaBoard() {
   const navigate = useNavigate();
   const { user } = useAuth();
