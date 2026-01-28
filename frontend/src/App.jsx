@@ -19,6 +19,13 @@ import ExcelMerger from './pages/ExcelMerger';
 import About from './pages/About';
 import NotFound from './pages/NotFound';
 
+import NoticeBoard from './pages/NoticeBoard';
+import ArchiveBoard from './pages/ArchiveBoard';
+import QnaBoard from './pages/QnaBoard';
+import BoardDetail from './pages/BoardDetail';
+import BoardWrite from './pages/BoardWrite';
+import BoardEdit from './pages/BoardEdit';
+
 // 보호된 라우트 컴포넌트
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -188,6 +195,13 @@ function AppRoutes() {
           </ProtectedRoute>
         } 
       />
+      // Routes 안에 추가
+      <Route path="/board/notice" element={<ProtectedRoute><Layout><NoticeBoard /></Layout></ProtectedRoute>} />
+      <Route path="/board/archive" element={<ProtectedRoute><Layout><ArchiveBoard /></Layout></ProtectedRoute>} />
+      <Route path="/board/qna" element={<ProtectedRoute><Layout><QnaBoard /></Layout></ProtectedRoute>} />
+      <Route path="/board/:boardType/:id" element={<ProtectedRoute><Layout><BoardDetail /></Layout></ProtectedRoute>} />
+      <Route path="/board/:boardType/write" element={<ProtectedRoute><Layout><BoardWrite /></Layout></ProtectedRoute>} />
+      <Route path="/board/:boardType/edit/:id" element={<ProtectedRoute><Layout><BoardEdit /></Layout></ProtectedRoute>} />
     </Routes>
   );
 }
