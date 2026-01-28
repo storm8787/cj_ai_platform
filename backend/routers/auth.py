@@ -233,3 +233,38 @@ async def get_status():
         "service": "인증 서비스",
         "supabase_url": SUPABASE_URL[:30] + "..." if SUPABASE_URL else "Not configured"
     }
+@router.get("/me", response_model=dict)
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """현재 사용자 정보 + 권한 조회"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="인증 필요")
+    
+    token = authorization.replace("Bearer ", "")
+    
+    async with httpx.AsyncClient() as client:
+        # 1. 사용자 정보 가져오기
+        user_response = await client.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={**HEADERS, "Authorization": f"Bearer {token}"}
+        )
+        
+        if user_response.status_code != 200:
+            raise HTTPException(status_code=401, detail="유효하지 않은 토큰")
+        
+        user = user_response.json()
+        
+        # 2. 프로필(권한) 가져오기
+        profile_response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}&select=*",
+            headers={**HEADERS, "Authorization": f"Bearer {token}"}
+        )
+        
+        profile = profile_response.json()
+        role = profile[0]['role'] if profile else 'user'
+        
+        return {
+            "id": user['id'],
+            "email": user['email'],
+            "role": role,
+            "isAdmin": role == 'admin'
+        }
