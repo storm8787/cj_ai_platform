@@ -1,26 +1,84 @@
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  /* 페이지 전체 레이아웃 (wide layout) */
-  html, body, #root {
+  /* 전체 레이아웃 유지 */
+  html,
+  body,
+  #root {
     @apply h-full w-full;
   }
 
   body {
-    @apply bg-slate-950 text-gray-900;
+    /* 🔁 기존 색상 직접 지정 → 디자인 토큰으로 교체 */
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif;
     margin: 0;
     padding: 0;
   }
 
-  /* 전체 컨테이너 최대 너비 설정 */
+  /* 루트 컨테이너 */
   #root {
     @apply max-w-full;
   }
 }
 
+
 @layer components {
+  /* 헤더 글래스모피즘 효과 */
+  .glass-header {
+    @apply bg-slate-950/80 backdrop-blur-xl border-b border-slate-800;
+  }
+
+  /* 네비게이션 링크 기본 스타일 */
+  .nav-link {
+    @apply flex items-center gap-2 px-4 py-2.5 text-[15px] font-semibold 
+           tracking-tight text-slate-400 rounded-lg transition-all duration-200 
+           hover:text-white hover:bg-slate-800/50;
+  }
+
+  /* 네비게이션 링크 활성화 상태 */
+  .nav-link-active {
+    @apply text-cyan-400 bg-cyan-500/10;
+  }
+
+  /* 드롭다운 메뉴 컨테이너 */
+  .dropdown-menu {
+    @apply absolute top-full left-0 w-64 pt-2 opacity-0 invisible 
+           translate-y-2 transition-all duration-200;
+  }
+
+  /* 드롭다운 메뉴 열린 상태 */
+  .dropdown-menu-open {
+    @apply opacity-100 visible translate-y-0;
+  }
+
+  /* 드롭다운 내용 박스 */
+  .dropdown-content {
+    @apply bg-slate-900 border border-slate-700 rounded-xl shadow-2xl 
+           shadow-black/40 overflow-hidden;
+  }
+
+  /* 드롭다운 아이템 */
+  .dropdown-item {
+    @apply flex items-center gap-3 px-4 py-3 text-sm text-slate-400 
+           hover:text-white hover:bg-slate-800 transition-colors cursor-pointer;
+  }
+
+  /* 로그아웃 버튼 */
+  .btn-logout {
+    @apply flex items-center gap-2 px-4 py-2 text-sm font-medium 
+           text-slate-400 hover:text-red-400 rounded-lg 
+           hover:bg-red-500/10 transition-all duration-200;
+  }
+
+  /* 로고 글로우 효과 */
+  .logo-glow {
+    @apply shadow-lg shadow-cyan-500/30;
+  }
   /* 버튼 스타일 */
   .btn-primary {
     @apply px-6 py-3 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg 
