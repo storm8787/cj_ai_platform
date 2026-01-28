@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Home, Info, Cpu, MessageSquare, LogOut, User } from 'lucide-react';
+import { ChevronDown, Home, Info, Cpu, MessageSquare, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 // AI 서비스 목록
@@ -25,60 +25,66 @@ const communityMenus = [
   { icon: '📁', title: '자료실', path: '/board/archive' },
 ];
 
-// 드롭다운 메뉴 컴포넌트
-function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, align = 'left' }) {
+// 드롭다운 컴포넌트
+function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose }) {
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
 
-  // 드롭다운 외부 클릭 시 닫기
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        onClose();
-      }
-    };
-    if (isOpen) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen, onClose]);
+  // 마우스 진입 시 열기
+  const handleMouseEnter = () => {
+    onOpen();
+  };
 
-  const handleItemClick = (e, path) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // 마우스 이탈 시 닫기 (딜레이 없음)
+  const handleMouseLeave = () => {
+    onClose();
+  };
+
+  // 메뉴 아이템 클릭 - navigate 사용
+  const handleItemClick = (path) => {
+    console.log('클릭!', path);
     onClose();
     navigate(path);
   };
 
-  const menuAlignClass = align === 'right' ? 'right-0' : 'left-0';
-
   return (
-    <div
-      className="relative"
+    <div 
+      className="relative" 
       ref={dropdownRef}
-      onMouseEnter={onOpen}
-      onMouseLeave={onClose}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <button
         className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-          isOpen ? 'text-cyan-400 bg-slate-800' : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+          isOpen 
+            ? 'text-cyan-400 bg-slate-800' 
+            : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
         }`}
       >
         <Icon size={18} />
         <span>{label}</span>
-        <ChevronDown size={16} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown 
+          size={16} 
+          className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} 
+        />
       </button>
 
+      {/* 드롭다운 메뉴 - z-index 9999로 최상위 */}
       {isOpen && (
-        <div className={`absolute top-full ${menuAlignClass} w-56 pt-2`} style={{ zIndex: 9999 }}>
-          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+        <div 
+          className="absolute top-full left-0 w-56 pt-2"
+          style={{ zIndex: 9999 }}
+        >
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/50 py-2">
             {items.map((item, index) => (
-              <button
+              <div
                 key={index}
-                onClick={(e) => handleItemClick(e, item.path)}
-                className="w-full px-4 py-3 text-left flex items-center gap-3 hover:bg-slate-800 transition-colors group"
+                onClick={() => handleItemClick(item.path)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 <span className="text-lg">{item.icon}</span>
-                <span className="text-sm text-slate-300 group-hover:text-white">{item.title}</span>
-              </button>
+                <span>{item.title}</span>
+              </div>
             ))}
           </div>
         </div>
@@ -89,18 +95,22 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, align
 
 export default function Layout({ children }) {
   const location = useLocation();
-  const navigate = useNavigate();
   const [openMenu, setOpenMenu] = useState(null);
   const { user, logout } = useAuth();
 
-  const handleOpen = (menu) => setOpenMenu(menu);
-  const handleClose = () => setOpenMenu(null);
+  const handleOpen = (menu) => {
+    setOpenMenu(menu);
+  };
+
+  const handleClose = () => {
+    setOpenMenu(null);
+  };
 
   const handleLogout = async () => {
     await logout();
-    navigate('/login');
   };
 
+  // 페이지 이동 시 메뉴 닫기
   useEffect(() => {
     setOpenMenu(null);
   }, [location.pathname]);
@@ -110,10 +120,9 @@ export default function Layout({ children }) {
       {/* Header */}
       <header className="bg-slate-950 shadow-2xl border-b border-slate-800 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* ✅ 좌: 로고 / 우: (위 사용자) + (아래 메뉴) */}
-          <div className="py-4 flex items-start justify-between gap-6">
-            {/* Left: Brand */}
-            <Link to="/" className="flex items-center space-x-3 group shrink-0">
+          <div className="flex justify-between items-center py-4">
+            {/* 로고 */}
+            <Link to="/" className="flex items-center space-x-3 group">
               <div className="w-12 h-12 bg-cyan-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg shadow-cyan-500/30">
                 <span className="text-2xl">🏛️</span>
               </div>
@@ -123,89 +132,85 @@ export default function Layout({ children }) {
               </div>
             </Link>
 
-            {/* Right: User(Top) + Menu(Bottom) */}
-            <div className="flex flex-col items-end w-full">
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl px-3 py-2 backdrop-blur-xl">
-                {/* Top: User box (더 작게) */}
-                <div className="flex items-center justify-end gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-slate-800/70 flex items-center justify-center">
-                    <User size={16} className="text-slate-300" />
-                  </div>
-                  <span className="text-sm text-slate-200">{user?.email}</span>
-                  <button
-                    onClick={handleLogout}
-                    className="ml-2 flex items-center gap-1.5 px-2 py-1 text-sm font-medium text-slate-300 hover:text-red-300 rounded-lg hover:bg-slate-800/50 transition-all"
-                  >
-                    <LogOut size={16} />
-                    <span>로그아웃</span>
-                  </button>
-                </div>
+            {/* 네비게이션 메뉴 */}
+            <nav className="hidden md:flex items-center gap-1">
+              {/* 홈으로 */}
+              <Link
+                to="/"
+                className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                  location.pathname === '/'
+                    ? 'text-cyan-400 bg-slate-800'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Home size={18} />
+                <span>홈으로</span>
+              </Link>
 
-                {/* Divider */}
-                <div className="my-2 h-px bg-slate-800" />
+              {/* 시스템 소개 */}
+              <Link
+                to="/about"
+                className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                  location.pathname === '/about'
+                    ? 'text-cyan-400 bg-slate-800'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Info size={18} />
+                <span>시스템 소개</span>
+              </Link>
 
-                {/* Bottom: Menu row (right aligned) */}
-                <nav className="hidden md:flex items-center gap-1 justify-end">
-                  <Link
-                    to="/"
-                    className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                      location.pathname === '/'
-                        ? 'text-cyan-400 bg-slate-800'
-                        : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <Home size={18} />
-                    <span>홈으로</span>
-                  </Link>
+              {/* AI 서비스 드롭다운 */}
+              <DropdownMenu
+                label="AI 서비스"
+                icon={Cpu}
+                items={aiServices}
+                isOpen={openMenu === 'services'}
+                onOpen={() => handleOpen('services')}
+                onClose={handleClose}
+              />
 
-                  <Link
-                    to="/about"
-                    className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                      location.pathname === '/about'
-                        ? 'text-cyan-400 bg-slate-800'
-                        : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <Info size={18} />
-                    <span>시스템 소개</span>
-                  </Link>
+              {/* 소통공간 드롭다운 */}
+              <DropdownMenu
+                label="소통공간"
+                icon={MessageSquare}
+                items={communityMenus}
+                isOpen={openMenu === 'community'}
+                onOpen={() => handleOpen('community')}
+                onClose={handleClose}
+              />
+            </nav>
 
-                  {/* 드롭다운은 오른쪽 정렬로 열리게 align="right" */}
-                  <DropdownMenu
-                    label="AI 서비스"
-                    icon={Cpu}
-                    items={aiServices}
-                    isOpen={openMenu === 'services'}
-                    onOpen={() => handleOpen('services')}
-                    onClose={handleClose}
-                    align="right"
-                  />
-
-                  <DropdownMenu
-                    label="소통공간"
-                    icon={MessageSquare}
-                    items={communityMenus}
-                    isOpen={openMenu === 'community'}
-                    onOpen={() => handleOpen('community')}
-                    onClose={handleClose}
-                    align="right"
-                  />
-                </nav>
-
-                {/* Mobile menu button (필요시 추후 확장) */}
-                <button className="md:hidden text-slate-300 hover:text-white mt-2">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
-              </div>
+            {/* 사용자 정보 & 로그아웃 */}
+            <div className="hidden md:flex items-center gap-3">
+              {user && (
+                <span className="text-sm text-slate-400">
+                  {user.email}
+                </span>
+              )}
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800/50 transition-all"
+              >
+                <LogOut size={16} />
+                <span>로그아웃</span>
+              </button>
             </div>
+
+            {/* 모바일 메뉴 버튼 */}
+            <button className="md:hidden text-slate-300 hover:text-white">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main>{children}</main>
+      <main>
+        {children}
+      </main>
 
       {/* Footer */}
       <footer className="bg-slate-950 text-slate-400 border-t border-slate-800 mt-12">
