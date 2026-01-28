@@ -245,21 +245,27 @@ async def create_board_with_file(
     if file:
         file_content = await file.read()
         file_name = file.filename
-        storage_path = f"boards/{board_type}/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_name}"
+        # 파일명에서 특수문자 제거
+        safe_filename = "".join(c for c in file_name if c.isalnum() or c in '._-')
+        storage_path = f"{board_type}/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_filename}"
         
         async with httpx.AsyncClient() as client:
             upload_response = await client.post(
                 f"{SUPABASE_URL}/storage/v1/object/boards/{storage_path}",
                 headers={
                     "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {token}",
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
                     "Content-Type": file.content_type or "application/octet-stream"
                 },
                 content=file_content
             )
             
+            print(f"Upload response: {upload_response.status_code} - {upload_response.text}")
+            
             if upload_response.status_code in [200, 201]:
                 file_url = f"{SUPABASE_URL}/storage/v1/object/public/boards/{storage_path}"
+            else:
+                print(f"Upload failed: {upload_response.text}")
     
     # 게시글 저장
     async with httpx.AsyncClient() as client:
