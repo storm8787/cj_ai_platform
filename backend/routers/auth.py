@@ -1,8 +1,8 @@
 """
 인증 API - Supabase Auth 연동
-회원가입, 로그인, 로그아웃, 토큰 검증
+회원가입(OTP), 로그인, 로그아웃, 토큰 검증
 """
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 import httpx
@@ -18,6 +18,17 @@ router = APIRouter()
 class SignUpRequest(BaseModel):
     email: EmailStr
     password: str
+    name: str
+    department: str
+
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+
+class ResendOTPRequest(BaseModel):
+    email: EmailStr
 
 
 class LoginRequest(BaseModel):
@@ -55,40 +66,52 @@ HEADERS = {
 # ===========================================
 @router.post("/signup", response_model=AuthResponse)
 async def signup(request: SignUpRequest):
-    """회원가입"""
+    """회원가입 - OTP 이메일 발송"""
     try:
         async with httpx.AsyncClient() as client:
+            # 1. 회원가입 요청 (이메일 OTP 발송됨)
             response = await client.post(
                 f"{SUPABASE_URL}/auth/v1/signup",
                 headers=HEADERS,
                 json={
                     "email": request.email,
-                    "password": request.password
+                    "password": request.password,
+                    "options": {
+                        "data": {
+                            "name": request.name,
+                            "department": request.department
+                        }
+                    }
                 }
             )
             
             data = response.json()
             
             if response.status_code == 200:
-                # 이메일 확인이 필요한 경우
-                if data.get("id") and not data.get("access_token"):
-                    return AuthResponse(
-                        success=True,
-                        message="회원가입 완료! 이메일을 확인해주세요.",
-                        user={"id": data.get("id"), "email": data.get("email")}
+                user_id = data.get("id")
+                
+                # 2. user_profiles에 추가 정보 저장
+                if user_id:
+                    await client.post(
+                        f"{SUPABASE_URL}/rest/v1/user_profiles",
+                        headers={**HEADERS, "Authorization": f"Bearer {SUPABASE_KEY}", "Prefer": "resolution=merge-duplicates"},
+                        json={
+                            "id": user_id,
+                            "email": request.email,
+                            "name": request.name,
+                            "department": request.department,
+                            "role": "user"
+                        }
                     )
-                # 이메일 확인 없이 바로 로그인
+                
                 return AuthResponse(
                     success=True,
-                    message="회원가입 성공!",
-                    access_token=data.get("access_token"),
-                    refresh_token=data.get("refresh_token"),
-                    user=data.get("user")
+                    message="인증 코드가 이메일로 발송되었습니다. 이메일을 확인해주세요.",
+                    user={"id": user_id, "email": request.email}
                 )
             else:
                 error_msg = data.get("error_description") or data.get("msg") or "회원가입 실패"
                 
-                # 이미 존재하는 이메일
                 if "already registered" in str(error_msg).lower():
                     error_msg = "이미 가입된 이메일입니다."
                 
@@ -96,6 +119,72 @@ async def signup(request: SignUpRequest):
                 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"회원가입 오류: {str(e)}")
+
+
+@router.post("/verify-otp", response_model=AuthResponse)
+async def verify_otp(request: VerifyOTPRequest):
+    """OTP 코드 검증"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{SUPABASE_URL}/auth/v1/verify",
+                headers=HEADERS,
+                json={
+                    "email": request.email,
+                    "token": request.otp,
+                    "type": "signup"
+                }
+            )
+            
+            data = response.json()
+            
+            if response.status_code == 200 and data.get("access_token"):
+                return AuthResponse(
+                    success=True,
+                    message="이메일 인증이 완료되었습니다!",
+                    access_token=data.get("access_token"),
+                    refresh_token=data.get("refresh_token"),
+                    user=data.get("user")
+                )
+            else:
+                error_msg = data.get("error_description") or data.get("msg") or "인증 실패"
+                
+                if "invalid" in str(error_msg).lower() or "expired" in str(error_msg).lower():
+                    error_msg = "인증 코드가 올바르지 않거나 만료되었습니다."
+                
+                return AuthResponse(success=False, message=error_msg)
+                
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"인증 오류: {str(e)}")
+
+
+@router.post("/resend-otp", response_model=AuthResponse)
+async def resend_otp(request: ResendOTPRequest):
+    """OTP 재발송"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{SUPABASE_URL}/auth/v1/resend",
+                headers=HEADERS,
+                json={
+                    "email": request.email,
+                    "type": "signup"
+                }
+            )
+            
+            if response.status_code == 200:
+                return AuthResponse(
+                    success=True,
+                    message="인증 코드가 재발송되었습니다."
+                )
+            else:
+                return AuthResponse(
+                    success=False,
+                    message="인증 코드 재발송에 실패했습니다."
+                )
+                
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"재발송 오류: {str(e)}")
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -125,7 +214,6 @@ async def login(request: LoginRequest):
             else:
                 error_msg = data.get("error_description") or data.get("msg") or "로그인 실패"
                 
-                # 에러 메시지 한글화
                 if "invalid" in str(error_msg).lower():
                     error_msg = "이메일 또는 비밀번호가 올바르지 않습니다."
                 elif "email not confirmed" in str(error_msg).lower():
@@ -147,7 +235,7 @@ async def logout(authorization: Optional[str] = Header(None)):
         token = authorization.replace("Bearer ", "")
         
         async with httpx.AsyncClient() as client:
-            response = await client.post(
+            await client.post(
                 f"{SUPABASE_URL}/auth/v1/logout",
                 headers={
                     **HEADERS,
@@ -158,7 +246,6 @@ async def logout(authorization: Optional[str] = Header(None)):
             return AuthResponse(success=True, message="로그아웃 완료")
             
     except Exception as e:
-        # 로그아웃은 실패해도 클라이언트에서 토큰 삭제하면 됨
         return AuthResponse(success=True, message="로그아웃 완료")
 
 
@@ -245,21 +332,28 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
         
         user = user_response.json()
         
-        # 2. 프로필(권한) 가져오기
+        # 2. 프로필(권한, 이름, 부서) 가져오기
         profile_response = await client.get(
-            f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}&select=role",
+            f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}&select=role,name,department",
             headers={**HEADERS, "Authorization": f"Bearer {token}"}
         )
         
         role = 'user'
+        name = None
+        department = None
+        
         if profile_response.status_code == 200:
             profile = profile_response.json()
             if profile and len(profile) > 0:
                 role = profile[0].get('role', 'user')
+                name = profile[0].get('name')
+                department = profile[0].get('department')
         
         return {
             "id": user['id'],
             "email": user['email'],
+            "name": name,
+            "department": department,
             "role": role,
             "isAdmin": role == 'admin'
         }
