@@ -119,7 +119,7 @@ def find_similar_field(target: str, candidates: List[str]) -> Optional[str]:
     return None
 
 
-def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
+def validate_data(df: pd.DataFrame, standard: dict, filename: str = "") -> ValidationResult:
     """데이터 검증 수행"""
     errors = []
     warnings = []
@@ -142,7 +142,28 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
     
     standard_field_names = list(field_map.keys())
     
-    # 1. 헤더 검증
+    # ========== 0. 파일명 날짜 vs 데이터기준일자 검증 ==========
+    filename_date = None
+    if filename:
+        # 파일명에서 날짜 추출: 충청북도_충주시_공연행사정보_YYYYMMDD.csv
+        date_match = re.search(r'_(\d{8})\.', filename)
+        if date_match:
+            filename_date = date_match.group(1)  # YYYYMMDD
+    
+    # ========== 1. 중복 행 검사 ==========
+    duplicate_rows = df.duplicated(keep=False)
+    duplicate_count = duplicate_rows.sum()
+    if duplicate_count > 0:
+        # 중복된 행 번호 찾기 (첫 번째 발견된 것들만)
+        dup_indices = df[df.duplicated(keep='first')].index.tolist()[:10]
+        errors.append(ValidationError(
+            type='error',
+            field='전체',
+            msg=f'중복 행 발견 ({duplicate_count}개)',
+            detail=f'중복된 행: {", ".join([str(i+2) for i in dup_indices])}{"..." if len(dup_indices) >= 10 else ""}'
+        ))
+    
+    # ========== 2. 헤더 검증 ==========
     required_fields = [f['field_name'] for f in fields if f.get('required') == '필수']
     missing_required = 0
     
@@ -184,22 +205,61 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                     detail=f'"{h}"은(는) 표준 항목에 포함되지 않은 추가 항목입니다.'
                 ))
     
-    # 2. 데이터 검증 (최대 1000행)
-    max_rows = min(len(df), 1000)
-    cell_errors = 0
-    cell_warnings = 0
+    # ========== 3. 조건부 필수 필드 파악 ==========
+    # 설명에서 조건부 필수 패턴 찾기
+    conditional_required = {}  # {필드명: {조건필드: [조건값들]}}
+    
+    for field_name, field_info in field_map.items():
+        desc = field_info['description']
+        
+        # 패턴: "~가/이 '값1', '값2' ... 인 경우 필수"
+        match = re.search(r'([가-힣]+)(?:가|이)\s+(.+?)\s*인\s*경우', desc)
+        if match and '필수' in desc:
+            cond_field = match.group(1)  # 조건 필드명
+            values_part = match.group(2)  # 조건 값들 부분
+            
+            # 따옴표로 둘러싸인 값들 추출
+            cond_values = re.findall(r"'([^']+)'", values_part)
+            
+            if cond_values:
+                conditional_required[field_name] = {
+                    'condition_field': cond_field,
+                    'condition_values': cond_values
+                }
     
     # 주소 필드명 찾기
-    road_addr_col = None  # 도로명주소 컬럼
-    jibun_addr_col = None  # 지번주소 컬럼
+    road_addr_col = None
+    jibun_addr_col = None
     for col in headers:
         if '도로명' in col and '주소' in col:
             road_addr_col = col
         if '지번' in col and '주소' in col:
             jibun_addr_col = col
     
+    # ========== 4. 데이터 검증 (최대 1000행) ==========
+    max_rows = min(len(df), 1000)
+    cell_errors = 0
+    cell_warnings = 0
+    
     for idx in range(max_rows):
         row = df.iloc[idx]
+        
+        # ========== 데이터기준일자 vs 파일명 날짜 검증 ==========
+        if filename_date and '데이터기준일자' in header_set:
+            data_date_val = str(row.get('데이터기준일자', '')).strip()
+            if data_date_val and data_date_val.lower() not in ['nan', 'null', 'none', 'nat']:
+                # YYYY-MM-DD -> YYYYMMDD 변환
+                data_date_clean = data_date_val.replace('-', '')[:8]
+                if data_date_clean != filename_date:
+                    if cell_errors < 200:
+                        errors.append(ValidationError(
+                            type='error',
+                            field='데이터기준일자',
+                            row=idx + 2,
+                            msg='파일명 날짜와 불일치',
+                            detail=f'{idx + 2}행: 데이터기준일자({data_date_val})와 파일명 날짜({filename_date[:4]}-{filename_date[4:6]}-{filename_date[6:]})가 다릅니다.'
+                        ))
+                    cell_errors += 1
         
         # 주소 조건부 필수 검증: 도로명 없으면 지번 필수
         if road_addr_col and jibun_addr_col:
@@ -236,6 +296,25 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                             jibun_val = str(row.get(jibun_addr_col, '')).strip()
                             if jibun_val and jibun_val.lower() not in ['nan', 'null', 'none', 'nat']:
                                 continue  # 지번주소가 있으니 스킵
+                    
+                    # 조건부 필수 체크
+                    if col in conditional_required:
+                        cond_info = conditional_required[col]
+                        cond_field = cond_info['condition_field']
+                        cond_values = cond_info['condition_values']
+                        
+                        # 조건 필드 찾기
+                        cond_col = None
+                        for h in headers:
+                            if cond_field in h:
+                                cond_col = h
+                                break
+                        
+                        if cond_col:
+                            cond_val = str(row.get(cond_col, '')).strip()
+                            # 조건값에 해당하지 않으면 필수 아님
+                            if cond_val not in cond_values:
+                                continue  # 조건 불충족이므로 필수 아님
                     
                     if cell_errors < 200:
                         errors.append(ValidationError(
@@ -337,23 +416,53 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
             if field_info['allowed']:
                 allowed_list = [v.strip() for v in field_info['allowed'].split('/') if v.strip()]
                 if allowed_list and len(allowed_list) < 30:
-                    val_norm = val.replace(' ', '')
-                    match = any(
-                        val_norm == a.replace(' ', '') or 
-                        val_norm in a.replace(' ', '') or 
-                        a.replace(' ', '') in val_norm
-                        for a in allowed_list
-                    )
-                    if not match and '+' not in val:
-                        if cell_warnings < 200:
-                            warnings.append(ValidationError(
-                                type='warning',
-                                field=col,
-                                row=idx + 2,
-                                msg='허용값과 불일치',
-                                detail=f'{idx + 2}행: "{val}" (허용: {", ".join(allowed_list[:5])}{"..." if len(allowed_list) > 5 else ""})'
-                            ))
-                        cell_warnings += 1
+                    val_norm = val.strip()
+                    
+                    # 엄격 매칭: 정확히 일치하는지 체크
+                    exact_match = val_norm in allowed_list
+                    
+                    # 복수값 처리 (+로 구분된 경우)
+                    if not exact_match and '+' in val_norm:
+                        val_parts = [v.strip() for v in val_norm.split('+')]
+                        exact_match = all(part in allowed_list for part in val_parts)
+                    
+                    if not exact_match:
+                        # 유사 매칭 시도 (공백 제거)
+                        loose_match = any(
+                            val_norm.replace(' ', '') == a.replace(' ', '')
+                            for a in allowed_list
+                        )
+                        
+                        if not loose_match:
+                            # 숫자 앞 0 문제 체크 (01 vs 1)
+                            potential_match = None
+                            for a in allowed_list:
+                                # 허용값이 01, 02 형태이고 입력값이 1, 2 형태인 경우
+                                if a.isdigit() and val_norm.isdigit():
+                                    if int(a) == int(val_norm) and a != val_norm:
+                                        potential_match = a
+                                        break
+                            
+                            if potential_match:
+                                if cell_errors < 200:
+                                    errors.append(ValidationError(
+                                        type='error',
+                                        field=col,
+                                        row=idx + 2,
+                                        msg='허용값 형식 불일치',
+                                        detail=f'{idx + 2}행: "{val}" → "{potential_match}"(으)로 수정 필요'
+                                    ))
+                                cell_errors += 1
+                            else:
+                                if cell_warnings < 200:
+                                    warnings.append(ValidationError(
+                                        type='warning',
+                                        field=col,
+                                        row=idx + 2,
+                                        msg='허용값과 불일치',
+                                        detail=f'{idx + 2}행: "{val}" (허용: {", ".join(allowed_list[:5])}{"..." if len(allowed_list) > 5 else ""})'
+                                    ))
+                                cell_warnings += 1
             
             # 형식 체크
             if fmt:
@@ -410,9 +519,44 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                         cell_warnings += 1
                 
                 # 좌표 형식 (소수점)
-                if '소수점' in fmt:
+                if '소수점' in fmt or ('위도' in col or '경도' in col):
                     try:
-                        float(val.replace(',', ''))
+                        coord_val = float(val.replace(',', ''))
+                        # 소수점 자릿수 체크 (6자리 이상 10자리 이하)
+                        if '.' in val:
+                            decimal_part = val.split('.')[1]
+                            decimal_len = len(decimal_part)
+                            if decimal_len < 6:
+                                if cell_warnings < 200:
+                                    warnings.append(ValidationError(
+                                        type='warning',
+                                        field=col,
+                                        row=idx + 2,
+                                        msg='좌표 소수점 자릿수 부족',
+                                        detail=f'{idx + 2}행: "{val}" (소수점 6자리 이상 필요, 현재 {decimal_len}자리)'
+                                    ))
+                                cell_warnings += 1
+                            elif decimal_len > 10:
+                                if cell_warnings < 200:
+                                    warnings.append(ValidationError(
+                                        type='warning',
+                                        field=col,
+                                        row=idx + 2,
+                                        msg='좌표 소수점 자릿수 초과',
+                                        detail=f'{idx + 2}행: "{val}" (소수점 10자리 이하 필요, 현재 {decimal_len}자리)'
+                                    ))
+                                cell_warnings += 1
+                        else:
+                            # 소수점 없는 좌표
+                            if cell_warnings < 200:
+                                warnings.append(ValidationError(
+                                    type='warning',
+                                    field=col,
+                                    row=idx + 2,
+                                    msg='좌표에 소수점 없음',
+                                    detail=f'{idx + 2}행: "{val}" (소수점 6자리 이상 필요)'
+                                ))
+                            cell_warnings += 1
                     except:
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
@@ -601,8 +745,8 @@ async def validate_file(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"파일 처리 오류: {str(e)}")
     
-    # 검증 수행
-    result = validate_data(df, standard)
+    # 검증 수행 (파일명 전달)
+    result = validate_data(df, standard, file.filename)
     
     return {
         'standard_name': standard.get('name'),
