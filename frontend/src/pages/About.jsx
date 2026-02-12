@@ -18,6 +18,7 @@ const services = [
   { icon: '📄', title: '업무보고 생성기', description: '공무원 업무보고서 작성', path: '/report-writer' },
   { icon: '📍', title: '주소-좌표 변환', description: '일괄 주소/좌표 변환', path: '/address-geocoder' },
   { icon: '📑', title: '엑셀 취합기', description: '다중 엑셀 파일 병합', path: '/excel-merger' },
+  { icon: '🤖', title: '공공데이터 검증기', description: '공공데이터 제공표준 적합성 검증', path: '/data-validator' },
 ];
 
 // 기술 스택
