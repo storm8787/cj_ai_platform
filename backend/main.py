@@ -15,6 +15,7 @@ from routers import merit_report, data_analysis, translator
 from routers import address_geocoder, kakao_promo, excel_merger, meeting_summarizer
 from routers import report_writer
 from routers import auth  # 추가
+from routers import data_validator
 
 from routers import board
 
@@ -62,6 +63,7 @@ app.include_router(kakao_promo.router, prefix="/api/kakao-promo", tags=["카카�
 app.include_router(excel_merger.router, prefix="/api/excel-merger", tags=["엑셀 취합기"])
 app.include_router(meeting_summarizer.router, prefix="/api/meeting", tags=["회의요약기"])
 app.include_router(report_writer.router, prefix="/api/report-writer", tags=["업무보고"])
+app.include_router(data_validator.router, prefix="/api/data-validator", tags=["공공데이터 검증기"])
 
 app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
 app.include_router(board.router, prefix="/api/board", tags=["게시판"])
