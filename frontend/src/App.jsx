@@ -25,6 +25,7 @@ import QnaBoard from './pages/QnaBoard';
 import BoardDetail from './pages/BoardDetail';
 import BoardWrite from './pages/BoardWrite';
 import BoardEdit from './pages/BoardEdit';
+import DataValidator from './pages/DataValidator';
 
 // 보호된 라우트 컴포넌트
 function ProtectedRoute({ children }) {
@@ -194,6 +195,14 @@ function AppRoutes() {
             <Layout><NotFound /></Layout>
           </ProtectedRoute>
         } 
+      />
+      <Route 
+        path="/data-validator" 
+        element={
+          <ProtectedRoute>
+            <Layout><DataValidator /></Layout>
+          </ProtectedRoute>
+          } 
       />
       // Routes 안에 추가
       <Route path="/board/notice" element={<ProtectedRoute><Layout><NoticeBoard /></Layout></ProtectedRoute>} />
