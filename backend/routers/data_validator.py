@@ -189,8 +189,38 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
     cell_errors = 0
     cell_warnings = 0
     
+    # 주소 필드명 찾기
+    road_addr_col = None  # 도로명주소 컬럼
+    jibun_addr_col = None  # 지번주소 컬럼
+    for col in headers:
+        if '도로명' in col and '주소' in col:
+            road_addr_col = col
+        if '지번' in col and '주소' in col:
+            jibun_addr_col = col
+    
     for idx in range(max_rows):
         row = df.iloc[idx]
+        
+        # 주소 조건부 필수 검증: 도로명 없으면 지번 필수
+        if road_addr_col and jibun_addr_col:
+            road_val = str(row.get(road_addr_col, '')).strip()
+            jibun_val = str(row.get(jibun_addr_col, '')).strip()
+            road_empty = not road_val or road_val.lower() in ['nan', 'null', 'none', 'nat']
+            jibun_empty = not jibun_val or jibun_val.lower() in ['nan', 'null', 'none', 'nat']
+            
+            if road_empty and jibun_empty:
+                if cell_errors < 200:
+                    errors.append(ValidationError(
+                        type='error',
+                        field='주소',
+                        row=idx + 2,
+                        msg='도로명주소와 지번주소 모두 비어있음',
+                        detail=f'{idx + 2}행: 도로명주소 또는 지번주소 중 하나는 필수입니다.'
+                    ))
+                cell_errors += 1
+            elif road_empty and not jibun_empty:
+                # 도로명 없고 지번만 있으면 OK (단, 지번주소가 선택 필드여도 허용)
+                pass
         
         # 모든 필드에 대해 공통 검증 (표준 필드 + 추가 필드)
         for col in headers:
@@ -198,8 +228,15 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
             
             # 빈 값이면 공통 검증 스킵
             if not val or val.lower() in ['nan', 'null', 'none', 'nat']:
-                # 필수 필드인 경우 에러
+                # 필수 필드인 경우 에러 (단, 도로명/지번 주소는 별도 처리됨)
                 if col in field_map and field_map[col]['required']:
+                    # 도로명주소가 비어있어도 지번주소가 있으면 OK
+                    if '도로명' in col and '주소' in col:
+                        if jibun_addr_col:
+                            jibun_val = str(row.get(jibun_addr_col, '')).strip()
+                            if jibun_val and jibun_val.lower() not in ['nan', 'null', 'none', 'nat']:
+                                continue  # 지번주소가 있으니 스킵
+                    
                     if cell_errors < 200:
                         errors.append(ValidationError(
                             type='error',
@@ -320,7 +357,7 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
             
             # 형식 체크
             if fmt:
-                # 날짜 형식 YYYY-MM-DD
+                # 날짜 형식 YYYY-MM-DD (전체 날짜)
                 if 'YYYY-MM-DD' in fmt:
                     if not re.match(r'^\d{4}-\d{2}-\d{2}', val):
                         if cell_warnings < 200:
@@ -333,9 +370,22 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                             ))
                         cell_warnings += 1
                 
+                # 날짜 형식 YYYY-MM (년월만)
+                elif 'YYYY-MM' in fmt and 'DD' not in fmt:
+                    if not re.match(r'^\d{4}-\d{2}$', val):
+                        if cell_warnings < 200:
+                            warnings.append(ValidationError(
+                                type='warning',
+                                field=col,
+                                row=idx + 2,
+                                msg='년월 형식 불일치',
+                                detail=f'{idx + 2}행: "{val}" (형식: YYYY-MM)'
+                            ))
+                        cell_warnings += 1
+                
                 # 시간 형식 HH24:MI
                 if 'HH24:MI' in fmt or 'HH:MM' in fmt:
-                    if not re.match(r'^\d{1,2}:\d{2}', val):
+                    if not re.match(r'^\d{1,2}:\d{2}$', val):
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
                                 type='warning',
@@ -406,15 +456,29 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                         cell_errors += 1
                 
                 # 전화번호 형식
-                if 'NNN-NNNN-NNNN' in fmt or '전화' in col:
-                    if not re.match(r'^\d{2,4}-\d{3,4}-\d{4}$', val.replace(' ', '')):
+                if 'NNN-NNNN-NNNN' in fmt or 'NNN-NNN-NNNN' in fmt or '전화' in col:
+                    phone_clean = val.replace(' ', '').replace('-', '')
+                    
+                    # 휴대폰 번호 체크 (010, 011, 016, 017, 018, 019)
+                    if re.match(r'^01[0-9]', phone_clean):
+                        if cell_errors < 200:
+                            errors.append(ValidationError(
+                                type='error',
+                                field=col,
+                                row=idx + 2,
+                                msg='휴대폰 번호 입력 (개인정보 위반)',
+                                detail=f'{idx + 2}행: "{val}" (휴대폰 번호는 개인정보로 입력 불가)'
+                            ))
+                        cell_errors += 1
+                    # 형식 체크: 00-000-0000, 000-0000-0000, 0000-0000-0000
+                    elif not re.match(r'^(\d{2,4})-(\d{3,4})-(\d{4})$', val.replace(' ', '')):
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
                                 type='warning',
                                 field=col,
                                 row=idx + 2,
                                 msg='전화번호 형식 불일치',
-                                detail=f'{idx + 2}행: "{val}" (형식: 000-0000-0000)'
+                                detail=f'{idx + 2}행: "{val}" (형식: 00-000-0000 또는 000-0000-0000)'
                             ))
                         cell_warnings += 1
     
