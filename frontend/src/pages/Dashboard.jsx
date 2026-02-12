@@ -90,6 +90,14 @@ const services = [
     path: '/excel-merger',
     badge: null,
     disabled: false
+  },
+  // 기능 카드 배열에 추가
+  {
+    title: '공공데이터 검증기',
+    description: '공공데이터 제공표준 적합성 검증',
+    icon: '🤖',
+    path: '/data-validator',
+    color: 'from-emerald-500 to-teal-600'
   }
 ];
 
