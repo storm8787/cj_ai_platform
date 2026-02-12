@@ -136,6 +136,7 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
             'required': f.get('required', '') == '필수',
             'allowed': f.get('allowed_values', ''),
             'format': f.get('format', ''),
+            'example': f.get('example', ''),
             'description': f.get('description', '')
         }
     
@@ -147,7 +148,6 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
     
     for rf in required_fields:
         if rf not in header_set:
-            # 유사 필드 찾기
             similar = find_similar_field(rf, headers)
             if similar:
                 errors.append(ValidationError(
@@ -192,28 +192,109 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
     for idx in range(max_rows):
         row = df.iloc[idx]
         
-        for field_name, field_info in field_map.items():
-            if field_name not in header_set:
-                continue
+        # 모든 필드에 대해 공통 검증 (표준 필드 + 추가 필드)
+        for col in headers:
+            val = str(row.get(col, '')).strip()
             
-            val = str(row.get(field_name, '')).strip()
-            
-            # 필수 필드 빈값 체크
-            if field_info['required']:
-                if not val or val.lower() in ['', 'nan', 'null', 'none', 'nat']:
+            # 빈 값이면 공통 검증 스킵
+            if not val or val.lower() in ['nan', 'null', 'none', 'nat']:
+                # 필수 필드인 경우 에러
+                if col in field_map and field_map[col]['required']:
                     if cell_errors < 200:
                         errors.append(ValidationError(
                             type='error',
-                            field=field_name,
+                            field=col,
                             row=idx + 2,
                             msg='필수 항목 값 비어있음',
-                            detail=f'{idx + 2}행의 "{field_name}" 값이 비어있습니다.'
+                            detail=f'{idx + 2}행의 "{col}" 값이 비어있습니다.'
                         ))
                     cell_errors += 1
-                    continue
-            
-            if not val or val.lower() in ['nan', 'null', 'none', 'nat']:
                 continue
+            
+            # ========== 공통 검증 (모든 데이터에 적용) ==========
+            
+            # 3-1. 줄바꿈 검사
+            if '\n' in val or '\r' in val:
+                if cell_errors < 200:
+                    errors.append(ValidationError(
+                        type='error',
+                        field=col,
+                        row=idx + 2,
+                        msg='줄바꿈 문자 포함',
+                        detail=f'{idx + 2}행: 필드 내 줄바꿈이 포함되어 있습니다.'
+                    ))
+                cell_errors += 1
+            
+            # 3-2. 특수문자 검사 (?, !, @ 등 - 일부 허용 제외)
+            # 허용: +, -, _, ., :, /, (, ), 공백, 한글, 영문, 숫자
+            invalid_chars = re.findall(r'[?!@#$%^&*=\[\]{}|\\<>~`]', val)
+            if invalid_chars:
+                if cell_warnings < 200:
+                    warnings.append(ValidationError(
+                        type='warning',
+                        field=col,
+                        row=idx + 2,
+                        msg='부적절한 특수문자 포함',
+                        detail=f'{idx + 2}행: "{val}" (특수문자: {", ".join(set(invalid_chars))})'
+                    ))
+                cell_warnings += 1
+            
+            # 3-3. 도로명주소 형식 검사
+            if '도로명' in col and '주소' in col:
+                # 도로명주소 패턴: ~시/도 ~시/군/구 (~읍/면) ~로/길 숫자
+                if not re.search(r'(시|도)\s+\S+(시|군|구)', val):
+                    if cell_warnings < 200:
+                        warnings.append(ValidationError(
+                            type='warning',
+                            field=col,
+                            row=idx + 2,
+                            msg='도로명주소 형식 불일치',
+                            detail=f'{idx + 2}행: "{val}" (형식: OO시/도 OO시/군/구 OO로/길 번호)'
+                        ))
+                    cell_warnings += 1
+                elif not re.search(r'(로|길)\s*\d+', val):
+                    if cell_warnings < 200:
+                        warnings.append(ValidationError(
+                            type='warning',
+                            field=col,
+                            row=idx + 2,
+                            msg='도로명주소에 도로명(로/길) 누락',
+                            detail=f'{idx + 2}행: "{val}" (도로명과 번호 필요)'
+                        ))
+                    cell_warnings += 1
+            
+            # 3-4. 지번주소 형식 검사
+            if '지번' in col and '주소' in col:
+                # 지번주소 패턴: ~시/도 ~시/군/구 ~동/읍/면/리 번지
+                if not re.search(r'(시|도)\s+\S+(시|군|구)', val):
+                    if cell_warnings < 200:
+                        warnings.append(ValidationError(
+                            type='warning',
+                            field=col,
+                            row=idx + 2,
+                            msg='지번주소 형식 불일치',
+                            detail=f'{idx + 2}행: "{val}" (형식: OO시/도 OO시/군/구 OO동/읍/면 번지)'
+                        ))
+                    cell_warnings += 1
+                # 지번주소인데 도로명(로/길) 형식으로 입력한 경우
+                elif re.search(r'(로|길)\s*\d+', val) and not re.search(r'(동|읍|면|리)\s*\d+', val):
+                    if cell_errors < 200:
+                        errors.append(ValidationError(
+                            type='error',
+                            field=col,
+                            row=idx + 2,
+                            msg='지번주소에 도로명주소 형식 입력',
+                            detail=f'{idx + 2}행: "{val}" (지번주소는 동/읍/면/리 + 번지 형식이어야 합니다)'
+                        ))
+                    cell_errors += 1
+            
+            # ========== 표준 필드 검증 ==========
+            if col not in field_map:
+                continue
+                
+            field_info = field_map[col]
+            fmt = field_info['format']
+            example = field_info['example']
             
             # 허용값 체크
             if field_info['allowed']:
@@ -230,7 +311,7 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
                                 type='warning',
-                                field=field_name,
+                                field=col,
                                 row=idx + 2,
                                 msg='허용값과 불일치',
                                 detail=f'{idx + 2}행: "{val}" (허용: {", ".join(allowed_list[:5])}{"..." if len(allowed_list) > 5 else ""})'
@@ -238,7 +319,6 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                         cell_warnings += 1
             
             # 형식 체크
-            fmt = field_info['format']
             if fmt:
                 # 날짜 형식 YYYY-MM-DD
                 if 'YYYY-MM-DD' in fmt:
@@ -246,7 +326,7 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
                                 type='warning',
-                                field=field_name,
+                                field=col,
                                 row=idx + 2,
                                 msg='날짜 형식 불일치',
                                 detail=f'{idx + 2}행: "{val}" (형식: YYYY-MM-DD)'
@@ -259,7 +339,7 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
                                 type='warning',
-                                field=field_name,
+                                field=col,
                                 row=idx + 2,
                                 msg='시간 형식 불일치',
                                 detail=f'{idx + 2}행: "{val}" (형식: HH:MM)'
@@ -272,7 +352,7 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
                                 type='warning',
-                                field=field_name,
+                                field=col,
                                 row=idx + 2,
                                 msg='Y/N 형식 불일치',
                                 detail=f'{idx + 2}행: "{val}" (Y 또는 N만 허용)'
@@ -282,15 +362,59 @@ def validate_data(df: pd.DataFrame, standard: dict) -> ValidationResult:
                 # 좌표 형식 (소수점)
                 if '소수점' in fmt:
                     try:
-                        float(val)
+                        float(val.replace(',', ''))
                     except:
                         if cell_warnings < 200:
                             warnings.append(ValidationError(
                                 type='warning',
-                                field=field_name,
+                                field=col,
                                 row=idx + 2,
                                 msg='좌표 형식 불일치',
                                 detail=f'{idx + 2}행: "{val}" (숫자 형식이어야 합니다)'
+                            ))
+                        cell_warnings += 1
+                
+                # 숫자 형식 (N/단위) - 객석수, 면적 등
+                # 예: N/석, N/면, N/㎡, N/원, N/명
+                unit_match = re.match(r'N/(.+)', fmt)
+                if unit_match:
+                    unit = unit_match.group(1)  # 석, 면, ㎡ 등
+                    
+                    # 천단위 콤마 검사
+                    if ',' in val:
+                        if cell_errors < 200:
+                            errors.append(ValidationError(
+                                type='error',
+                                field=col,
+                                row=idx + 2,
+                                msg='숫자에 천단위 콤마 포함',
+                                detail=f'{idx + 2}행: "{val}" (콤마 없이 숫자만 입력. 예: {example})'
+                            ))
+                        cell_errors += 1
+                    
+                    # 단위 문자 포함 검사 (숫자만 있어야 함)
+                    val_clean = val.replace(',', '').replace(' ', '')
+                    if not re.match(r'^-?\d+(\.\d+)?$', val_clean):
+                        if cell_errors < 200:
+                            errors.append(ValidationError(
+                                type='error',
+                                field=col,
+                                row=idx + 2,
+                                msg='숫자 형식 불일치',
+                                detail=f'{idx + 2}행: "{val}" (숫자만 입력, 단위 제외. 예: {example})'
+                            ))
+                        cell_errors += 1
+                
+                # 전화번호 형식
+                if 'NNN-NNNN-NNNN' in fmt or '전화' in col:
+                    if not re.match(r'^\d{2,4}-\d{3,4}-\d{4}$', val.replace(' ', '')):
+                        if cell_warnings < 200:
+                            warnings.append(ValidationError(
+                                type='warning',
+                                field=col,
+                                row=idx + 2,
+                                msg='전화번호 형식 불일치',
+                                detail=f'{idx + 2}행: "{val}" (형식: 000-0000-0000)'
                             ))
                         cell_warnings += 1
     
