@@ -16,6 +16,7 @@ const aiServices = [
   { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
   { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
   { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },
+  { icon: '🤖', title: '공공데이터 검증기', path: '/data-validator' },
 ];
 
 // 소통공간 메뉴
