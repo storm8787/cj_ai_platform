@@ -2,113 +2,113 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Sparkles, Sun, Moon, CloudSun } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
+// 카테고리 정의
+const categories = [
+  { id: 'all', name: '전체', icon: '🏠' },
+  { id: 'document', name: '문서 작성', icon: '📝' },
+  { id: 'data', name: '데이터 처리', icon: '📊' },
+  { id: 'translate', name: '번역/요약', icon: '🌐' },
+  { id: 'chatbot', name: '업무 챗봇', icon: '💬' },
+];
+
+// 서비스 목록 (카테고리 추가)
 const services = [
-  {
-    icon: '📰',
-    title: '충주시 뉴스',
-    description: '충주시 관련 뉴스를 자동으로 수집하고 AI가 요약합니다',
-    path: '/news',
-    badge: null,
-    disabled: false
-  },
+  // 📝 문서 작성
   {
     icon: '📝',
     title: '보도자료 생성기',
     description: 'GPT 기반 자동 보도자료 작성 시스템',
     path: '/press-release',
-    badge: null,
-    disabled: false
+    category: 'document',
   },
   {
     icon: '🏅',
     title: '공적조서 생성기',
     description: 'GPT가 공무원 공적조서를 자동으로 작성합니다',
     path: '/merit-report',
-    badge: null,
-    disabled: false
-  },
-  {
-    icon: '📊',
-    title: 'AI 통계분석 챗봇',
-    description: '엑셀 데이터를 업로드하고 자연어로 분석하세요',
-    path: '/data-analysis',
-    badge: null,
-    disabled: false
-  },
-  {
-    icon: '🌐',
-    title: '다국어 번역기',
-    description: 'HWPX 문서를 DeepL + GPT로 고품질 번역',
-    path: '/translator',
-    badge: null,
-    disabled: false
-  },
-  {
-    icon: '⚖️',
-    title: '선거법 챗봇',
-    description: '대화형 선거법 질의응답 시스템',
-    path: '/election-law',
-    badge: null,
-    disabled: false
-  },
-  {
-    icon: '🎙️',
-    title: '회의 요약기',
-    description: '회의 녹음/텍스트를 AI가 자동으로 요약합니다',
-    path: '/meeting-summary',
-    badge: null,
-    disabled: false
-  },
-  {
-    icon: '📢',
-    title: '홍보문구 생성기',
-    description: '카카오채널용 홍보 문구를 AI가 자동 생성',
-    path: '/kakao-promo',
-    badge: null,
-    disabled: false
+    category: 'document',
   },
   {
     icon: '📄',
     title: '업무보고 생성기',
     description: '공무원 스타일의 업무보고서를 AI가 자동 생성',
     path: '/report-writer',
-    badge: null,
-    disabled: false
+    category: 'document',
+  },
+  {
+    icon: '📢',
+    title: '홍보문구 생성기',
+    description: '카카오채널용 홍보 문구를 AI가 자동 생성',
+    path: '/kakao-promo',
+    category: 'document',
+  },
+
+  // 📊 데이터 처리
+  {
+    icon: '📊',
+    title: 'AI 통계분석 챗봇',
+    description: '엑셀 데이터를 업로드하고 자연어로 분석하세요',
+    path: '/data-analysis',
+    category: 'data',
   },
   {
     icon: '📍',
     title: '주소-좌표 변환기',
     description: '카카오 API 기반 주소 ↔ 좌표 일괄 변환',
     path: '/address-geocoder',
-    badge: null,
-    disabled: false
+    category: 'data',
   },
   {
     icon: '📑',
     title: '엑셀 취합기',
     description: '여러 엑셀 파일을 하나로 병합합니다',
     path: '/excel-merger',
-    badge: null,
-    disabled: false
+    category: 'data',
   },
-  // 기능 카드 배열에 추가
   {
+    icon: '✅',
     title: '공공데이터 검증기',
     description: '공공데이터 제공표준 적합성 검증',
-    icon: '🤖',
     path: '/data-validator',
-    color: 'from-emerald-500 to-teal-600'
-  }
-];
+    category: 'data',
+  },
 
-const stats = [
-  { value: '10', label: 'AI 서비스' },
-  { value: '24/7', label: '실시간 운영' },
-  { value: '100%', label: '무료 이용' }
+  // 🌐 번역/요약
+  {
+    icon: '🌐',
+    title: '다국어 번역기',
+    description: 'HWPX 문서를 DeepL + GPT로 고품질 번역',
+    path: '/translator',
+    category: 'translate',
+  },
+  {
+    icon: '🎙️',
+    title: '회의 요약기',
+    description: '회의 녹음/텍스트를 AI가 자동으로 요약합니다',
+    path: '/meeting-summary',
+    category: 'translate',
+  },
+  {
+    icon: '📰',
+    title: '충주시 뉴스',
+    description: '충주시 관련 뉴스를 자동으로 수집하고 AI가 요약합니다',
+    path: '/news',
+    category: 'translate',
+  },
+
+  // 💬 업무 챗봇
+  {
+    icon: '⚖️',
+    title: '선거법 챗봇',
+    description: '대화형 선거법 질의응답 시스템',
+    path: '/election-law',
+    category: 'chatbot',
+  },
 ];
 
 export default function Dashboard() {
   const [time, setTime] = useState(new Date());
+  const [activeCategory, setActiveCategory] = useState('all');
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 60000);
@@ -131,6 +131,17 @@ export default function Dashboard() {
   };
 
   const greeting = getGreeting();
+
+  // 필터링된 서비스 목록
+  const filteredServices = activeCategory === 'all' 
+    ? services 
+    : services.filter(s => s.category === activeCategory);
+
+  // 카테고리별 서비스 개수
+  const getCategoryCount = (categoryId) => {
+    if (categoryId === 'all') return services.length;
+    return services.filter(s => s.category === categoryId).length;
+  };
 
   return (
     <div className="min-h-screen overflow-x-hidden">
@@ -182,7 +193,7 @@ export default function Dashboard() {
       {/* Services Section */}
       <section id="services" className="py-16 bg-slate-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12 fade-in-up" style={{ animationDelay: '0.1s' }}>
+          <div className="text-center mb-8 fade-in-up" style={{ animationDelay: '0.1s' }}>
             <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
               AI 서비스
             </h2>
@@ -191,57 +202,61 @@ export default function Dashboard() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-4 gap-6">
-            {services.map((service, index) => (
-              service.disabled ? (
-                <div
-                  key={index}
-                  className="fade-in-up group relative bg-white rounded-2xl p-8 shadow-md border border-slate-200 opacity-70 cursor-not-allowed"
-                  style={{ animationDelay: `${0.2 + index * 0.05}s` }}
-                >
-                  {service.badge && (
-                    <div className="absolute top-4 right-4 px-3 py-1 bg-orange-100 text-orange-600 text-xs font-semibold rounded-full">
-                      {service.badge}
-                    </div>
-                  )}
-                  <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl flex items-center justify-center text-3xl mb-6">
-                    {service.icon}
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-500 mb-3">{service.title}</h3>
-                  <p className="text-slate-400 leading-relaxed mb-4">{service.description}</p>
-                  <div className="flex items-center text-slate-400 font-semibold">
-                    <span>준비중</span>
-                  </div>
-                </div>
-              ) : (
-                <Link
-                  key={index}
-                  to={service.path}
-                  className="fade-in-up group relative bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-slate-200 hover:border-cyan-300 hover:-translate-y-1"
-                  style={{ animationDelay: `${0.2 + index * 0.05}s` }}
-                >
-                  {service.badge && (
-                    <div className={`absolute top-4 right-4 px-3 py-1 text-xs font-semibold rounded-full ${
-                      service.badge === 'NEW' ? 'bg-green-100 text-green-600' : 'bg-cyan-100 text-cyan-600'
-                    }`}>
-                      {service.badge}
-                    </div>
-                  )}
-                  <div className="w-16 h-16 bg-gradient-to-br from-cyan-100 to-blue-100 rounded-2xl flex items-center justify-center text-3xl mb-6 group-hover:scale-110 transition-transform">
-                    {service.icon}
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-900 mb-3 group-hover:text-cyan-600 transition-colors">
-                    {service.title}
-                  </h3>
-                  <p className="text-slate-600 leading-relaxed mb-4">{service.description}</p>
-                  <div className="flex items-center text-cyan-600 font-semibold opacity-0 group-hover:opacity-100 transform -translate-x-2 group-hover:translate-x-0 transition-all duration-300">
-                    <span>시작하기</span>
-                    <ArrowRight size={18} className="ml-1" />
-                  </div>
-                </Link>
-              )
+          {/* Category Tabs */}
+          <div className="flex flex-wrap justify-center gap-2 mb-10">
+            {categories.map((category) => (
+              <button
+                key={category.id}
+                onClick={() => setActiveCategory(category.id)}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-medium transition-all ${
+                  activeCategory === category.id
+                    ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/25'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                }`}
+              >
+                <span>{category.icon}</span>
+                <span>{category.name}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                  activeCategory === category.id
+                    ? 'bg-cyan-400/30 text-white'
+                    : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {getCategoryCount(category.id)}
+                </span>
+              </button>
             ))}
           </div>
+
+          {/* Service Cards */}
+          <div className="grid md:grid-cols-4 gap-6">
+            {filteredServices.map((service, index) => (
+              <Link
+                key={service.path}
+                to={service.path}
+                className="fade-in-up group relative bg-white rounded-2xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 border border-slate-200 hover:border-cyan-300 hover:-translate-y-1"
+                style={{ animationDelay: `${0.1 + index * 0.03}s` }}
+              >
+                <div className="w-16 h-16 bg-gradient-to-br from-cyan-100 to-blue-100 rounded-2xl flex items-center justify-center text-3xl mb-6 group-hover:scale-110 transition-transform">
+                  {service.icon}
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-3 group-hover:text-cyan-600 transition-colors">
+                  {service.title}
+                </h3>
+                <p className="text-slate-600 leading-relaxed mb-4">{service.description}</p>
+                <div className="flex items-center text-cyan-600 font-semibold opacity-0 group-hover:opacity-100 transform -translate-x-2 group-hover:translate-x-0 transition-all duration-300">
+                  <span>시작하기</span>
+                  <ArrowRight size={18} className="ml-1" />
+                </div>
+              </Link>
+            ))}
+          </div>
+
+          {/* Empty State */}
+          {filteredServices.length === 0 && (
+            <div className="text-center py-12 text-slate-500">
+              해당 카테고리에 서비스가 없습니다.
+            </div>
+          )}
         </div>
       </section>
 
