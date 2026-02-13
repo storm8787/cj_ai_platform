@@ -207,10 +207,15 @@ def validate_data(df: pd.DataFrame, standard: dict, filename: str = "") -> Valid
     
     # ========== 3. 조건부 필수 필드 파악 ==========
     # 설명에서 조건부 필수 패턴 찾기
-    conditional_required = {}  # {필드명: {조건필드: [조건값들]}}
+    conditional_required = {}  # {필드명: {condition_field, condition_values}}
+    
+    def normalize_quotes(text):
+        """유니코드 따옴표를 일반 따옴표로 변환"""
+        # U+2018 ('), U+2019 ('), U+201C ("), U+201D (")
+        return text.replace('\u2018', "'").replace('\u2019', "'").replace('\u201C', '"').replace('\u201D', '"')
     
     for field_name, field_info in field_map.items():
-        desc = field_info['description']
+        desc = normalize_quotes(field_info['description'])
         
         # 패턴1: "도로종류가 '고속국도', '일반국도'인 경우 필수"
         match = re.search(r'([가-힣]+)(?:가|이)\s+(.+?)\s*인\s*경우', desc)
