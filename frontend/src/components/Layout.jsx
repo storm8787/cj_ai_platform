@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Home, Info, Cpu, MessageSquare, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -59,37 +59,27 @@ const communityMenus = [
 
 // 2단 드롭다운 컴포넌트 (AI 서비스용)
 function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onClose, active }) {
-  const [activeCategory, setActiveCategory] = useState(null);
+  const [hoveredCategory, setHoveredCategory] = useState(null);
   const navigate = useNavigate();
-  const timeoutRef = useRef(null);
-
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    onOpen();
-  };
-
-  const handleMouseLeave = () => {
-    timeoutRef.current = setTimeout(() => {
-      onClose();
-      setActiveCategory(null);
-    }, 150);
-  };
-
-  const handleCategoryEnter = (categoryId) => {
-    setActiveCategory(categoryId);
-  };
 
   const handleItemClick = (path) => {
     onClose();
-    setActiveCategory(null);
+    setHoveredCategory(null);
     navigate(path);
   };
+
+  // 메뉴가 닫힐 때 hoveredCategory 초기화
+  useEffect(() => {
+    if (!isOpen) {
+      setHoveredCategory(null);
+    }
+  }, [isOpen]);
 
   return (
     <div 
       className="relative"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={onOpen}
+      onMouseLeave={onClose}
     >
       <button className={`nav-link ${(isOpen || active) ? 'nav-link-active' : ''}`}>
         <Icon size={18} />
@@ -101,47 +91,53 @@ function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onC
       </button>
 
       {/* 1단 드롭다운: 카테고리 목록 */}
-      <div 
-        className={`dropdown-menu ${isOpen ? 'dropdown-menu-open' : ''}`}
-        style={{ zIndex: 9999 }}
-      >
-        <div className="dropdown-content py-2 min-w-[180px]">
-          {categories.map((category) => (
-            <div
-              key={category.id}
-              className="relative"
-              onMouseEnter={() => handleCategoryEnter(category.id)}
-            >
-              <div className="dropdown-item justify-between cursor-pointer">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">{category.icon}</span>
-                  <span>{category.name}</span>
+      {isOpen && (
+        <div 
+          className="absolute top-full left-0 pt-2"
+          style={{ zIndex: 9999 }}
+        >
+          <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 min-w-[180px]">
+            {categories.map((category) => (
+              <div
+                key={category.id}
+                className="relative"
+                onMouseEnter={() => setHoveredCategory(category.id)}
+              >
+                <div className={`flex items-center justify-between px-4 py-2.5 cursor-pointer transition-colors ${
+                  hoveredCategory === category.id ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-700/50'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{category.icon}</span>
+                    <span>{category.name}</span>
+                  </div>
+                  <ChevronRight size={14} className="text-slate-400" />
                 </div>
-                <ChevronRight size={14} className="text-slate-400" />
-              </div>
 
-              {/* 2단 드롭다운: 서비스 목록 */}
-              {activeCategory === category.id && (
-                <div 
-                  className="absolute left-full top-0 ml-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 min-w-[200px]"
-                  style={{ zIndex: 10000 }}
-                >
-                  {category.services.map((service, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => handleItemClick(service.path)}
-                      className="dropdown-item"
-                    >
-                      <span className="text-lg">{service.icon}</span>
-                      <span>{service.title}</span>
+                {/* 2단 드롭다운: 서비스 목록 */}
+                {hoveredCategory === category.id && (
+                  <div 
+                    className="absolute left-full top-0 pl-1"
+                    style={{ zIndex: 10000 }}
+                  >
+                    <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 min-w-[200px]">
+                      {category.services.map((service, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() => handleItemClick(service.path)}
+                          className="flex items-center gap-2 px-4 py-2.5 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer transition-colors"
+                        >
+                          <span className="text-lg">{service.icon}</span>
+                          <span>{service.title}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -149,18 +145,6 @@ function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onC
 // 일반 드롭다운 컴포넌트 (소통공간용)
 function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, active }) {
   const navigate = useNavigate();
-  const timeoutRef = useRef(null);
-
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    onOpen();
-  };
-
-  const handleMouseLeave = () => {
-    timeoutRef.current = setTimeout(() => {
-      onClose();
-    }, 150);
-  };
 
   const handleItemClick = (path) => {
     onClose();
@@ -170,8 +154,8 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, activ
   return (
     <div 
       className="relative"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={onOpen}
+      onMouseLeave={onClose}
     >
       <button className={`nav-link ${(isOpen || active) ? 'nav-link-active' : ''}`}>
         <Icon size={18} />
@@ -182,23 +166,26 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, activ
         />
       </button>
 
-      <div 
-        className={`dropdown-menu ${isOpen ? 'dropdown-menu-open' : ''}`}
-        style={{ zIndex: 9999 }}
-      >
-        <div className="dropdown-content py-2">
-          {items.map((item, index) => (
-            <div
-              key={index}
-              onClick={() => handleItemClick(item.path)}
-              className="dropdown-item"
-            >
-              <span className="text-lg">{item.icon}</span>
-              <span>{item.title}</span>
-            </div>
-          ))}
+      {/* 드롭다운 메뉴 */}
+      {isOpen && (
+        <div 
+          className="absolute top-full left-0 pt-2"
+          style={{ zIndex: 9999 }}
+        >
+          <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 min-w-[180px]">
+            {items.map((item, index) => (
+              <div
+                key={index}
+                onClick={() => handleItemClick(item.path)}
+                className="flex items-center gap-2 px-4 py-2.5 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer transition-colors"
+              >
+                <span className="text-lg">{item.icon}</span>
+                <span>{item.title}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -208,10 +195,12 @@ export default function Layout({ children }) {
   const [openMenu, setOpenMenu] = useState(null);
   const { user, logout } = useAuth();
 
+  // 메뉴 열기 - 다른 메뉴가 열려있으면 바로 전환
   const handleOpen = (menu) => {
     setOpenMenu(menu);
   };
 
+  // 메뉴 닫기
   const handleClose = () => {
     setOpenMenu(null);
   };
@@ -220,6 +209,7 @@ export default function Layout({ children }) {
     await logout();
   };
 
+  // 페이지 이동 시 메뉴 닫기
   useEffect(() => {
     setOpenMenu(null);
   }, [location.pathname]);
