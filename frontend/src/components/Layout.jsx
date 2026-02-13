@@ -12,8 +12,8 @@ const aiServiceCategories = [
     services: [
       { icon: '📝', title: '보도자료 생성기', path: '/press-release' },
       { icon: '🏅', title: '공적조서 생성기', path: '/merit-report' },
-      { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
       { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
+      { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },      
     ]
   },
   {
@@ -22,9 +22,9 @@ const aiServiceCategories = [
     icon: '📊',
     services: [
       { icon: '📊', title: 'AI 통계분석 챗봇', path: '/data-analysis' },
-      { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
-      { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },
       { icon: '✅', title: '공공데이터 검증기', path: '/data-validator' },
+      { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
+      { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },      
     ]
   },
   {
@@ -32,9 +32,9 @@ const aiServiceCategories = [
     name: '번역/요약',
     icon: '🌐',
     services: [
-      { icon: '🌐', title: '다국어 번역기', path: '/translator' },
-      { icon: '🎙️', title: '회의 요약기', path: '/meeting-summary' },
       { icon: '📰', title: '충주시 뉴스', path: '/news' },
+      { icon: '🌐', title: '다국어 번역기', path: '/translator' },
+      { icon: '🎙️', title: '회의 요약기', path: '/meeting-summary' },      
     ]
   },
   {
