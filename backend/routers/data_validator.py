@@ -212,13 +212,11 @@ def validate_data(df: pd.DataFrame, standard: dict, filename: str = "") -> Valid
     for field_name, field_info in field_map.items():
         desc = field_info['description']
         
-        # 패턴: "~가/이 '값1', '값2' ... 인 경우 필수"
+        # 패턴1: "도로종류가 '고속국도', '일반국도'인 경우 필수"
         match = re.search(r'([가-힣]+)(?:가|이)\s+(.+?)\s*인\s*경우', desc)
         if match and '필수' in desc:
-            cond_field = match.group(1)  # 조건 필드명
-            values_part = match.group(2)  # 조건 값들 부분
-            
-            # 따옴표로 둘러싸인 값들 추출
+            cond_field = match.group(1)
+            values_part = match.group(2)
             cond_values = re.findall(r"'([^']+)'", values_part)
             
             if cond_values:
@@ -226,6 +224,41 @@ def validate_data(df: pd.DataFrame, standard: dict, filename: str = "") -> Valid
                     'condition_field': cond_field,
                     'condition_values': cond_values
                 }
+                continue
+        
+        # 패턴2: "인증(지정)여부가 예비인 경우 필수"
+        match2 = re.search(r'([가-힣\(\)]+)(?:가|이)\s+([가-힣]+)인\s*경우\s*필수', desc)
+        if match2:
+            cond_field = match2.group(1)
+            cond_value = match2.group(2)
+            conditional_required[field_name] = {
+                'condition_field': cond_field,
+                'condition_values': [cond_value]
+            }
+            continue
+        
+        # 패턴3: "환승역인 경우 필수", "부처형일 경우 필수"
+        match3 = re.search(r'([가-힣]+)(?:인|일)\s*경우\s*필수', desc)
+        if match3:
+            cond_value = match3.group(1)
+            # 조건값만 있고 조건필드는 해당 필드의 연관 필드에서 찾아야 함
+            # 환승역 → 환승여부, 부처형 → 부처형여부 등
+            potential_cond_field = cond_value.replace('역', '여부').replace('형', '형여부')
+            conditional_required[field_name] = {
+                'condition_field': potential_cond_field,
+                'condition_values': [cond_value, 'Y', 'O', '예']  # 다양한 긍정값
+            }
+            continue
+        
+        # 패턴4: "개찰결과구분명이 '개찰완료'일 경우 필수"
+        match4 = re.search(r'([가-힣]+)(?:이|가)\s*["\']?([가-힣]+)["\']?(?:일|인)\s*경우\s*필수', desc)
+        if match4:
+            cond_field = match4.group(1)
+            cond_value = match4.group(2)
+            conditional_required[field_name] = {
+                'condition_field': cond_field,
+                'condition_values': [cond_value]
+            }
     
     # 주소 필드명 찾기
     road_addr_col = None
