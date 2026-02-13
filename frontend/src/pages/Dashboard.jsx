@@ -11,9 +11,16 @@ const categories = [
   { id: 'chatbot', name: '업무 챗봇', icon: '💬' },
 ];
 
-// 서비스 목록 (카테고리 추가)
+// 서비스 목록 (기존 순서 유지 + 카테고리 추가)
 const services = [
-  // 📝 문서 작성
+  // 기존 순서 1~12
+  {
+    icon: '📰',
+    title: '충주시 뉴스',
+    description: '충주시 관련 뉴스를 자동으로 수집하고 AI가 요약합니다',
+    path: '/news',
+    category: 'translate',
+  },
   {
     icon: '📝',
     title: '보도자료 생성기',
@@ -29,11 +36,32 @@ const services = [
     category: 'document',
   },
   {
-    icon: '📄',
-    title: '업무보고 생성기',
-    description: '공무원 스타일의 업무보고서를 AI가 자동 생성',
-    path: '/report-writer',
-    category: 'document',
+    icon: '📊',
+    title: 'AI 통계분석 챗봇',
+    description: '엑셀 데이터를 업로드하고 자연어로 분석하세요',
+    path: '/data-analysis',
+    category: 'data',
+  },
+  {
+    icon: '🌐',
+    title: '다국어 번역기',
+    description: 'HWPX 문서를 DeepL + GPT로 고품질 번역',
+    path: '/translator',
+    category: 'translate',
+  },
+  {
+    icon: '⚖️',
+    title: '선거법 챗봇',
+    description: '대화형 선거법 질의응답 시스템',
+    path: '/election-law',
+    category: 'chatbot',
+  },
+  {
+    icon: '🎙️',
+    title: '회의 요약기',
+    description: '회의 녹음/텍스트를 AI가 자동으로 요약합니다',
+    path: '/meeting-summary',
+    category: 'translate',
   },
   {
     icon: '📢',
@@ -42,14 +70,12 @@ const services = [
     path: '/kakao-promo',
     category: 'document',
   },
-
-  // 📊 데이터 처리
   {
-    icon: '📊',
-    title: 'AI 통계분석 챗봇',
-    description: '엑셀 데이터를 업로드하고 자연어로 분석하세요',
-    path: '/data-analysis',
-    category: 'data',
+    icon: '📄',
+    title: '업무보고 생성기',
+    description: '공무원 스타일의 업무보고서를 AI가 자동 생성',
+    path: '/report-writer',
+    category: 'document',
   },
   {
     icon: '📍',
@@ -72,39 +98,15 @@ const services = [
     path: '/data-validator',
     category: 'data',
   },
-
-  // 🌐 번역/요약
-  {
-    icon: '🌐',
-    title: '다국어 번역기',
-    description: 'HWPX 문서를 DeepL + GPT로 고품질 번역',
-    path: '/translator',
-    category: 'translate',
-  },
-  {
-    icon: '🎙️',
-    title: '회의 요약기',
-    description: '회의 녹음/텍스트를 AI가 자동으로 요약합니다',
-    path: '/meeting-summary',
-    category: 'translate',
-  },
-  {
-    icon: '📰',
-    title: '충주시 뉴스',
-    description: '충주시 관련 뉴스를 자동으로 수집하고 AI가 요약합니다',
-    path: '/news',
-    category: 'translate',
-  },
-
-  // 💬 업무 챗봇
-  {
-    icon: '⚖️',
-    title: '선거법 챗봇',
-    description: '대화형 선거법 질의응답 시스템',
-    path: '/election-law',
-    category: 'chatbot',
-  },
 ];
+
+// 카테고리별 순서 정의 (각 카테고리 클릭 시 이 순서로 표시)
+const categoryOrder = {
+  document: ['/press-release', '/merit-report', '/report-writer', '/kakao-promo'],
+  data: ['/data-analysis', '/address-geocoder', '/excel-merger', '/data-validator'],
+  translate: ['/translator', '/meeting-summary', '/news'],
+  chatbot: ['/election-law'],
+};
 
 export default function Dashboard() {
   const [time, setTime] = useState(new Date());
@@ -135,13 +137,9 @@ export default function Dashboard() {
   // 필터링된 서비스 목록
   const filteredServices = activeCategory === 'all' 
     ? services 
-    : services.filter(s => s.category === activeCategory);
-
-  // 카테고리별 서비스 개수
-  const getCategoryCount = (categoryId) => {
-    if (categoryId === 'all') return services.length;
-    return services.filter(s => s.category === categoryId).length;
-  };
+    : categoryOrder[activeCategory]
+        .map(path => services.find(s => s.path === path))
+        .filter(Boolean);
 
   return (
     <div className="min-h-screen overflow-x-hidden">
@@ -216,13 +214,6 @@ export default function Dashboard() {
               >
                 <span>{category.icon}</span>
                 <span>{category.name}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  activeCategory === category.id
-                    ? 'bg-cyan-400/30 text-white'
-                    : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {getCategoryCount(category.id)}
-                </span>
               </button>
             ))}
           </div>
