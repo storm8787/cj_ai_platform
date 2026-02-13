@@ -1,23 +1,54 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Home, Info, Cpu, MessageSquare, LogOut } from 'lucide-react';
+import { ChevronDown, ChevronRight, Home, Info, Cpu, MessageSquare, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-// AI 서비스 목록
-const aiServices = [
-  { icon: '📰', title: '충주시 뉴스', path: '/news' },
-  { icon: '📝', title: '보도자료 생성기', path: '/press-release' },
-  { icon: '🏅', title: '공적조서 생성기', path: '/merit-report' },
-  { icon: '📊', title: 'AI 통계분석 챗봇', path: '/data-analysis' },
-  { icon: '🌐', title: '다국어 번역기', path: '/translator' },
-  { icon: '⚖️', title: '선거법 챗봇', path: '/election-law' },
-  { icon: '🎙️', title: '회의 요약기', path: '/meeting-summary' },
-  { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
-  { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
-  { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
-  { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },
-  { icon: '🤖', title: '공공데이터 검증기', path: '/data-validator' },
+// AI 서비스 카테고리별 정리
+const aiServiceCategories = [
+  {
+    id: 'document',
+    name: '문서 작성',
+    icon: '📝',
+    services: [
+      { icon: '📝', title: '보도자료 생성기', path: '/press-release' },
+      { icon: '🏅', title: '공적조서 생성기', path: '/merit-report' },
+      { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
+      { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
+    ]
+  },
+  {
+    id: 'data',
+    name: '데이터 처리',
+    icon: '📊',
+    services: [
+      { icon: '📊', title: 'AI 통계분석 챗봇', path: '/data-analysis' },
+      { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
+      { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },
+      { icon: '✅', title: '공공데이터 검증기', path: '/data-validator' },
+    ]
+  },
+  {
+    id: 'translate',
+    name: '번역/요약',
+    icon: '🌐',
+    services: [
+      { icon: '🌐', title: '다국어 번역기', path: '/translator' },
+      { icon: '🎙️', title: '회의 요약기', path: '/meeting-summary' },
+      { icon: '📰', title: '충주시 뉴스', path: '/news' },
+    ]
+  },
+  {
+    id: 'chatbot',
+    name: '업무 챗봇',
+    icon: '💬',
+    services: [
+      { icon: '⚖️', title: '선거법 챗봇', path: '/election-law' },
+    ]
+  },
 ];
+
+// 모든 AI 서비스 경로 (active 체크용)
+const allAiServicePaths = aiServiceCategories.flatMap(cat => cat.services.map(s => s.path));
 
 // 소통공간 메뉴
 const communityMenus = [
@@ -26,32 +57,37 @@ const communityMenus = [
   { icon: '📁', title: '자료실', path: '/board/archive' },
 ];
 
-// 드롭다운 컴포넌트
-function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, active}) {
-  const dropdownRef = useRef(null);
+// 2단 드롭다운 컴포넌트 (AI 서비스용)
+function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onClose, active }) {
+  const [activeCategory, setActiveCategory] = useState(null);
   const navigate = useNavigate();
+  const timeoutRef = useRef(null);
 
-  // 마우스 진입 시 열기
   const handleMouseEnter = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     onOpen();
   };
 
-  // 마우스 이탈 시 닫기 (딜레이 없음)
   const handleMouseLeave = () => {
-    onClose();
+    timeoutRef.current = setTimeout(() => {
+      onClose();
+      setActiveCategory(null);
+    }, 150);
   };
 
-  // 메뉴 아이템 클릭 - navigate 사용
+  const handleCategoryEnter = (categoryId) => {
+    setActiveCategory(categoryId);
+  };
+
   const handleItemClick = (path) => {
-    console.log('클릭!', path);
     onClose();
+    setActiveCategory(null);
     navigate(path);
   };
 
   return (
     <div 
-      className="relative" 
-      ref={dropdownRef}
+      className="relative"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
@@ -64,7 +100,88 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, activ
         />
       </button>
 
-      {/* 드롭다운 메뉴 - z-index 9999로 최상위 */}
+      {/* 1단 드롭다운: 카테고리 목록 */}
+      <div 
+        className={`dropdown-menu ${isOpen ? 'dropdown-menu-open' : ''}`}
+        style={{ zIndex: 9999 }}
+      >
+        <div className="dropdown-content py-2 min-w-[180px]">
+          {categories.map((category) => (
+            <div
+              key={category.id}
+              className="relative"
+              onMouseEnter={() => handleCategoryEnter(category.id)}
+            >
+              <div className="dropdown-item justify-between cursor-pointer">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">{category.icon}</span>
+                  <span>{category.name}</span>
+                </div>
+                <ChevronRight size={14} className="text-slate-400" />
+              </div>
+
+              {/* 2단 드롭다운: 서비스 목록 */}
+              {activeCategory === category.id && (
+                <div 
+                  className="absolute left-full top-0 ml-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 min-w-[200px]"
+                  style={{ zIndex: 10000 }}
+                >
+                  {category.services.map((service, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => handleItemClick(service.path)}
+                      className="dropdown-item"
+                    >
+                      <span className="text-lg">{service.icon}</span>
+                      <span>{service.title}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 일반 드롭다운 컴포넌트 (소통공간용)
+function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, active }) {
+  const navigate = useNavigate();
+  const timeoutRef = useRef(null);
+
+  const handleMouseEnter = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    onOpen();
+  };
+
+  const handleMouseLeave = () => {
+    timeoutRef.current = setTimeout(() => {
+      onClose();
+    }, 150);
+  };
+
+  const handleItemClick = (path) => {
+    onClose();
+    navigate(path);
+  };
+
+  return (
+    <div 
+      className="relative"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <button className={`nav-link ${(isOpen || active) ? 'nav-link-active' : ''}`}>
+        <Icon size={18} />
+        <span>{label}</span>
+        <ChevronDown 
+          size={16} 
+          className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} 
+        />
+      </button>
+
       <div 
         className={`dropdown-menu ${isOpen ? 'dropdown-menu-open' : ''}`}
         style={{ zIndex: 9999 }}
@@ -76,13 +193,12 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, activ
               onClick={() => handleItemClick(item.path)}
               className="dropdown-item"
             >
-                <span className="text-lg">{item.icon}</span>
-                <span>{item.title}</span>
-              </div>
-            ))}
-          </div>
+              <span className="text-lg">{item.icon}</span>
+              <span>{item.title}</span>
+            </div>
+          ))}
         </div>
-      
+      </div>
     </div>
   );
 }
@@ -104,19 +220,12 @@ export default function Layout({ children }) {
     await logout();
   };
 
-  // 페이지 이동 시 메뉴 닫기
   useEffect(() => {
     setOpenMenu(null);
   }, [location.pathname]);
 
-  // ✅ 여기!!! (return 바로 위)
-  const isServicesActive = aiServices.some(
-    (s) => location.pathname === s.path
-  );
-
-  const isCommunityActive = communityMenus.some(
-    (s) => location.pathname === s.path
-  );
+  const isServicesActive = allAiServicePaths.includes(location.pathname);
+  const isCommunityActive = communityMenus.some(s => location.pathname === s.path);
 
   return (
     <div className="min-h-screen bg-slate-950">
@@ -141,25 +250,25 @@ export default function Layout({ children }) {
               <Link
                 to="/"
                 className={`nav-link ${location.pathname === '/' ? 'nav-link-active' : ''}`}
-                >
+              >
                 <Home size={18} />
                 <span>홈으로</span>
-                </Link>
+              </Link>
 
               {/* 시스템 소개 */}
               <Link
                 to="/about"
                 className={`nav-link ${location.pathname === '/about' ? 'nav-link-active' : ''}`}
-                >
+              >
                 <Info size={18} />
                 <span>시스템 소개</span>
               </Link>
 
-              {/* AI 서비스 드롭다운 */}
-              <DropdownMenu
+              {/* AI 서비스 - 2단 드롭다운 */}
+              <NestedDropdownMenu
                 label="AI 서비스"
                 icon={Cpu}
-                items={aiServices}
+                categories={aiServiceCategories}
                 isOpen={openMenu === 'services'}
                 onOpen={() => handleOpen('services')}
                 onClose={handleClose}
@@ -186,7 +295,6 @@ export default function Layout({ children }) {
                 </span>
               )}
               <button onClick={handleLogout} className="btn-logout">
-
                 <LogOut size={16} />
                 <span>로그아웃</span>
               </button>
