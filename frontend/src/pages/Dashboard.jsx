@@ -102,9 +102,9 @@ const services = [
 
 // 카테고리별 순서 정의 (각 카테고리 클릭 시 이 순서로 표시)
 const categoryOrder = {
-  document: ['/press-release', '/merit-report', '/report-writer', '/kakao-promo'],
-  data: ['/data-analysis', '/address-geocoder', '/excel-merger', '/data-validator'],
-  translate: ['/translator', '/meeting-summary', '/news'],
+  document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer'],
+  data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger'],
+  translate: ['/news', '/translator', '/meeting-summary'],
   chatbot: ['/election-law'],
 };
 
