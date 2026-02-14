@@ -136,6 +136,15 @@
   .badge-red {
     @apply badge bg-red-100 text-red-700;
   }
+
+  /* Select 드롭다운 글자색 */
+  select {
+    @apply text-gray-900;
+  }
+
+  select option {
+    @apply text-gray-900 bg-white;
+  }
 }
 
 /* 애니메이션 */
