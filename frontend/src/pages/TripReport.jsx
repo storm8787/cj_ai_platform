@@ -19,6 +19,7 @@ export default function TripReport() {
   const [generatedReport, setGeneratedReport] = useState('');
   const [error, setError] = useState('');
   const [step, setStep] = useState(1); // 1: 업로드, 2: 분석결과, 3: 보고서
+  const [selectedReportType, setSelectedReportType] = useState(''); // 보고서 유형 (변경 가능)
   
   const fileInputRef = useRef(null);
 
@@ -83,6 +84,7 @@ export default function TripReport() {
       setAnalysisResult(data.analysis);
       setEditedInfo(data.analysis.extracted_info || {});
       setEditedContent(data.analysis.main_content || []);
+      setSelectedReportType(data.analysis.report_type || '행사참석'); // AI 추천 유형 설정
       setStep(2);
     } catch (err) {
       setError(err.message);
@@ -103,7 +105,7 @@ export default function TripReport() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          report_type: analysisResult.report_type,
+          report_type: selectedReportType, // 사용자가 변경한 유형 사용
           extracted_info: editedInfo,
           main_content: editedContent.filter(c => c.trim()),
           reporter_name: reporterName,
@@ -178,6 +180,7 @@ export default function TripReport() {
     setEditedContent([]);
     setGeneratedReport('');
     setAdditionalNotes('');
+    setSelectedReportType('');
     setError('');
     setStep(1);
   };
@@ -351,15 +354,33 @@ export default function TripReport() {
       {/* Step 2: AI 분석 결과 */}
       {step === 2 && analysisResult && (
         <div className="space-y-6">
-          {/* 분석 결과 요약 */}
-          <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 flex items-center gap-3">
-            <CheckCircle size={24} className="text-green-400" />
-            <div>
-              <p className="text-green-400 font-semibold">AI 분석 완료!</p>
-              <p className="text-slate-400 text-sm">
-                보고서 유형: {analysisResult.report_type_icon} {analysisResult.report_type} 
-                (신뢰도: {Math.round(analysisResult.confidence * 100)}%)
-              </p>
+          {/* 분석 결과 요약 + 유형 변경 */}
+          <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <CheckCircle size={24} className="text-green-400" />
+              <div>
+                <p className="text-green-400 font-semibold">AI 분석 완료!</p>
+                <p className="text-slate-400 text-sm">
+                  신뢰도: {Math.round(analysisResult.confidence * 100)}%
+                </p>
+              </div>
+            </div>
+            
+            {/* 보고서 유형 선택 (변경 가능) */}
+            <div className="flex items-center gap-3 mt-3 pt-3 border-t border-green-500/20">
+              <span className="text-slate-300 text-sm">보고서 유형:</span>
+              <select
+                value={selectedReportType}
+                onChange={(e) => setSelectedReportType(e.target.value)}
+                className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+              >
+                <option value="행사참석">🎤 행사참석</option>
+                <option value="출장방문">🏢 출장방문</option>
+                <option value="시설점검">🏗️ 시설점검</option>
+                <option value="민원현장">🚨 민원현장</option>
+                <option value="환경점검">🌳 환경점검</option>
+              </select>
+              <span className="text-slate-500 text-xs">(AI 추천: {analysisResult.report_type})</span>
             </div>
           </div>
 
