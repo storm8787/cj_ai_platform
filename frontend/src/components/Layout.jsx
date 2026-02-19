@@ -13,7 +13,8 @@ const aiServiceCategories = [
       { icon: '📝', title: '보도자료 생성기', path: '/press-release' },
       { icon: '🏅', title: '공적조서 생성기', path: '/merit-report' },
       { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
-      { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },      
+      { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
+      { icon: '📋', title: '출장보고 생성기', path: '/trip-report' },  // 신규 추가
     ]
   },
   {
