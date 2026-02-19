@@ -26,6 +26,7 @@ import BoardDetail from './pages/BoardDetail';
 import BoardWrite from './pages/BoardWrite';
 import BoardEdit from './pages/BoardEdit';
 import DataValidator from './pages/DataValidator';
+import TripReport from './pages/TripReport';
 
 // 보호된 라우트 컴포넌트
 function ProtectedRoute({ children }) {
@@ -189,6 +190,34 @@ function AppRoutes() {
         } 
       />
       <Route 
+        path="/data-validator" 
+        element={
+          <ProtectedRoute>
+            <Layout><DataValidator /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+      
+      {/* 출장보고 생성기 - 신규 추가 */}
+      <Route 
+        path="/trip-report" 
+        element={
+          <ProtectedRoute>
+            <Layout><TripReport /></Layout>
+          </ProtectedRoute>
+        } 
+      />
+
+      {/* 게시판 라우트 */}
+      <Route path="/board/notice" element={<ProtectedRoute><Layout><NoticeBoard /></Layout></ProtectedRoute>} />
+      <Route path="/board/archive" element={<ProtectedRoute><Layout><ArchiveBoard /></Layout></ProtectedRoute>} />
+      <Route path="/board/qna" element={<ProtectedRoute><Layout><QnaBoard /></Layout></ProtectedRoute>} />
+      <Route path="/board/:boardType/:id" element={<ProtectedRoute><Layout><BoardDetail /></Layout></ProtectedRoute>} />
+      <Route path="/board/:boardType/write" element={<ProtectedRoute><Layout><BoardWrite /></Layout></ProtectedRoute>} />
+      <Route path="/board/:boardType/edit/:id" element={<ProtectedRoute><Layout><BoardEdit /></Layout></ProtectedRoute>} />
+
+      {/* 404 - 맨 마지막에 위치 */}
+      <Route 
         path="*" 
         element={
           <ProtectedRoute>
@@ -196,21 +225,6 @@ function AppRoutes() {
           </ProtectedRoute>
         } 
       />
-      <Route 
-        path="/data-validator" 
-        element={
-          <ProtectedRoute>
-            <Layout><DataValidator /></Layout>
-          </ProtectedRoute>
-          } 
-      />
-      // Routes 안에 추가
-      <Route path="/board/notice" element={<ProtectedRoute><Layout><NoticeBoard /></Layout></ProtectedRoute>} />
-      <Route path="/board/archive" element={<ProtectedRoute><Layout><ArchiveBoard /></Layout></ProtectedRoute>} />
-      <Route path="/board/qna" element={<ProtectedRoute><Layout><QnaBoard /></Layout></ProtectedRoute>} />
-      <Route path="/board/:boardType/:id" element={<ProtectedRoute><Layout><BoardDetail /></Layout></ProtectedRoute>} />
-      <Route path="/board/:boardType/write" element={<ProtectedRoute><Layout><BoardWrite /></Layout></ProtectedRoute>} />
-      <Route path="/board/:boardType/edit/:id" element={<ProtectedRoute><Layout><BoardEdit /></Layout></ProtectedRoute>} />
     </Routes>
   );
 }
