@@ -20,6 +20,8 @@ export default function TripReport() {
   const [error, setError] = useState('');
   const [step, setStep] = useState(1); // 1: 업로드, 2: 분석결과, 3: 보고서
   const [selectedReportType, setSelectedReportType] = useState(''); // 보고서 유형 (변경 가능)
+  const [reanalyzing, setReanalyzing] = useState(false); // 재분석 중
+  const [originalImages, setOriginalImages] = useState([]); // 원본 이미지 저장 (재분석용)
   
   const fileInputRef = useRef(null);
 
@@ -85,6 +87,7 @@ export default function TripReport() {
       setEditedInfo(data.analysis.extracted_info || {});
       setEditedContent(data.analysis.main_content || []);
       setSelectedReportType(data.analysis.report_type || '행사참석'); // AI 추천 유형 설정
+      setOriginalImages([...images]); // 원본 이미지 저장 (재분석용)
       setStep(2);
     } catch (err) {
       setError(err.message);
@@ -153,6 +156,63 @@ export default function TripReport() {
     setEditedContent(prev => prev.filter((_, i) => i !== index));
   };
 
+  // 유형 변경 시 재분석
+  const handleReanalyze = async (newType) => {
+    if (originalImages.length === 0) {
+      setError('원본 이미지가 없습니다. 처음부터 다시 시작해주세요.');
+      return;
+    }
+
+    setReanalyzing(true);
+    setError('');
+
+    try {
+      const formData = new FormData();
+      originalImages.forEach(image => {
+        formData.append('images', image);
+      });
+      formData.append('reporter_name', reporterName);
+      formData.append('reporter_dept', reporterDept);
+      formData.append('force_report_type', newType); // 강제 유형 지정
+
+      const response = await fetch(`${API_BASE}/api/trip-report/analyze-images`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '재분석에 실패했습니다.');
+      }
+
+      const data = await response.json();
+      setAnalysisResult(data.analysis);
+      setEditedInfo(data.analysis.extracted_info || {});
+      setEditedContent(data.analysis.main_content || []);
+      setSelectedReportType(newType);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setReanalyzing(false);
+    }
+  };
+
+  // 유형 변경 핸들러 (재분석 여부 확인)
+  const handleReportTypeChange = (newType) => {
+    if (newType === selectedReportType) return;
+    
+    const confirmReanalyze = window.confirm(
+      `보고서 유형을 "${newType}"(으)로 변경하면 해당 유형에 맞게 사진을 재분석합니다.\n\n` +
+      `⚠️ 현재 수정한 내용은 초기화됩니다.\n` +
+      `💰 Vision API 비용이 추가로 발생합니다.\n\n` +
+      `계속하시겠습니까?`
+    );
+    
+    if (confirmReanalyze) {
+      handleReanalyze(newType);
+    }
+  };
+
   // 복사
   const copyToClipboard = () => {
     navigator.clipboard.writeText(generatedReport);
@@ -181,6 +241,7 @@ export default function TripReport() {
     setGeneratedReport('');
     setAdditionalNotes('');
     setSelectedReportType('');
+    setOriginalImages([]);
     setError('');
     setStep(1);
   };
@@ -371,8 +432,9 @@ export default function TripReport() {
               <span className="text-slate-300 text-sm">보고서 유형:</span>
               <select
                 value={selectedReportType}
-                onChange={(e) => setSelectedReportType(e.target.value)}
-                className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+                onChange={(e) => handleReportTypeChange(e.target.value)}
+                disabled={reanalyzing}
+                className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
               >
                 <option value="행사참석">🎤 행사참석</option>
                 <option value="출장방문">🏢 출장방문</option>
@@ -380,9 +442,27 @@ export default function TripReport() {
                 <option value="민원현장">🚨 민원현장</option>
                 <option value="환경점검">🌳 환경점검</option>
               </select>
-              <span className="text-slate-500 text-xs">(AI 추천: {analysisResult.report_type})</span>
+              {reanalyzing ? (
+                <span className="text-cyan-400 text-xs flex items-center gap-1">
+                  <Loader2 size={14} className="animate-spin" />
+                  재분석 중...
+                </span>
+              ) : (
+                <span className="text-slate-500 text-xs">(AI 추천: {analysisResult.report_type})</span>
+              )}
             </div>
           </div>
+
+          {/* 재분석 중 오버레이 */}
+          {reanalyzing && (
+            <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4 flex items-center gap-3">
+              <Loader2 size={24} className="text-cyan-400 animate-spin" />
+              <div>
+                <p className="text-cyan-400 font-semibold">"{selectedReportType}" 유형으로 재분석 중...</p>
+                <p className="text-slate-400 text-sm">해당 유형에 맞는 정보를 다시 추출하고 있습니다.</p>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* 좌측: 추출된 정보 (수정 가능) */}
