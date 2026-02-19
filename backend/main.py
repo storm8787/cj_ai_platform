@@ -18,6 +18,7 @@ from routers import auth  # 추가
 from routers import data_validator
 
 from routers import board
+from routers import trip_report
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -64,6 +65,7 @@ app.include_router(excel_merger.router, prefix="/api/excel-merger", tags=["엑�
 app.include_router(meeting_summarizer.router, prefix="/api/meeting", tags=["회의요약기"])
 app.include_router(report_writer.router, prefix="/api/report-writer", tags=["업무보고"])
 app.include_router(data_validator.router, prefix="/api/data-validator", tags=["공공데이터 검증기"])
+app.include_router(trip_report.router, prefix="/api/trip-report", tags=["출장보고"])
 
 app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
 app.include_router(board.router, prefix="/api/board", tags=["게시판"])
