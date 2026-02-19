@@ -13,7 +13,7 @@ const categories = [
 
 // 서비스 목록 (기존 순서 유지 + 카테고리 추가)
 const services = [
-  // 기존 순서 1~12
+  // 기존 순서 1~12 + 신규 추가
   {
     icon: '📰',
     title: '충주시 뉴스',
@@ -98,11 +98,19 @@ const services = [
     path: '/data-validator',
     category: 'data',
   },
+  // 신규 추가: 출장보고 생성기
+  {
+    icon: '📋',
+    title: '출장보고 생성기',
+    description: '사진만 업로드하면 AI가 보고서를 자동 생성합니다',
+    path: '/trip-report',
+    category: 'document',
+  },
 ];
 
 // 카테고리별 순서 정의 (각 카테고리 클릭 시 이 순서로 표시)
 const categoryOrder = {
-  document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer'],
+  document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report'],  // trip-report 추가
   data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger'],
   translate: ['/news', '/translator', '/meeting-summary'],
   chatbot: ['/election-law'],
