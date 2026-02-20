@@ -637,7 +637,7 @@ async def generate_report(request: ReportGenerateRequest):
                 {"role": "user", "content": report_prompt},
             ],
             max_completion_tokens=2500,
-            temperature=0.2,
+            temperature=1.0,
         )
 
         if _contains_forbidden_polite(text) or not _has_required_structure(text):
@@ -656,7 +656,7 @@ async def generate_report(request: ReportGenerateRequest):
                     {"role": "user", "content": rewrite_prompt},
                 ],
                 max_completion_tokens=2500,
-                temperature=0.0,
+                temperature=1.0,
             )
 
         return ReportResponse(
