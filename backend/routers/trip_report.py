@@ -172,14 +172,14 @@ def _build_image_contents(images_data: List[dict], detail: str) -> List[dict]:
 def _chat_create(
     model: str,
     messages: list,
-    max_tokens: int,
+    max_completion_tokens: int,
     temperature: float,
     response_format: Optional[dict] = None
 ) -> str:
     kwargs = dict(
         model=model,
         messages=messages,
-        max_tokens=max_tokens,
+        max_completion_tokens=max_completion_tokens,
         temperature=temperature
     )
     if response_format:
@@ -340,7 +340,7 @@ async def analyze_images(
             classify_text = _chat_create(
                 model=ANALYSIS_MODEL,
                 messages=classify_messages,
-                max_tokens=600,
+                max_completion_tokens=600,
                 temperature=0.1,
                 response_format=CLASSIFY_SCHEMA,
             )
@@ -349,7 +349,7 @@ async def analyze_images(
             classify_text = _chat_create(
                 model=ANALYSIS_MODEL,
                 messages=classify_messages,
-                max_tokens=600,
+                max_completion_tokens=600,
                 temperature=0.1,
             )
             classify_json = _safe_json_extract(classify_text)
@@ -373,7 +373,7 @@ async def analyze_images(
             extract_text = _chat_create(
                 model=ANALYSIS_MODEL,
                 messages=extract_messages,
-                max_tokens=2500,
+                max_completion_tokens=2500,
                 temperature=0.1,
                 response_format=EXTRACT_SCHEMA,
             )
@@ -382,7 +382,7 @@ async def analyze_images(
             extract_text = _chat_create(
                 model=ANALYSIS_MODEL,
                 messages=extract_messages,
-                max_tokens=2500,
+                max_completion_tokens=2500,
                 temperature=0.1,
             )
             extract_json = _safe_json_extract(extract_text)
@@ -607,7 +607,7 @@ async def generate_report(request: ReportGenerateRequest):
                 },
                 {"role": "user", "content": report_prompt},
             ],
-            max_tokens=2500,
+            max_completion_tokens=2500,
             temperature=0.2,
         )
 
@@ -632,7 +632,7 @@ async def generate_report(request: ReportGenerateRequest):
                     {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. 구조(1~4) 유지."},
                     {"role": "user", "content": rewrite_prompt},
                 ],
-                max_tokens=2500,
+                max_completion_tokens=2500,
                 temperature=0.0,
             )
 
