@@ -414,7 +414,7 @@ async def analyze_images(
 
     try:
         # gpt-5.1-chat-latest는 temperature 제약이 있을 수 있어 "None"으로 호출(=파라미터 미전달)
-        analysis_temperature = None
+        analysis_temperature=None
 
         # 1) 분류
         classify_messages = [{
