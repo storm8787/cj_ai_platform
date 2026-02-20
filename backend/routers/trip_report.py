@@ -341,7 +341,7 @@ async def analyze_images(
                 model=ANALYSIS_MODEL,
                 messages=classify_messages,
                 max_completion_tokens=600,
-                temperature=0.1,
+                temperature=1.0,
                 response_format=CLASSIFY_SCHEMA,
             )
             classify_json = json.loads(classify_text)
@@ -350,7 +350,7 @@ async def analyze_images(
                 model=ANALYSIS_MODEL,
                 messages=classify_messages,
                 max_completion_tokens=600,
-                temperature=0.1,
+                temperature=1.0,
             )
             classify_json = _safe_json_extract(classify_text)
 
@@ -374,7 +374,7 @@ async def analyze_images(
                 model=ANALYSIS_MODEL,
                 messages=extract_messages,
                 max_completion_tokens=2500,
-                temperature=0.1,
+                temperature=1.0,
                 response_format=EXTRACT_SCHEMA,
             )
             extract_json = json.loads(extract_text)
@@ -383,7 +383,7 @@ async def analyze_images(
                 model=ANALYSIS_MODEL,
                 messages=extract_messages,
                 max_completion_tokens=2500,
-                temperature=0.1,
+                temperature=1.0,
             )
             extract_json = _safe_json_extract(extract_text)
 
@@ -608,7 +608,7 @@ async def generate_report(request: ReportGenerateRequest):
                 {"role": "user", "content": report_prompt},
             ],
             max_completion_tokens=2500,
-            temperature=0.2,
+            temperature=1.0,
         )
 
         # 문체/구조 검증 → 문제 시 1회 자동 교정
@@ -633,7 +633,7 @@ async def generate_report(request: ReportGenerateRequest):
                     {"role": "user", "content": rewrite_prompt},
                 ],
                 max_completion_tokens=2500,
-                temperature=0.0,
+                temperature=1.0,
             )
 
         return ReportResponse(
