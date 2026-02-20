@@ -29,10 +29,17 @@
   #root {
     @apply max-w-full;
   }
+  /* 흰 배경 컨테이너는 기본 글자색을 어둡게 (body 흰글씨 상속 차단) */
+  .bg-white {
+    @apply text-gray-900;
+  }
 }
 
 
 @layer components {
+  .card {
+    @apply bg-white text-gray-900 rounded-xl shadow-lg p-6 border border-gray-100;
+  }
   /* 헤더 글래스모피즘 효과 */
   .glass-header {
     @apply bg-slate-950/80 backdrop-blur-xl border-b border-slate-800;
@@ -105,7 +112,7 @@
 
   /* 카드 */
   .card {
-    @apply bg-white rounded-xl shadow-lg p-6 border border-gray-100;
+    @apply bg-white text-gray-900 rounded-xl shadow-lg p-6 border border-gray-100;
   }
 
   .card-hover {
