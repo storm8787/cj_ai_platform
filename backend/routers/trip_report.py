@@ -1,16 +1,20 @@
 """
-출장보고 생성기 API - 최종 완성본
-- 2단계 분석: (1) 유형 분류(low) → (2) 상세 추출(high)
-- Structured Outputs + Pydantic 검증 + fallback 파싱
-- 공문서 문체 자동 교정 (금지어/구조 깨짐 감지 시 1회 재작성)
-- 모델:
+출장보고 생성기 API - 안정화 최종본
+- Drag&Drop은 프론트에서 처리
+- 2단계 분석: (1) 유형 분류 → (2) 상세 추출
+- 안정화 3종 세트:
+  1) response_format(json_schema) 시도
+  2) 모델/파라미터 미지원 시 자동 폴백(temperature/response_format 제거)
+  3) 파싱/타입 보정(main_content 문자열→리스트, 글자쪼개짐 방지)
+
+모델:
   * 사진 분석: gpt-5.1-chat-latest (Vision)
   * 보고서 생성/재작성: gpt-5-mini
 """
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import datetime
 import base64
 import time
@@ -21,7 +25,6 @@ import re
 from openai import OpenAI
 
 router = APIRouter()
-
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # 모델 설정 (환경변수로 변경 가능)
@@ -99,7 +102,7 @@ class ReportResponse(BaseModel):
 
 
 # ========================================
-# 유틸리티 함수
+# 유틸리티
 # ========================================
 def _encode_image_to_base64(image_bytes: bytes) -> str:
     return base64.b64encode(image_bytes).decode("utf-8")
@@ -123,7 +126,7 @@ def _safe_json_extract(text: str) -> dict:
     """JSON 파싱 실패 시 코드블록 제거 후 재시도"""
     if not text:
         raise ValueError("empty response")
-    
+
     t = text.strip()
     if "```" in t:
         parts = t.split("```")
@@ -132,7 +135,7 @@ def _safe_json_extract(text: str) -> dict:
             t = candidates[0].strip()
             if t.lower().startswith("json"):
                 t = t[4:].strip()
-    
+
     start = t.find("{")
     end = t.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -140,57 +143,137 @@ def _safe_json_extract(text: str) -> dict:
     return json.loads(t[start:end + 1])
 
 
+def _split_lines_like_bullets(s: str) -> List[str]:
+    """문자열 main_content를 보고서용 bullet 리스트로 변환"""
+    s = (s or "").strip()
+    if not s:
+        return []
+    # 줄바꿈/구분자 기반 분리
+    parts = re.split(r"[\r\n]+|•|\u2022|·| - |\s-\s", s)
+    cleaned = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        # 너무 짧은 단일 글자(예: '표','나'...)는 일단 제외 (나중에 join fallback)
+        cleaned.append(p)
+    # 만약 거의 다 1글자면 원문을 다시 문장단위로 재분리
+    if cleaned and sum(1 for x in cleaned if len(x) <= 1) / len(cleaned) > 0.6:
+        # 의미단위로 재시도: 마침표/세미콜론/쉼표
+        parts2 = re.split(r"[。\.]|;|,", s)
+        cleaned2 = [p.strip() for p in parts2 if p.strip()]
+        return cleaned2[:30]
+    return cleaned[:50]
+
+
+def _coerce_main_content(v: Any) -> List[str]:
+    """main_content 타입 보정(핵심)"""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        # list인데 글자 단위로 들어온 경우(join 후 재분리)
+        if v and all(isinstance(x, str) and len(x) <= 1 for x in v):
+            joined = "".join(v).strip()
+            return _split_lines_like_bullets(joined)
+        return [str(x).strip() for x in v if str(x).strip()]
+    if isinstance(v, str):
+        return _split_lines_like_bullets(v)
+    return [str(v).strip()] if str(v).strip() else []
+
+
+def _coerce_extracted_info(v: Any) -> Dict[str, str]:
+    if isinstance(v, dict):
+        return {str(k): str(val) for k, val in v.items()}
+    return {}
+
+
+def _coerce_photos_analysis(v: Any) -> List[Dict[str, Any]]:
+    if isinstance(v, list):
+        return [x for x in v if isinstance(x, dict)]
+    if isinstance(v, dict):
+        return [v]
+    return []
+
+
 def _contains_forbidden_polite(text: str) -> bool:
-    """공문서 금지 경어체 탐지"""
     patterns = [
         r"합니다", r"입니다", r"했습니다", r"됩니다", r"있습니다",
         r"드립니다", r"바랍니다", r"부탁드립니다", r"감사합니다",
-        r"하겠습니다", r"드리겠습니다", r"되겠습니다"
+        r"하겠습니다", r"드리겠습니다"
     ]
-    for p in patterns:
-        if re.search(p, text):
-            return True
-    return False
+    return any(re.search(p, text) for p in patterns)
 
 
 def _has_required_structure(text: str) -> bool:
-    """보고서 필수 구조(1~4항목) 존재 여부"""
     needed = ["1.", "2.", "3.", "4."]
     return all(n in text for n in needed)
 
 
 def _build_image_contents(images_data: List[dict], detail: str) -> List[dict]:
     return [
-        {
-            "type": "image_url",
-            "image_url": {"url": item["data_url"], "detail": detail},
-        }
+        {"type": "image_url", "image_url": {"url": item["data_url"], "detail": detail}}
         for item in images_data
     ]
 
 
-def _chat_create(
+def _chat_create_compat(
     model: str,
     messages: list,
     max_completion_tokens: int,
-    temperature: float,
-    response_format: Optional[dict] = None
+    temperature: Optional[float] = None,
+    response_format: Optional[dict] = None,
 ) -> str:
-    kwargs = dict(
-        model=model,
-        messages=messages,
-        max_completion_tokens=max_completion_tokens,
-        temperature=temperature
-    )
-    if response_format:
-        kwargs["response_format"] = response_format
-    
-    resp = client.chat.completions.create(**kwargs)
-    return resp.choices[0].message.content or ""
+    """
+    모델별 파라미터 지원 차이를 자동 흡수:
+    - temperature 미지원 모델이면 제거 후 재시도
+    - response_format 미지원이면 제거 후 재시도
+    """
+    base_kwargs = {
+        "model": model,
+        "messages": messages,
+        "max_completion_tokens": max_completion_tokens,
+    }
+    if temperature is not None:
+        base_kwargs["temperature"] = temperature
+    if response_format is not None:
+        base_kwargs["response_format"] = response_format
+
+    def _call(kwargs):
+        resp = client.chat.completions.create(**kwargs)
+        return resp.choices[0].message.content or ""
+
+    # 1차
+    try:
+        return _call(base_kwargs)
+    except Exception as e1:
+        msg = str(e1)
+
+        # temperature 미지원 → 제거
+        if "temperature" in msg and "Only the default (1) value is supported" in msg:
+            kwargs2 = dict(base_kwargs)
+            kwargs2.pop("temperature", None)
+            try:
+                return _call(kwargs2)
+            except Exception as e2:
+                msg2 = str(e2)
+                # response_format 미지원 → 제거
+                if "response_format" in msg2 or "json_schema" in msg2:
+                    kwargs3 = dict(kwargs2)
+                    kwargs3.pop("response_format", None)
+                    return _call(kwargs3)
+                raise
+
+        # response_format 미지원 → 제거
+        if "response_format" in msg or "json_schema" in msg:
+            kwargs2 = dict(base_kwargs)
+            kwargs2.pop("response_format", None)
+            return _call(kwargs2)
+
+        raise
 
 
 # ========================================
-# 분석 프롬프트 (2단계)
+# Structured Output 스키마 (가능하면 사용)
 # ========================================
 CLASSIFY_SCHEMA = {
     "type": "json_schema",
@@ -220,10 +303,7 @@ EXTRACT_SCHEMA = {
             "additionalProperties": False,
             "properties": {
                 "report_type": {"type": "string", "enum": list(REPORT_TYPES.keys())},
-                "extracted_info": {
-                    "type": "object",
-                    "additionalProperties": {"type": "string"},
-                },
+                "extracted_info": {"type": "object", "additionalProperties": {"type": "string"}},
                 "main_content": {"type": "array", "items": {"type": "string"}},
                 "photos_analysis": {
                     "type": "array",
@@ -247,6 +327,9 @@ EXTRACT_SCHEMA = {
 }
 
 
+# ========================================
+# 프롬프트
+# ========================================
 def _classification_prompt(force_report_type: str = "") -> str:
     force_line = ""
     if force_report_type and force_report_type in REPORT_TYPES:
@@ -262,7 +345,8 @@ def _classification_prompt(force_report_type: str = "") -> str:
 - 민원현장: 민원 확인/현장 조치 (불법행위·쓰레기·정비·단속·민원처리 등)
 - 환경점검: 환경 관련 점검 (하천·대기·소음·측정장비·오염 등)
 
-반드시 JSON 스키마에 맞춰 report_type/confidence/rationale를 출력하라.
+출력은 반드시 JSON 단독으로만 반환하라.
+키: report_type, confidence(0~1), rationale
 """
 
 
@@ -277,17 +361,22 @@ def _extraction_prompt(report_type: str, force_report_type: str = "") -> str:
     return f"""당신은 공무원 현장 보고서 작성 보조 AI임.
 사진을 근거로 '{report_type}' 유형의 보고서에 필요한 정보를 추출하라.
 {force_line}
+
 [유형 필드 - 반드시 extracted_info에 포함]
 {field_lines}
+
+[출력 형식]
+- 반드시 JSON 단독 출력
+- main_content는 "배열"이어야 함 (문자열 금지)
+  예: ["절차 1: ...", "절차 2: ..."]
+- photos_analysis는 사진 개수만큼 배열
+  photo_index는 1부터 시작
 
 [추출 규칙]
 1) 현수막/배너/PPT/표/간판의 텍스트 → detected_text에 그대로 기재
 2) 일시/장소/행사명/기관명 등은 extracted_info의 해당 필드에 정확히 매핑
-3) 표/절차/단계가 보이면 main_content에 단계별로 정리
+3) 표/절차/단계가 보이면 main_content에 단계별로 요약(한 줄 1개)
 4) 숫자/기간/장소명은 구체적으로, 안 보이면 "확인 필요" (억지로 만들지 말 것)
-5) photos_analysis는 사진 개수만큼, photo_index는 1부터
-
-반드시 JSON 스키마에 맞춰 출력하라.
 """
 
 
@@ -308,104 +397,137 @@ async def analyze_images(
     if len(images) > MAX_IMAGES:
         raise HTTPException(status_code=400, detail=f"이미지는 최대 {MAX_IMAGES}장까지 가능합니다.")
 
-    # 이미지 준비
     images_data: List[dict] = []
     for idx, upload in enumerate(images, start=1):
         if upload.content_type and not upload.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail=f"이미지 파일만 업로드 가능합니다. ({upload.filename})")
-        
+
         b = await upload.read()
         if not b:
             raise HTTPException(status_code=400, detail=f"빈 파일입니다. ({upload.filename})")
         if len(b) > MAX_IMAGE_BYTES:
             raise HTTPException(status_code=400, detail=f"파일 용량이 너무 큽니다. ({upload.filename})")
-        
+
         media_type = _get_image_media_type(upload)
         data_url = f"data:{media_type};base64,{_encode_image_to_base64(b)}"
         images_data.append({"index": idx, "data_url": data_url})
 
     try:
-        # 1단계: 분류 (low detail - 비용 절감)
-        classify_messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _classification_prompt(force_report_type)},
-                    *_build_image_contents(images_data, detail="low"),
-                ],
-            }
-        ]
+        # gpt-5.1-chat-latest는 temperature 제약이 있을 수 있어 "None"으로 호출(=파라미터 미전달)
+        analysis_temperature = None
 
+        # 1) 분류
+        classify_messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": _classification_prompt(force_report_type)},
+                *_build_image_contents(images_data, detail="low"),
+            ],
+        }]
+
+        classify_json = None
+        # (1) 스키마 시도
         try:
-            classify_text = _chat_create(
+            classify_text = _chat_create_compat(
                 model=ANALYSIS_MODEL,
                 messages=classify_messages,
                 max_completion_tokens=600,
-                temperature=1.0,
+                temperature=analysis_temperature,
                 response_format=CLASSIFY_SCHEMA,
             )
             classify_json = json.loads(classify_text)
         except Exception:
-            classify_text = _chat_create(
+            # (2) 일반 JSON 강제 출력
+            classify_text = _chat_create_compat(
                 model=ANALYSIS_MODEL,
                 messages=classify_messages,
                 max_completion_tokens=600,
-                temperature=1.0,
+                temperature=analysis_temperature,
+                response_format=None,
             )
             classify_json = _safe_json_extract(classify_text)
 
-        classified_type = classify_json.get("report_type") or "행사참석"
+        classified_type = (classify_json.get("report_type") or "행사참석").strip()
+        if classified_type not in REPORT_TYPES:
+            classified_type = "행사참석"
+
         if force_report_type and force_report_type in REPORT_TYPES:
             classified_type = force_report_type
 
-        # 2단계: 상세 추출 (high detail - 정확도)
-        extract_messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _extraction_prompt(classified_type, force_report_type)},
-                    *_build_image_contents(images_data, detail="high"),
-                ],
-            }
-        ]
+        # 2) 상세 추출
+        extract_messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": _extraction_prompt(classified_type, force_report_type)},
+                *_build_image_contents(images_data, detail="high"),
+            ],
+        }]
 
+        extract_json = None
         try:
-            extract_text = _chat_create(
+            extract_text = _chat_create_compat(
                 model=ANALYSIS_MODEL,
                 messages=extract_messages,
                 max_completion_tokens=2500,
-                temperature=1.0,
+                temperature=analysis_temperature,
                 response_format=EXTRACT_SCHEMA,
             )
             extract_json = json.loads(extract_text)
         except Exception:
-            extract_text = _chat_create(
+            extract_text = _chat_create_compat(
                 model=ANALYSIS_MODEL,
                 messages=extract_messages,
                 max_completion_tokens=2500,
-                temperature=1.0,
+                temperature=analysis_temperature,
+                response_format=None,
             )
             extract_json = _safe_json_extract(extract_text)
 
-        # 최종 유형 확정
-        report_type = extract_json.get("report_type") or classified_type
+        report_type = (extract_json.get("report_type") or classified_type).strip()
         if force_report_type and force_report_type in REPORT_TYPES:
             report_type = force_report_type
+        if report_type not in REPORT_TYPES:
+            report_type = classified_type
+
+        # ===== 타입 보정(핵심) =====
+        extracted_info = _coerce_extracted_info(extract_json.get("extracted_info"))
+        main_content = _coerce_main_content(extract_json.get("main_content"))
+        photos_analysis_raw = _coerce_photos_analysis(extract_json.get("photos_analysis"))
 
         # 필드 보강
         fields = REPORT_TYPES[report_type]["fields"]
-        extracted_info = extract_json.get("extracted_info") or {}
         for f in fields:
             extracted_info.setdefault(f, "")
 
-        # Pydantic 검증
+        # photos_analysis pydantic
+        photos_items: List[PhotoAnalysisItem] = []
+        for p in photos_analysis_raw:
+            try:
+                photos_items.append(PhotoAnalysisItem(
+                    photo_index=int(p.get("photo_index") or 1),
+                    description=str(p.get("description") or ""),
+                    detected_text=str(p.get("detected_text") or ""),
+                    key_elements=[str(x) for x in (p.get("key_elements") or []) if str(x).strip()],
+                ))
+            except Exception:
+                continue
+
+        confidence = extract_json.get("confidence")
+        if confidence is None:
+            confidence = classify_json.get("confidence")
+        try:
+            confidence = float(confidence)
+        except Exception:
+            confidence = 0.6
+        confidence = max(0.0, min(1.0, confidence))
+
         validated = AnalysisResult(
             report_type=report_type,
             report_type_icon=REPORT_TYPES.get(report_type, {}).get("icon", "📄"),
             extracted_info={k: str(v) for k, v in extracted_info.items()},
-            main_content=[str(x) for x in (extract_json.get("main_content") or []) if str(x).strip()],
-            photos_analysis=[PhotoAnalysisItem(**p) for p in (extract_json.get("photos_analysis") or [])],
-            confidence=float(extract_json.get("confidence") or classify_json.get("confidence") or 0.6),
+            main_content=main_content,
+            photos_analysis=photos_items,
+            confidence=confidence,
         )
 
         return {
@@ -422,7 +544,7 @@ async def analyze_images(
 
 
 # ========================================
-# API: 보고서 생성 (공문서 문체 완벽 버전)
+# API: 보고서 생성
 # ========================================
 @router.post("/generate-report")
 async def generate_report(request: ReportGenerateRequest):
@@ -433,12 +555,11 @@ async def generate_report(request: ReportGenerateRequest):
         type_info = REPORT_TYPES[report_type]
         fields = type_info["fields"]
 
-        # 입력 정보 텍스트
         info_lines = []
         for f in fields:
             v = (request.extracted_info or {}).get(f, "")
             info_lines.append(f"  - {f}: {v if v else '(미입력)'}")
-        
+
         extra_keys = [k for k in (request.extracted_info or {}).keys() if k not in fields]
         for k in extra_keys:
             v = (request.extracted_info or {}).get(k, "")
@@ -446,7 +567,10 @@ async def generate_report(request: ReportGenerateRequest):
                 info_lines.append(f"  - {k}: {v}")
 
         info_text = "\n".join(info_lines)
-        content_text = "\n".join([f"  - {item}" for item in (request.main_content or []) if str(item).strip()])
+
+        # main_content도 혹시 프론트에서 문자열로 넘어오면 방어
+        mc = _coerce_main_content(request.main_content)
+        content_text = "\n".join([f"  - {item}" for item in mc if str(item).strip()])
 
         # 사진 분석 근거
         photo_lines = []
@@ -461,7 +585,6 @@ async def generate_report(request: ReportGenerateRequest):
                 photo_lines.append(line)
         photos_text = "\n".join(photo_lines) if photo_lines else "  - (사진 분석 정보 없음)"
 
-        # 유형별 가이드
         type_guides = {
             "행사참석": "행사 핵심내용, 발표자료/절차 정리. 시사점은 우리 시 적용방안, 향후계획은 후속조치/공유계획 중심.",
             "출장방문": "방문목적, 면담내용, 우수사례 정리. 시사점은 도입가능성, 향후계획은 추가협의/예산검토 중심.",
@@ -470,9 +593,6 @@ async def generate_report(request: ReportGenerateRequest):
             "환경점검": "점검항목, 측정결과, 적합여부 명확화. 시사점은 환경상태, 향후계획은 모니터링/개선조치 중심.",
         }
 
-        # ========================================
-        # 공문서 문체 프롬프트 (핵심!)
-        # ========================================
         report_prompt = f"""당신은 대한민국 지방자치단체 공문서 작성 전문가임.
 아래 입력을 근거로 '{type_info["template"]}'를 작성하라.
 
@@ -495,145 +615,48 @@ async def generate_report(request: ReportGenerateRequest):
 [추가 요청사항]
 {request.additional_notes if request.additional_notes else "없음"}
 
-═══════════════════════════════════════════════════════════════
-공문서 문체 규칙 (절대 준수)
-═══════════════════════════════════════════════════════════════
-
-[1] 문장 종결어미 (가장 중요!)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ 사용해야 할 종결어미:
-  - 사실/상태: ~임, ~함, ~됨, ~있음, ~없음
-  - 완료: ~완료함, ~조치함, ~확인함, ~실시함, ~추진함
-  - 계획: ~할 예정임, ~추진할 계획임, ~검토 중임, ~협의할 예정임
-  - 필요: ~필요함, ~요망됨, ~바람직함
-
-❌ 절대 금지 (경어체):
-  - ~합니다, ~입니다, ~됩니다, ~있습니다, ~없습니다
-  - ~했습니다, ~하겠습니다, ~드립니다, ~바랍니다
-  - ~감사합니다, ~부탁드립니다
-
-[2] 공문서 표현/단어
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ 사용해야 할 표현:
-  - "~에 관한 사항", "~와 관련하여", "~에 따라"
-  - "상기", "하기", "금번", "향후", "조속히"
-  - "검토 결과", "현장 확인 결과", "조치 결과"
-  - "~의 건", "~에 대하여", "~을 위하여"
-  - "추진 경위", "조치 사항", "향후 계획"
-
-❌ 피해야 할 표현:
-  - "~것 같습니다", "~라고 생각합니다" → "~으로 판단됨"
-  - "많이", "아주", "정말" → "상당히", "매우"
-  - "빨리" → "조속히", "신속히"
-  - "좋다" → "양호함", "적정함"
-  - "나쁘다" → "미흡함", "부적정함"
-
-[3] 항목 기호
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  - 1단계: ㅇ (동그라미)
-  - 2단계: - (하이픈)
-  - 3단계: · (가운뎃점)
-
-[4] 보고서 구조 (반드시 유지)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{type_info["template"]}
-
-1. 개 요
-   ㅇ 일  시: 
-   ㅇ 장  소: 
-   ㅇ 참석자: (또는 점검자/방문자)
-   ㅇ 목  적: 
-
-2. 주요 내용
-   ㅇ (핵심 내용 1)
-     - 세부 사항
-   ㅇ (핵심 내용 2)
-     - 세부 사항
-
-3. 현장 사진
-   ㅇ 사진 1: (사진 분석 근거 기반 설명)
-   ㅇ 사진 2: (사진 분석 근거 기반 설명)
-   ※ 실제 사진은 별도 첨부
-
-4. 시사점 및 향후 계획
-   ㅇ 시사점
-     - (구체적 시사점)
-   ㅇ 향후 계획
-     - (구체적 조치) 예정임
-     - (일정/담당 포함) 추진할 계획임
-
-═══════════════════════════════════════════════════════════════
-예시 (좋은 예 vs 나쁜 예)
-═══════════════════════════════════════════════════════════════
-
-[시사점 작성]
-❌ "방치쓰레기 문제가 심각한 것 같습니다"
-✅ "해당 지역 방치쓰레기 상습 투기지역으로 확인됨, 지속적 단속 필요"
-
-❌ "AI 기술을 도입하면 좋을 것 같습니다"
-✅ "금번 사업설명회 내용 검토 결과, 우리 시 업무 적용 가능성 높음"
-
-[향후 계획 작성]
-❌ "앞으로 개선 방안을 검토하겠습니다"
-✅ "3월 중 관련 부서 협의 후 사업 참여 여부 결정할 예정임"
-
-❌ "빨리 고치겠습니다"
-✅ "긴급 보수 작업 2주 내 완료 예정임, 소요 예산 500천원"
-
-❌ "민원인한테 연락하겠습니다"
-✅ "민원인에게 처리 결과 회신 완료함"
-
-[완료 사항 작성]
-❌ "쓰레기를 치웠습니다"
-✅ "방치쓰레기 120kg 수거 완료함 (참여인원 3명)"
-
-❌ "현장을 확인했습니다"
-✅ "현장 확인 결과, 시설물 노후로 인한 파손 확인됨"
-
-위 규칙을 철저히 준수하여 실무에서 즉시 사용 가능한 보고서를 작성하라.
+[필수 규칙]
+- 경어체(~합니다/~입니다) 금지, 명사형 종결(~임/~함/~됨) 사용
+- 1~4 항목 구조 반드시 유지
 """
 
-        # 1차 생성
-        text = _chat_create(
+        # gpt-5-mini는 temperature 가능하므로 사용
+        def _chat(model, messages, max_completion_tokens, temperature):
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_completion_tokens=max_completion_tokens,
+                temperature=temperature
+            )
+            return resp.choices[0].message.content or ""
+
+        text = _chat(
             model=REPORT_MODEL,
             messages=[
-                {
-                    "role": "system",
-                    "content": "당신은 대한민국 지방자치단체 공문서 작성 전문가임. "
-                               "공문서 문체(명사형 종결, 개조식)를 철저히 준수함. "
-                               "경어체(~합니다, ~입니다) 절대 사용 금지. "
-                               "보고서 구조(1~4항목) 반드시 유지."
-                },
+                {"role": "system", "content": "공문서 문체(명사형 종결, 개조식) 준수. 경어체 금지. 1~4 구조 유지."},
                 {"role": "user", "content": report_prompt},
             ],
             max_completion_tokens=2500,
-            temperature=1.0,
+            temperature=0.2,
         )
 
-        # 문체/구조 검증 → 문제 시 1회 자동 교정
         if _contains_forbidden_polite(text) or not _has_required_structure(text):
             rewrite_prompt = f"""아래 보고서를 공문서 문체로 재작성하라.
-
-[교정 규칙]
-1. 경어체(합니다/입니다/했습니다) → 명사형 종결(~임/~함/~됨)로 변환
-2. 구조(1~4항목) 반드시 유지
-3. 내용/수치/고유명사는 변경 금지
-4. 새로운 사실 추가 금지
+- 경어체 → 명사형 종결로 변환
+- 구조(1~4) 유지
+- 내용/수치/고유명사 변경 금지, 새로운 사실 추가 금지
 
 [원문]
 {text}
-
-위 규칙대로 재작성하라. 내용은 유지하고 문체만 교정하라.
 """
-            text = _chat_create(
+            text = _chat(
                 model=REPORT_MODEL,
                 messages=[
                     {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. 구조(1~4) 유지."},
                     {"role": "user", "content": rewrite_prompt},
                 ],
                 max_completion_tokens=2500,
-                temperature=1.0,
+                temperature=0.0,
             )
 
         return ReportResponse(
@@ -645,9 +668,6 @@ async def generate_report(request: ReportGenerateRequest):
         raise HTTPException(status_code=500, detail=f"보고서 생성 실패: {str(e)}")
 
 
-# ========================================
-# API: 보고서 유형 목록
-# ========================================
 @router.get("/report-types")
 async def get_report_types():
     return {
