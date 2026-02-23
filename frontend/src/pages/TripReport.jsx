@@ -33,6 +33,7 @@ export default function TripReport() {
   const [images, setImages] = useState([]);
   const [previews, setPreviews] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isHwpxDragging, setIsHwpxDragging] = useState(false);
 
   // HWPX
   const [hwpxFile, setHwpxFile] = useState(null);       // File 객체
@@ -146,6 +147,20 @@ export default function TripReport() {
   const removeHwpx = () => {
     setHwpxFile(null);
     setHwpxText("");
+  };
+
+  const handleHwpxDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsHwpxDragging(true); };
+  const handleHwpxDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsHwpxDragging(false); };
+  const handleHwpxDrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); setIsHwpxDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".hwpx")) {
+      setError("기본자료는 HWPX 파일만 지원합니다.");
+      return;
+    }
+    setHwpxFile(file);
+    setError("");
   };
 
   // ========== AI 분석 ==========
@@ -432,10 +447,19 @@ export default function TripReport() {
               ) : (
                 <div
                   onClick={() => hwpxInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-600 hover:border-cyan-500/60 hover:bg-slate-700/30 rounded-xl p-4 text-center cursor-pointer transition-all"
+                  onDragOver={handleHwpxDragOver}
+                  onDragEnter={handleHwpxDragOver}
+                  onDragLeave={handleHwpxDragLeave}
+                  onDrop={handleHwpxDrop}
+                  className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all ${
+                    isHwpxDragging
+                      ? "border-cyan-500 bg-slate-700/60"
+                      : "border-slate-600 hover:border-cyan-500/60 hover:bg-slate-700/30"
+                  }`}
                 >
                   <FileText size={28} className="mx-auto text-slate-500 mb-2" />
                   <p className="text-slate-400 text-sm">클릭하여 HWPX 파일 선택</p>
+                  <p className="text-slate-500 text-xs mt-0.5">또는 파일을 여기에 드래그</p>
                   <p className="text-slate-500 text-xs mt-1">설명회·벤치마킹 기본자료 첨부 시 보고서 품질 향상</p>
                 </div>
               )}
@@ -690,7 +714,7 @@ export default function TripReport() {
       )}
 
       {/* ========== Step 3: 생성된 보고서 ========== */}
-      {step === 3 && generatedReport && (
+      {step === 3 && (
         <div className="space-y-6">
           <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 flex items-center gap-3">
             <CheckCircle size={24} className="text-green-400" />
@@ -703,27 +727,37 @@ export default function TripReport() {
           <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold text-white">📄 생성된 보고서</h2>
-              <div className="flex gap-2">
-                <button
-                  onClick={copyToClipboard}
-                  className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 flex items-center gap-2"
-                >
-                  <Copy size={16} />복사
-                </button>
-                <button
-                  onClick={downloadReport}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
-                >
-                  <Download size={16} />다운로드
-                </button>
-              </div>
+              {generatedReport && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={copyToClipboard}
+                    className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 flex items-center gap-2"
+                  >
+                    <Copy size={16} />복사
+                  </button>
+                  <button
+                    onClick={downloadReport}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+                  >
+                    <Download size={16} />다운로드
+                  </button>
+                </div>
+              )}
             </div>
-            <textarea
-              value={generatedReport}
-              onChange={(e) => setGeneratedReport(e.target.value)}
-              rows={20}
-              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-cyan-500"
-            />
+            {generatedReport ? (
+              <textarea
+                value={generatedReport}
+                onChange={(e) => setGeneratedReport(e.target.value)}
+                rows={20}
+                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-cyan-500"
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+                <AlertCircle size={40} className="mb-3 text-slate-600" />
+                <p className="text-sm">보고서 내용을 불러오지 못했습니다.</p>
+                <p className="text-xs mt-1">이전 단계로 돌아가 다시 생성해주세요.</p>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-4">
