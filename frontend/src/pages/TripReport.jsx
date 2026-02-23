@@ -17,11 +17,14 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 
 // 보고서 유형 기본값 (서버에서 로드 실패 시 사용)
 const FALLBACK_TYPES = [
-  { id: "행사참석", name: "행사참석", icon: "🎤", fields: ["행사명", "일시", "장소", "주최", "참석인원"] },
-  { id: "출장방문", name: "출장방문", icon: "🏢", fields: ["방문목적", "일시", "방문기관", "면담자"] },
-  { id: "시설점검", name: "시설점검", icon: "🏗️", fields: ["점검위치", "점검대상", "발견사항", "위험도"] },
-  { id: "민원현장", name: "민원현장", icon: "🚨", fields: ["민원위치", "민원유형", "현장상황", "조치결과"] },
-  { id: "환경점검", name: "환경점검", icon: "🌳", fields: ["점검위치", "점검항목", "측정결과", "적합여부"] },
+  { id: "회의참석",   name: "회의 참석",       icon: "🤝", fields: ["회의명", "일시", "장소", "주최기관", "참석자"] },
+  { id: "벤치마킹",   name: "벤치마킹",        icon: "🏢", fields: ["방문목적", "일시", "방문기관", "담당자"] },
+  { id: "교육연수",   name: "교육·연수",       icon: "📚", fields: ["교육명", "일시", "장소", "주관기관", "교육내용"] },
+  { id: "설명회참석", name: "설명회·행사 참석", icon: "🎤", fields: ["행사명", "일시", "장소", "주최", "참석인원"] },
+  { id: "조사연구",   name: "조사·연구",       icon: "🔍", fields: ["조사목적", "일시", "조사지역", "조사항목"] },
+  { id: "시설점검",   name: "시설점검",        icon: "🏗️", fields: ["점검위치", "점검대상", "발견사항", "위험도"] },
+  { id: "민원현장",   name: "민원현장",        icon: "🚨", fields: ["민원위치", "민원유형", "현장상황", "조치결과"] },
+  { id: "환경점검",   name: "환경점검",        icon: "🌳", fields: ["점검위치", "점검항목", "측정결과", "적합여부"] },
 ];
 
 export default function TripReport() {
@@ -160,7 +163,7 @@ export default function TripReport() {
 
       const analysis = payload.analysis;
       setAnalysisResult(analysis);
-      setSelectedReportType(analysis.report_type || "행사참석");
+      setSelectedReportType(analysis.report_type || "회의참석");
       setEditedInfo(analysis.extracted_info || {});
       setEditedContent(analysis.main_content || []);
       setOriginalImages([...images]);
@@ -654,7 +657,7 @@ export default function TripReport() {
             <CheckCircle size={24} className="text-green-400" />
             <div>
               <p className="text-green-400 font-semibold">보고서 생성 완료!</p>
-              <p className="text-slate-400 text-sm">공문서 문체로 작성되었습니다. 필요시 수정해주세요.</p>
+              <p className="text-slate-400 text-sm">공문서 문체(단어형 종결)로 작성되었습니다. 필요시 수정해주세요.</p>
             </div>
           </div>
 
@@ -705,13 +708,12 @@ export default function TripReport() {
         </div>
       )}
 
-      {/* 사용 팁 */}
       <div className="mt-8 bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4">
         <h3 className="font-semibold text-cyan-300 mb-2">💡 사용 팁</h3>
         <ul className="text-sm text-slate-300 space-y-1">
           <li>• 현수막/간판/PPT/표가 잘 보이는 사진을 올리면 추출 정확도가 올라갑니다</li>
           <li>• 유형 변경 시 해당 유형에 맞게 재분석되어 서식이 자동 변경됩니다</li>
-          <li>• 보고서는 공문서 문체(~임, ~함, ~됨)로 자동 생성됩니다</li>
+          <li>• 보고서는 공문서 문체(단어형 종결: ~논의 예정, ~검토 완료)로 자동 생성됩니다</li>
           <li>• 생성된 보고서는 직접 수정 후 복사/다운로드할 수 있습니다</li>
         </ul>
       </div>
