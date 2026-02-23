@@ -1,11 +1,12 @@
 """
-출장보고 생성기 API - 안정화 최종본
-- Drag&Drop은 프론트에서 처리
+출장보고 생성기 API - v3 (HWPX 기본자료 지원)
+- 사진 필수 + HWPX 선택 업로드
+- HWPX 텍스트 추출 → 분석 프롬프트에 [기본자료] 섹션으로 추가
 - 2단계 분석: (1) 유형 분류 → (2) 상세 추출
 - 안정화 3종 세트:
   1) response_format(json_schema) 시도
-  2) 모델/파라미터 미지원 시 자동 폴백(temperature/response_format 제거)
-  3) 파싱/타입 보정(main_content 문자열→리스트, 글자쪼개짐 방지)
+  2) 모델/파라미터 미지원 시 자동 폴백
+  3) 파싱/타입 보정
 
 모델:
   * 사진 분석: gpt-5.1-chat-latest (Vision)
@@ -14,14 +15,19 @@
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 import datetime
 import base64
 import time
 import os
 import json
 import re
+import zipfile
+import tempfile
+import shutil
+from io import BytesIO
 
+from lxml import etree
 from openai import OpenAI
 
 router = APIRouter()
@@ -29,10 +35,12 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # 모델 설정 (환경변수로 변경 가능)
 ANALYSIS_MODEL = os.getenv("TRIP_ANALYSIS_MODEL", "gpt-5.1-chat-latest")
-REPORT_MODEL = os.getenv("TRIP_REPORT_MODEL", "gpt-5-mini")
+REPORT_MODEL   = os.getenv("TRIP_REPORT_MODEL",   "gpt-5-mini")
 
-MAX_IMAGES = int(os.getenv("TRIP_MAX_IMAGES", "10"))
-MAX_IMAGE_BYTES = int(os.getenv("TRIP_MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))  # 8MB
+MAX_IMAGES          = int(os.getenv("TRIP_MAX_IMAGES",      "10"))
+MAX_IMAGE_BYTES     = int(os.getenv("TRIP_MAX_IMAGE_BYTES", str(8  * 1024 * 1024)))  # 8MB
+MAX_HWPX_BYTES      = int(os.getenv("TRIP_MAX_HWPX_BYTES",  str(20 * 1024 * 1024)))  # 20MB
+MAX_HWPX_TEXT_CHARS = int(os.getenv("TRIP_MAX_HWPX_CHARS",  "6000"))  # 프롬프트 토큰 제한
 
 
 # ========================================
@@ -115,6 +123,7 @@ class AnalysisResult(BaseModel):
     main_content: List[str] = []
     photos_analysis: List[PhotoAnalysisItem] = []
     confidence: float = Field(0.0, ge=0.0, le=1.0)
+    hwpx_attached: bool = False  # HWPX 첨부 여부 프론트에 전달
 
 
 class ReportGenerateRequest(BaseModel):
@@ -125,11 +134,82 @@ class ReportGenerateRequest(BaseModel):
     reporter_name: str = ""
     reporter_dept: str = ""
     additional_notes: str = ""
+    hwpx_text: str = ""  # 분석 단계에서 추출된 HWPX 텍스트
 
 
 class ReportResponse(BaseModel):
     report_text: str
     generation_time: float
+
+
+# ========================================
+# HWPX 텍스트 추출
+# ========================================
+def _extract_hwpx_text(file_bytes: bytes) -> str:
+    """
+    HWPX(ZIP) → XML 파싱 → <t> 태그 텍스트 추출
+    번역기 코드와 동일한 구조, 텍스트 추출만 수행
+    """
+    tmp_path = None
+    extract_dir = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".hwpx") as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        extract_dir = tempfile.mkdtemp()
+
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            zf.extractall(extract_dir)
+
+        # section XML 파일만 수집 (header.xml 제외)
+        xml_files = []
+        for root, dirs, files in os.walk(extract_dir):
+            for f in sorted(files):
+                if f.endswith(".xml") and f != "header.xml":
+                    xml_files.append(os.path.join(root, f))
+
+        texts: List[str] = []
+        for xml_file in xml_files:
+            try:
+                with open(xml_file, "rb") as f:
+                    raw = f.read()
+                parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
+                tree = etree.fromstring(raw, parser)
+                t_elements = tree.xpath(".//*[local-name()='t']")
+                for t_elem in t_elements:
+                    # 번역기의 extract_full_text 로직 그대로
+                    parts = []
+                    if t_elem.text:
+                        parts.append(t_elem.text)
+                    for child in t_elem:
+                        local = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                        if local == "fwSpace":
+                            parts.append(" ")
+                        if child.tail:
+                            parts.append(child.tail)
+                    line = "".join(parts).strip()
+                    if line:
+                        texts.append(line)
+            except etree.XMLSyntaxError:
+                continue
+
+        full_text = "\n".join(texts)
+        # 토큰 과부하 방지: 앞부분 우선 잘라내기
+        if len(full_text) > MAX_HWPX_TEXT_CHARS:
+            full_text = full_text[:MAX_HWPX_TEXT_CHARS] + "\n...(이하 생략)"
+
+        return full_text.strip()
+
+    except zipfile.BadZipFile:
+        raise ValueError("유효하지 않은 HWPX 파일입니다.")
+    except Exception as e:
+        raise ValueError(f"HWPX 텍스트 추출 실패: {str(e)}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        if extract_dir and os.path.exists(extract_dir):
+            shutil.rmtree(extract_dir)
 
 
 # ========================================
@@ -145,10 +225,10 @@ def _get_image_media_type(upload: UploadFile) -> str:
     filename = (upload.filename or "").lower()
     ext = filename.split(".")[-1] if "." in filename else ""
     return {
-        "jpg": "image/jpeg",
+        "jpg":  "image/jpeg",
         "jpeg": "image/jpeg",
-        "png": "image/png",
-        "gif": "image/gif",
+        "png":  "image/png",
+        "gif":  "image/gif",
         "webp": "image/webp",
     }.get(ext, "image/jpeg")
 
@@ -157,7 +237,6 @@ def _safe_json_extract(text: str) -> dict:
     """JSON 파싱 실패 시 코드블록 제거 후 재시도"""
     if not text:
         raise ValueError("empty response")
-
     t = text.strip()
     if "```" in t:
         parts = t.split("```")
@@ -166,46 +245,31 @@ def _safe_json_extract(text: str) -> dict:
             t = candidates[0].strip()
             if t.lower().startswith("json"):
                 t = t[4:].strip()
-
     start = t.find("{")
-    end = t.rfind("}")
+    end   = t.rfind("}")
     if start == -1 or end == -1 or end <= start:
         raise ValueError("no json object found")
     return json.loads(t[start:end + 1])
 
 
 def _split_lines_like_bullets(s: str) -> List[str]:
-    """문자열 main_content를 보고서용 bullet 리스트로 변환"""
     s = (s or "").strip()
     if not s:
         return []
-    # 줄바꿈/구분자 기반 분리
     parts = re.split(r"[\r\n]+|•|\u2022|·| - |\s-\s", s)
-    cleaned = []
-    for p in parts:
-        p = p.strip()
-        if not p:
-            continue
-        # 너무 짧은 단일 글자(예: '표','나'...)는 일단 제외 (나중에 join fallback)
-        cleaned.append(p)
-    # 만약 거의 다 1글자면 원문을 다시 문장단위로 재분리
+    cleaned = [p.strip() for p in parts if p.strip()]
     if cleaned and sum(1 for x in cleaned if len(x) <= 1) / len(cleaned) > 0.6:
-        # 의미단위로 재시도: 마침표/세미콜론/쉼표
         parts2 = re.split(r"[。\.]|;|,", s)
-        cleaned2 = [p.strip() for p in parts2 if p.strip()]
-        return cleaned2[:30]
+        return [p.strip() for p in parts2 if p.strip()][:30]
     return cleaned[:50]
 
 
 def _coerce_main_content(v: Any) -> List[str]:
-    """main_content 타입 보정(핵심)"""
     if v is None:
         return []
     if isinstance(v, list):
-        # list인데 글자 단위로 들어온 경우(join 후 재분리)
         if v and all(isinstance(x, str) and len(x) <= 1 for x in v):
-            joined = "".join(v).strip()
-            return _split_lines_like_bullets(joined)
+            return _split_lines_like_bullets("".join(v).strip())
         return [str(x).strip() for x in v if str(x).strip()]
     if isinstance(v, str):
         return _split_lines_like_bullets(v)
@@ -230,7 +294,7 @@ def _contains_forbidden_polite(text: str) -> bool:
     patterns = [
         r"합니다", r"입니다", r"했습니다", r"됩니다", r"있습니다",
         r"드립니다", r"바랍니다", r"부탁드립니다", r"감사합니다",
-        r"하겠습니다", r"드리겠습니다"
+        r"하겠습니다", r"드리겠습니다",
     ]
     return any(re.search(p, text) for p in patterns)
 
@@ -239,10 +303,8 @@ def _has_required_structure(text: str) -> bool:
     """1~4번 구조 존재 여부 확인 - 다양한 표기 허용"""
     if not text or len(text.strip()) < 50:
         return False
-    # 다양한 번호 표기 패턴 허용: 1. / 1) / ① 등
     patterns = [r"1[.\)]", r"2[.\)]", r"3[.\)]", r"4[.\)]"]
     return all(re.search(p, text) for p in patterns)
-
 
 
 def _build_image_contents(images_data: List[dict], detail: str) -> List[dict]:
@@ -259,12 +321,8 @@ def _chat_create_compat(
     temperature: Optional[float] = None,
     response_format: Optional[dict] = None,
 ) -> str:
-    """
-    모델별 파라미터 지원 차이를 자동 흡수:
-    - temperature 미지원 모델이면 제거 후 재시도
-    - response_format 미지원이면 제거 후 재시도
-    """
-    base_kwargs = {
+    """모델별 파라미터 지원 차이 자동 흡수"""
+    base_kwargs: dict = {
         "model": model,
         "messages": messages,
         "max_completion_tokens": max_completion_tokens,
@@ -278,38 +336,30 @@ def _chat_create_compat(
         resp = client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
 
-    # 1차
     try:
         return _call(base_kwargs)
     except Exception as e1:
         msg = str(e1)
-
-        # temperature 미지원 → 제거
         if "temperature" in msg and "Only the default (1) value is supported" in msg:
             kwargs2 = dict(base_kwargs)
             kwargs2.pop("temperature", None)
             try:
                 return _call(kwargs2)
             except Exception as e2:
-                msg2 = str(e2)
-                # response_format 미지원 → 제거
-                if "response_format" in msg2 or "json_schema" in msg2:
+                if "response_format" in str(e2) or "json_schema" in str(e2):
                     kwargs3 = dict(kwargs2)
                     kwargs3.pop("response_format", None)
                     return _call(kwargs3)
                 raise
-
-        # response_format 미지원 → 제거
         if "response_format" in msg or "json_schema" in msg:
             kwargs2 = dict(base_kwargs)
             kwargs2.pop("response_format", None)
             return _call(kwargs2)
-
         raise
 
 
 # ========================================
-# Structured Output 스키마 (가능하면 사용)
+# Structured Output 스키마
 # ========================================
 CLASSIFY_SCHEMA = {
     "type": "json_schema",
@@ -321,8 +371,8 @@ CLASSIFY_SCHEMA = {
             "additionalProperties": False,
             "properties": {
                 "report_type": {"type": "string", "enum": list(REPORT_TYPES.keys())},
-                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                "rationale": {"type": "string"},
+                "confidence":  {"type": "number", "minimum": 0, "maximum": 1},
+                "rationale":   {"type": "string"},
             },
             "required": ["report_type", "confidence", "rationale"],
         },
@@ -338,19 +388,19 @@ EXTRACT_SCHEMA = {
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                "report_type": {"type": "string", "enum": list(REPORT_TYPES.keys())},
+                "report_type":    {"type": "string", "enum": list(REPORT_TYPES.keys())},
                 "extracted_info": {"type": "object", "additionalProperties": {"type": "string"}},
-                "main_content": {"type": "array", "items": {"type": "string"}},
+                "main_content":   {"type": "array", "items": {"type": "string"}},
                 "photos_analysis": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            "photo_index": {"type": "integer", "minimum": 1},
-                            "description": {"type": "string"},
+                            "photo_index":   {"type": "integer", "minimum": 1},
+                            "description":   {"type": "string"},
                             "detected_text": {"type": "string"},
-                            "key_elements": {"type": "array", "items": {"type": "string"}},
+                            "key_elements":  {"type": "array", "items": {"type": "string"}},
                         },
                         "required": ["photo_index", "description", "detected_text", "key_elements"],
                     },
@@ -366,14 +416,21 @@ EXTRACT_SCHEMA = {
 # ========================================
 # 프롬프트
 # ========================================
-def _classification_prompt(force_report_type: str = "") -> str:
+def _classification_prompt(force_report_type: str = "", hwpx_text: str = "") -> str:
     force_line = ""
     if force_report_type and force_report_type in REPORT_TYPES:
         force_line = f'\n※ 사용자 지정 유형: "{force_report_type}" → report_type을 반드시 이 값으로 설정할 것.\n'
 
-    return f"""당신은 지방자치단체 공무원 출장보고 분류 AI임.
-사진을 보고 아래 8개 유형 중 하나로 분류하라.
-{force_line}
+    hwpx_section = ""
+    if hwpx_text:
+        hwpx_section = f"\n[기본자료 텍스트 - 유형 분류 참고]\n{hwpx_text[:1000]}\n"
+
+    return (
+        "당신은 지방자치단체 공무원 출장보고 분류 AI임.\n"
+        "사진(필수)과 기본자료(선택)를 보고 아래 8개 유형 중 하나로 분류하라.\n"
+        + force_line
+        + hwpx_section
+        + """
 [유형]
 - 회의참석: 회의/협의/간담회 (회의실·좌석 배치·명패·화이트보드·회의 자료 등)
 - 벤치마킹: 타 기관 방문/우수사례 견학 (기관 로고·시설 투어·담당자 면담·출입증 등)
@@ -387,9 +444,10 @@ def _classification_prompt(force_report_type: str = "") -> str:
 출력은 반드시 JSON 단독으로만 반환하라.
 키: report_type, confidence(0~1), rationale
 """
+    )
 
 
-def _extraction_prompt(report_type: str, force_report_type: str = "") -> str:
+def _extraction_prompt(report_type: str, force_report_type: str = "", hwpx_text: str = "") -> str:
     fields = REPORT_TYPES[report_type]["fields"]
     field_lines = "\n".join([f"  - {f}" for f in fields])
 
@@ -397,10 +455,20 @@ def _extraction_prompt(report_type: str, force_report_type: str = "") -> str:
     if force_report_type and force_report_type in REPORT_TYPES:
         force_line = f'\n※ 사용자 지정 유형: "{force_report_type}" → report_type을 반드시 이 값으로 설정하라.\n'
 
-    return f"""당신은 공무원 현장 보고서 작성 보조 AI임.
-사진을 근거로 '{report_type}' 유형의 보고서에 필요한 정보를 추출하라.
-{force_line}
+    hwpx_section = ""
+    if hwpx_text:
+        hwpx_section = (
+            "\n[기본자료 텍스트 - 정보 추출 우선 참고]\n"
+            "※ 사진에서 확인되지 않는 정보(행사명, 일시, 장소 등)는 이 자료에서 우선 추출하라.\n"
+            f"{hwpx_text}\n"
+        )
 
+    return (
+        f"당신은 공무원 현장 보고서 작성 보조 AI임.\n"
+        f"사진과 기본자료를 근거로 '{report_type}' 유형의 보고서에 필요한 정보를 추출하라.\n"
+        + force_line
+        + hwpx_section
+        + f"""
 [유형 필드 - 반드시 extracted_info에 포함]
 {field_lines}
 
@@ -408,64 +476,78 @@ def _extraction_prompt(report_type: str, force_report_type: str = "") -> str:
 - 반드시 JSON 단독 출력
 - main_content는 "배열"이어야 함 (문자열 금지)
   예: ["절차 1: ...", "절차 2: ..."]
-- photos_analysis는 사진 개수만큼 배열
-  photo_index는 1부터 시작
+- photos_analysis는 사진 개수만큼 배열, photo_index는 1부터 시작
 
 [추출 규칙]
-1) 현수막/배너/PPT/표/간판의 텍스트 → detected_text에 그대로 기재
-2) 일시/장소/행사명/기관명 등은 extracted_info의 해당 필드에 정확히 매핑
+1) 기본자료에 행사명/일시/장소/기관명이 있으면 최우선으로 extracted_info에 매핑
+2) 현수막/배너/PPT/표/간판의 텍스트 → detected_text에 그대로 기재
 3) 표/절차/단계가 보이면 main_content에 단계별로 요약(한 줄 1개)
 4) 숫자/기간/장소명은 구체적으로, 안 보이면 "확인 필요" (억지로 만들지 말 것)
 """
+    )
 
 
 # ========================================
-# API: 이미지 분석
+# API: 이미지 + HWPX 분석
 # ========================================
 @router.post("/analyze-images")
 async def analyze_images(
     images: List[UploadFile] = File(...),
-    reporter_name: str = Form(default=""),
-    reporter_dept: str = Form(default=""),
+    reporter_name:     str = Form(default=""),
+    reporter_dept:     str = Form(default=""),
     force_report_type: str = Form(default=""),
+    hwpx_file: Optional[UploadFile] = File(default=None),
 ):
     start_time = time.time()
 
+    # ── 사진 검증 ──
     if not images:
-        raise HTTPException(status_code=400, detail="이미지를 업로드해주세요.")
+        raise HTTPException(status_code=400, detail="현장 사진을 업로드해주세요.")
     if len(images) > MAX_IMAGES:
-        raise HTTPException(status_code=400, detail=f"이미지는 최대 {MAX_IMAGES}장까지 가능합니다.")
+        raise HTTPException(status_code=400, detail=f"사진은 최대 {MAX_IMAGES}장까지 가능합니다.")
 
     images_data: List[dict] = []
     for idx, upload in enumerate(images, start=1):
         if upload.content_type and not upload.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail=f"이미지 파일만 업로드 가능합니다. ({upload.filename})")
-
         b = await upload.read()
         if not b:
             raise HTTPException(status_code=400, detail=f"빈 파일입니다. ({upload.filename})")
         if len(b) > MAX_IMAGE_BYTES:
             raise HTTPException(status_code=400, detail=f"파일 용량이 너무 큽니다. ({upload.filename})")
-
         media_type = _get_image_media_type(upload)
         data_url = f"data:{media_type};base64,{_encode_image_to_base64(b)}"
         images_data.append({"index": idx, "data_url": data_url})
 
-    try:
-        # gpt-5.1-chat-latest는 temperature 제약이 있을 수 있어 "None"으로 호출(=파라미터 미전달)
-        analysis_temperature=None
+    # ── HWPX 텍스트 추출 (선택) ──
+    hwpx_text = ""
+    hwpx_attached = False
+    if hwpx_file and hwpx_file.filename:
+        fname = (hwpx_file.filename or "").lower()
+        if not fname.endswith(".hwpx"):
+            raise HTTPException(status_code=400, detail="기본자료는 HWPX 파일만 지원합니다.")
+        hw_bytes = await hwpx_file.read()
+        if len(hw_bytes) > MAX_HWPX_BYTES:
+            raise HTTPException(status_code=400, detail="HWPX 파일이 너무 큽니다. (최대 20MB)")
+        try:
+            hwpx_text = _extract_hwpx_text(hw_bytes)
+            hwpx_attached = True
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-        # 1) 분류
+    try:
+        analysis_temperature = None
+
+        # ── 1단계: 유형 분류 ──
         classify_messages = [{
             "role": "user",
             "content": [
-                {"type": "text", "text": _classification_prompt(force_report_type)},
+                {"type": "text", "text": _classification_prompt(force_report_type, hwpx_text)},
                 *_build_image_contents(images_data, detail="low"),
             ],
         }]
 
         classify_json = None
-        # (1) 스키마 시도
         try:
             classify_text = _chat_create_compat(
                 model=ANALYSIS_MODEL,
@@ -476,7 +558,6 @@ async def analyze_images(
             )
             classify_json = json.loads(classify_text)
         except Exception:
-            # (2) 일반 JSON 강제 출력
             classify_text = _chat_create_compat(
                 model=ANALYSIS_MODEL,
                 messages=classify_messages,
@@ -489,15 +570,14 @@ async def analyze_images(
         classified_type = (classify_json.get("report_type") or "회의참석").strip()
         if classified_type not in REPORT_TYPES:
             classified_type = "회의참석"
-
         if force_report_type and force_report_type in REPORT_TYPES:
             classified_type = force_report_type
 
-        # 2) 상세 추출
+        # ── 2단계: 상세 추출 ──
         extract_messages = [{
             "role": "user",
             "content": [
-                {"type": "text", "text": _extraction_prompt(classified_type, force_report_type)},
+                {"type": "text", "text": _extraction_prompt(classified_type, force_report_type, hwpx_text)},
                 *_build_image_contents(images_data, detail="high"),
             ],
         }]
@@ -528,17 +608,14 @@ async def analyze_images(
         if report_type not in REPORT_TYPES:
             report_type = classified_type
 
-        # ===== 타입 보정(핵심) =====
-        extracted_info = _coerce_extracted_info(extract_json.get("extracted_info"))
-        main_content = _coerce_main_content(extract_json.get("main_content"))
+        extracted_info      = _coerce_extracted_info(extract_json.get("extracted_info"))
+        main_content        = _coerce_main_content(extract_json.get("main_content"))
         photos_analysis_raw = _coerce_photos_analysis(extract_json.get("photos_analysis"))
 
-        # 필드 보강
         fields = REPORT_TYPES[report_type]["fields"]
         for f in fields:
             extracted_info.setdefault(f, "")
 
-        # photos_analysis pydantic
         photos_items: List[PhotoAnalysisItem] = []
         for p in photos_analysis_raw:
             try:
@@ -567,13 +644,19 @@ async def analyze_images(
             main_content=main_content,
             photos_analysis=photos_items,
             confidence=confidence,
+            hwpx_attached=hwpx_attached,
         )
+
+        result = validated.model_dump()
+        # hwpx_text는 보고서 생성 단계에서 재사용 — 프론트로 전달
+        result["hwpx_text"] = hwpx_text
 
         return {
             "success": True,
-            "analysis": validated.model_dump(),
+            "analysis": result,
             "analysis_time": round(time.time() - start_time, 2),
             "image_count": len(images_data),
+            "hwpx_attached": hwpx_attached,
         }
 
     except HTTPException:
@@ -591,34 +674,30 @@ async def generate_report(request: ReportGenerateRequest):
 
     try:
         report_type = request.report_type if request.report_type in REPORT_TYPES else "회의참석"
-        type_info = REPORT_TYPES[report_type]
-        fields = type_info["fields"]
+        type_info       = REPORT_TYPES[report_type]
+        fields          = type_info["fields"]
         closing_section = type_info["closing_section"]
-        closing_guide = type_info["closing_guide"]
+        closing_guide   = type_info["closing_guide"]
 
         info_lines = []
         for f in fields:
             v = (request.extracted_info or {}).get(f, "")
             info_lines.append(f"  - {f}: {v if v else '(미입력)'}")
-
         extra_keys = [k for k in (request.extracted_info or {}).keys() if k not in fields]
         for k in extra_keys:
             v = (request.extracted_info or {}).get(k, "")
             if v:
                 info_lines.append(f"  - {k}: {v}")
-
         info_text = "\n".join(info_lines)
 
-        # main_content도 혹시 프론트에서 문자열로 넘어오면 방어
         mc = _coerce_main_content(request.main_content)
         content_text = "\n".join([f"  - {item}" for item in mc if str(item).strip()])
 
-        # 사진 분석 근거
         photo_lines = []
         for p in (request.photos_analysis or []):
-            idx = p.get("photo_index")
+            idx  = p.get("photo_index")
             desc = (p.get("description") or "").strip()
-            det = (p.get("detected_text") or "").strip()
+            det  = (p.get("detected_text") or "").strip()
             if idx and desc:
                 line = f"  - 사진 {idx}: {desc}"
                 if det:
@@ -626,60 +705,59 @@ async def generate_report(request: ReportGenerateRequest):
                 photo_lines.append(line)
         photos_text = "\n".join(photo_lines) if photo_lines else "  - (사진 분석 정보 없음)"
 
+        # HWPX 기본자료 섹션 (있을 때만 포함)
+        hwpx_section = ""
+        if request.hwpx_text and request.hwpx_text.strip():
+            hwpx_section = (
+                "\n[출장 기본자료 (HWPX 원문)]\n"
+                "※ 아래 내용을 적극 활용하여 보고서의 주요 내용과 세부사항을 구체적으로 작성하라.\n"
+                f"{request.hwpx_text}\n"
+            )
+
         type_guides = {
-            "회의참석": "회의 안건, 토의 내용, 결정사항 정리.",
-            "벤치마킹": "방문 목적, 우수사례 내용, 시사점 정리.",
-            "교육연수": "교육 과정, 주요 내용, 실습 결과 정리.",
+            "회의참석":  "회의 안건, 토의 내용, 결정사항 정리.",
+            "벤치마킹":  "방문 목적, 우수사례 내용, 시사점 정리.",
+            "교육연수":  "교육 과정, 주요 내용, 실습 결과 정리.",
             "설명회참석": "발표 내용, 배포 자료 핵심, 질의응답 정리.",
-            "조사연구": "조사 방법, 결과 수치, 분석 내용 정리.",
-            "시설점검": "점검 위치, 발견사항, 위험도 명확화.",
-            "민원현장": "민원 내용, 현장 상황, 조치 결과 명확화.",
-            "환경점검": "점검 항목, 측정 결과, 적합 여부 명확화.",
+            "조사연구":  "조사 방법, 결과 수치, 분석 내용 정리.",
+            "시설점검":  "점검 위치, 발견사항, 위험도 명확화.",
+            "민원현장":  "민원 내용, 현장 상황, 조치 결과 명확화.",
+            "환경점검":  "점검 항목, 측정 결과, 적합 여부 명확화.",
         }
 
-        report_prompt = f"""당신은 대한민국 지방자치단체 공문서 작성 전문가임.
-아래 입력을 근거로 '{type_info["template"]}'를 작성하라.
+        report_prompt = (
+            f"당신은 대한민국 지방자치단체 공문서 작성 전문가임.\n"
+            f"아래 입력을 근거로 '{type_info['template']}'를 작성하라.\n\n"
+            f"[유형별 가이드]\n"
+            f"{type_guides.get(report_type, '')}\n"
+            f"4번 항목({closing_section}): {closing_guide}\n\n"
+            f"[입력 정보]\n{info_text}\n\n"
+            f"[주요 내용]\n{content_text if content_text else '  - (주요 내용 없음)'}\n\n"
+            f"[사진 분석 근거]\n{photos_text}\n"
+            + hwpx_section
+            + f"\n[보고자 정보]\n"
+            f"  - 보고자: {request.reporter_dept} {request.reporter_name}\n"
+            f"  - 보고일: {datetime.datetime.now().strftime('%Y. %m. %d.')}\n\n"
+            f"[추가 요청사항]\n{request.additional_notes if request.additional_notes else '없음'}\n\n"
+            f"[필수 규칙]\n"
+            f"- 경어체(~합니다/~입니다) 절대 금지\n"
+            f"- 명사형 종결 사용: ~임/~함/~됨 금지, 반드시 단어로 종결\n"
+            f"  예시(나쁨): '논의할 예정임', '검토됨', '추진함'\n"
+            f"  예시(좋음): '논의 예정', '검토 완료', '추진 계획'\n"
+            f"- 개조식 문체, 간결하게 작성\n"
+            f"- 보고서 구조 반드시 유지:\n"
+            f"  1. 출장 개요\n"
+            f"  2. 주요 내용\n"
+            f"  3. 사진 및 참고\n"
+            f"  4. {closing_section}\n"
+        )
 
-[유형별 가이드]
-{type_guides.get(report_type, "")}
-4번 항목({closing_section}): {closing_guide}
-
-[입력 정보]
-{info_text}
-
-[주요 내용]
-{content_text if content_text else "  - (주요 내용 없음)"}
-
-[사진 분석 근거]
-{photos_text}
-
-[보고자 정보]
-  - 보고자: {request.reporter_dept} {request.reporter_name}
-  - 보고일: {datetime.datetime.now().strftime('%Y. %m. %d.')}
-
-[추가 요청사항]
-{request.additional_notes if request.additional_notes else "없음"}
-
-[필수 규칙]
-- 경어체(~합니다/~입니다) 절대 금지
-- 명사형 종결 사용: ~임/~함/~됨 금지, 반드시 단어로 종결
-  예시(나쁨): "논의할 예정임", "검토됨", "추진함"
-  예시(좋음): "논의 예정", "검토 완료", "추진 계획"
-- 개조식 문체, 간결하게 작성
-- 보고서 구조 반드시 유지:
-  1. 출장 개요
-  2. 주요 내용
-  3. 사진 및 참고
-  4. {closing_section}
-"""
-
-        # gpt-5-mini는 temperature 가능하므로 사용
         def _chat(model, messages, max_completion_tokens, temperature):
             resp = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 max_completion_tokens=max_completion_tokens,
-                temperature=temperature
+                temperature=temperature,
             )
             return resp.choices[0].message.content or ""
 
@@ -687,25 +765,25 @@ async def generate_report(request: ReportGenerateRequest):
             model=REPORT_MODEL,
             messages=[
                 {"role": "system", "content": "공문서 문체(단어형 종결, 개조식) 준수. 경어체 절대 금지. ~임/~함/~됨 금지. '논의 예정', '검토 완료'처럼 명사·동사원형으로 종결. 1~4 구조 유지."},
-                {"role": "user", "content": report_prompt},
+                {"role": "user",   "content": report_prompt},
             ],
-            max_completion_tokens=2500,
+            max_completion_tokens=3000,
             temperature=1.0,
         )
 
-        # 1차 생성 빈값 방어: 빈 경우 재시도
+        # 1차 생성 빈값 방어
         if not text or not text.strip():
             text = _chat(
                 model=REPORT_MODEL,
                 messages=[
                     {"role": "system", "content": "공문서 문체(단어형 종결, 개조식) 준수. 경어체 절대 금지. 1~4 구조 유지."},
-                    {"role": "user", "content": report_prompt},
+                    {"role": "user",   "content": report_prompt},
                 ],
-                max_completion_tokens=2500,
+                max_completion_tokens=3000,
                 temperature=1.0,
             )
 
-        # 문체/구조 검증 → 필요 시 교정 (원문이 있는 경우만)
+        # 문체/구조 검증 → 필요 시 교정
         needs_rewrite = text and text.strip() and (
             _contains_forbidden_polite(text) or not _has_required_structure(text)
         )
@@ -723,16 +801,15 @@ async def generate_report(request: ReportGenerateRequest):
                 model=REPORT_MODEL,
                 messages=[
                     {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. ~임/~함/~됨 → 단어형 종결 변환. 구조(1~4) 유지."},
-                    {"role": "user", "content": rewrite_prompt},
+                    {"role": "user",   "content": rewrite_prompt},
                 ],
-                max_completion_tokens=2500,
+                max_completion_tokens=3000,
                 temperature=1.0,
             )
 
-
         return ReportResponse(
             report_text=text,
-            generation_time=round(time.time() - start_time, 2)
+            generation_time=round(time.time() - start_time, 2),
         )
 
     except Exception as e:
