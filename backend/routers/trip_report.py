@@ -39,30 +39,61 @@ MAX_IMAGE_BYTES = int(os.getenv("TRIP_MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))  
 # 보고서 유형별 설정
 # ========================================
 REPORT_TYPES = {
-    "행사참석": {
+    "회의참석": {
+        "icon": "🤝",
+        "fields": ["회의명", "일시", "장소", "주최기관", "참석자"],
+        "template": "회의 참석 결과 보고",
+        "closing_section": "협의결과",
+        "closing_guide": "협의결과는 주요 결정사항, 합의내용, 이견사항 중심으로 작성.",
+    },
+    "벤치마킹": {
+        "icon": "🏢",
+        "fields": ["방문목적", "일시", "방문기관", "담당자"],
+        "template": "벤치마킹 결과 보고",
+        "closing_section": "우리시 적용방안",
+        "closing_guide": "우리시 적용방안은 도입 가능성, 예산·인력 검토, 추진 일정 중심으로 작성.",
+    },
+    "교육연수": {
+        "icon": "📚",
+        "fields": ["교육명", "일시", "장소", "주관기관", "교육내용"],
+        "template": "교육·연수 결과 보고",
+        "closing_section": "적용방안",
+        "closing_guide": "적용방안은 업무 활용 계획, 제도 개선 반영 여부, 공유 계획 중심으로 작성. 실습·기술 교육이면 '업무활용계획'으로 표현 가능.",
+    },
+    "설명회참석": {
         "icon": "🎤",
         "fields": ["행사명", "일시", "장소", "주최", "참석인원"],
-        "template": "행사 참석 보고",
+        "template": "설명회·행사 참석 결과 보고",
+        "closing_section": "주요내용",
+        "closing_guide": "주요내용은 발표·배포 자료 핵심 내용, 질의응답 사항 중심으로 작성. 정책 참고사항이 있으면 별도 기재.",
     },
-    "출장방문": {
-        "icon": "🏢",
-        "fields": ["방문목적", "일시", "방문기관", "면담자"],
-        "template": "출장 결과 보고",
+    "조사연구": {
+        "icon": "🔍",
+        "fields": ["조사목적", "일시", "조사지역", "조사항목"],
+        "template": "조사·연구 결과 보고",
+        "closing_section": "검토의견 및 우리시 반영사항",
+        "closing_guide": "검토의견은 조사 결과 분석, 우리시 반영사항은 정책·제도 반영 방향과 후속 조치 계획 중심으로 작성.",
     },
     "시설점검": {
         "icon": "🏗️",
         "fields": ["점검위치", "점검대상", "발견사항", "위험도"],
-        "template": "현장 점검 보고",
+        "template": "시설 점검 결과 보고",
+        "closing_section": "조치계획",
+        "closing_guide": "조치계획은 발견사항별 보수·개선 일정, 예산 확보 방안, 안전조치 계획 중심으로 작성.",
     },
     "민원현장": {
         "icon": "🚨",
         "fields": ["민원위치", "민원유형", "현장상황", "조치결과"],
         "template": "민원 현장 확인 보고",
+        "closing_section": "재발방지 대책",
+        "closing_guide": "재발방지 대책은 원인 분석, 순찰·단속 강화 계획, 민원 회신 방안 중심으로 작성.",
     },
     "환경점검": {
         "icon": "🌳",
         "fields": ["점검위치", "점검항목", "측정결과", "적합여부"],
-        "template": "환경 점검 보고",
+        "template": "환경 점검 결과 보고",
+        "closing_section": "조치계획",
+        "closing_guide": "조치계획은 측정 결과 기반 개선 필요사항, 모니터링 계획, 관계기관 협조 방안 중심으로 작성.",
     },
 }
 
@@ -336,14 +367,17 @@ def _classification_prompt(force_report_type: str = "") -> str:
         force_line = f'\n※ 사용자 지정 유형: "{force_report_type}" → report_type을 반드시 이 값으로 설정할 것.\n'
 
     return f"""당신은 지방자치단체 공무원 출장보고 분류 AI임.
-사진을 보고 아래 5개 유형 중 하나로 분류하라.
+사진을 보고 아래 8개 유형 중 하나로 분류하라.
 {force_line}
 [유형]
-- 행사참석: 설명회/세미나/회의/축제/행사 (현수막·배너·발표·좌석·무대 등)
-- 출장방문: 타 기관 방문/벤치마킹/업무협의 (기관 로고·회의실·명패·출입증 등)
-- 시설점검: 도로/건물/시설물 점검 (파손·균열·공사현장·안전점검 등)
+- 회의참석: 회의/협의/간담회 (회의실·좌석 배치·명패·화이트보드·회의 자료 등)
+- 벤치마킹: 타 기관 방문/우수사례 견학 (기관 로고·시설 투어·담당자 면담·출입증 등)
+- 교육연수: 교육/연수/강의/워크숍 (강의실·PPT·강사·교재·수강 좌석 등)
+- 설명회참석: 설명회/박람회/포럼/행사/세미나 (현수막·배너·발표·무대·전시 부스 등)
+- 조사연구: 현지 조사/연구/실태 파악 (조사 장비·측정·인터뷰·현장 기록 등)
+- 시설점검: 도로/건물/시설물 안전점검 (파손·균열·공사현장·안전점검표 등)
 - 민원현장: 민원 확인/현장 조치 (불법행위·쓰레기·정비·단속·민원처리 등)
-- 환경점검: 환경 관련 점검 (하천·대기·소음·측정장비·오염 등)
+- 환경점검: 환경 관련 측정/점검 (하천·대기·소음·측정장비·오염 현장 등)
 
 출력은 반드시 JSON 단독으로만 반환하라.
 키: report_type, confidence(0~1), rationale
@@ -447,9 +481,9 @@ async def analyze_images(
             )
             classify_json = _safe_json_extract(classify_text)
 
-        classified_type = (classify_json.get("report_type") or "행사참석").strip()
+        classified_type = (classify_json.get("report_type") or "회의참석").strip()
         if classified_type not in REPORT_TYPES:
-            classified_type = "행사참석"
+            classified_type = "회의참석"
 
         if force_report_type and force_report_type in REPORT_TYPES:
             classified_type = force_report_type
@@ -551,9 +585,11 @@ async def generate_report(request: ReportGenerateRequest):
     start_time = time.time()
 
     try:
-        report_type = request.report_type if request.report_type in REPORT_TYPES else "행사참석"
+        report_type = request.report_type if request.report_type in REPORT_TYPES else "회의참석"
         type_info = REPORT_TYPES[report_type]
         fields = type_info["fields"]
+        closing_section = type_info["closing_section"]
+        closing_guide = type_info["closing_guide"]
 
         info_lines = []
         for f in fields:
@@ -586,11 +622,14 @@ async def generate_report(request: ReportGenerateRequest):
         photos_text = "\n".join(photo_lines) if photo_lines else "  - (사진 분석 정보 없음)"
 
         type_guides = {
-            "행사참석": "행사 핵심내용, 발표자료/절차 정리. 시사점은 우리 시 적용방안, 향후계획은 후속조치/공유계획 중심.",
-            "출장방문": "방문목적, 면담내용, 우수사례 정리. 시사점은 도입가능성, 향후계획은 추가협의/예산검토 중심.",
-            "시설점검": "점검위치, 발견사항, 위험도 명확화. 시사점은 안전문제, 향후계획은 보수일정/예산확보 중심.",
-            "민원현장": "민원내용, 현장상황, 조치결과 명확화. 시사점은 재발방지, 향후계획은 순찰강화/민원회신 중심.",
-            "환경점검": "점검항목, 측정결과, 적합여부 명확화. 시사점은 환경상태, 향후계획은 모니터링/개선조치 중심.",
+            "회의참석": "회의 안건, 토의 내용, 결정사항 정리.",
+            "벤치마킹": "방문 목적, 우수사례 내용, 시사점 정리.",
+            "교육연수": "교육 과정, 주요 내용, 실습 결과 정리.",
+            "설명회참석": "발표 내용, 배포 자료 핵심, 질의응답 정리.",
+            "조사연구": "조사 방법, 결과 수치, 분석 내용 정리.",
+            "시설점검": "점검 위치, 발견사항, 위험도 명확화.",
+            "민원현장": "민원 내용, 현장 상황, 조치 결과 명확화.",
+            "환경점검": "점검 항목, 측정 결과, 적합 여부 명확화.",
         }
 
         report_prompt = f"""당신은 대한민국 지방자치단체 공문서 작성 전문가임.
@@ -598,6 +637,7 @@ async def generate_report(request: ReportGenerateRequest):
 
 [유형별 가이드]
 {type_guides.get(report_type, "")}
+4번 항목({closing_section}): {closing_guide}
 
 [입력 정보]
 {info_text}
@@ -616,8 +656,16 @@ async def generate_report(request: ReportGenerateRequest):
 {request.additional_notes if request.additional_notes else "없음"}
 
 [필수 규칙]
-- 경어체(~합니다/~입니다) 금지, 명사형 종결(~임/~함/~됨) 사용
-- 1~4 항목 구조 반드시 유지
+- 경어체(~합니다/~입니다) 절대 금지
+- 명사형 종결 사용: ~임/~함/~됨 금지, 반드시 단어로 종결
+  예시(나쁨): "논의할 예정임", "검토됨", "추진함"
+  예시(좋음): "논의 예정", "검토 완료", "추진 계획"
+- 개조식 문체, 간결하게 작성
+- 보고서 구조 반드시 유지:
+  1. 출장 개요
+  2. 주요 내용
+  3. 사진 및 참고
+  4. {closing_section}
 """
 
         # gpt-5-mini는 temperature 가능하므로 사용
@@ -633,7 +681,7 @@ async def generate_report(request: ReportGenerateRequest):
         text = _chat(
             model=REPORT_MODEL,
             messages=[
-                {"role": "system", "content": "공문서 문체(명사형 종결, 개조식) 준수. 경어체 금지. 1~4 구조 유지."},
+                {"role": "system", "content": "공문서 문체(단어형 종결, 개조식) 준수. 경어체 절대 금지. ~임/~함/~됨 금지. '논의 예정', '검토 완료'처럼 명사·동사원형으로 종결. 1~4 구조 유지."},
                 {"role": "user", "content": report_prompt},
             ],
             max_completion_tokens=2500,
@@ -642,7 +690,11 @@ async def generate_report(request: ReportGenerateRequest):
 
         if _contains_forbidden_polite(text) or not _has_required_structure(text):
             rewrite_prompt = f"""아래 보고서를 공문서 문체로 재작성하라.
-- 경어체 → 명사형 종결로 변환
+- 경어체 → 단어형 종결로 변환
+- ~임/~함/~됨 → 명사/동사원형으로 변환
+  예: "논의할 예정임" → "논의 예정"
+  예: "검토됨" → "검토 완료"
+  예: "추진함" → "추진 계획"
 - 구조(1~4) 유지
 - 내용/수치/고유명사 변경 금지, 새로운 사실 추가 금지
 
@@ -652,7 +704,7 @@ async def generate_report(request: ReportGenerateRequest):
             text = _chat(
                 model=REPORT_MODEL,
                 messages=[
-                    {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. 구조(1~4) 유지."},
+                    {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. ~임/~함/~됨 → 단어형 종결로 변환. 구조(1~4) 유지."},
                     {"role": "user", "content": rewrite_prompt},
                 ],
                 max_completion_tokens=2500,
