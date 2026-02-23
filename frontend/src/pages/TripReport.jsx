@@ -3,6 +3,7 @@ import {
   Upload,
   X,
   FileImage,
+  FileText,
   Loader2,
   CheckCircle,
   AlertCircle,
@@ -32,6 +33,11 @@ export default function TripReport() {
   const [images, setImages] = useState([]);
   const [previews, setPreviews] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
+
+  // HWPX
+  const [hwpxFile, setHwpxFile] = useState(null);       // File 객체
+  const [hwpxText, setHwpxText] = useState("");         // 분석 후 추출된 텍스트 (보고서 생성 시 재사용)
+  const hwpxInputRef = useRef(null);
 
   const [analyzing, setAnalyzing] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
@@ -78,7 +84,7 @@ export default function TripReport() {
     return m;
   }, [reportTypes]);
 
-  // ========== 파일 업로드 ==========
+  // ========== 사진 업로드 ==========
   const readFileAsDataURL = (file) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -94,10 +100,9 @@ export default function TripReport() {
       return;
     }
     if (incoming.length + images.length > 10) {
-      setError("이미지는 최대 10장까지 업로드 가능합니다.");
+      setError("사진은 최대 10장까지 업로드 가능합니다.");
       return;
     }
-
     try {
       const nextPreviews = await Promise.all(incoming.map(readFileAsDataURL));
       setImages((prev) => [...prev, ...incoming]);
@@ -113,34 +118,40 @@ export default function TripReport() {
     e.target.value = "";
   };
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); };
   const handleDrop = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
+    e.preventDefault(); e.stopPropagation(); setIsDragging(false);
     await addFiles(e.dataTransfer.files);
   };
-
   const removeImage = (index) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
     setPreviews((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // ========== HWPX 업로드 ==========
+  const handleHwpxUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".hwpx")) {
+      setError("기본자료는 HWPX 파일만 지원합니다.");
+      e.target.value = "";
+      return;
+    }
+    setHwpxFile(file);
+    setError("");
+    e.target.value = "";
+  };
+
+  const removeHwpx = () => {
+    setHwpxFile(null);
+    setHwpxText("");
+  };
+
   // ========== AI 분석 ==========
   const handleAnalyze = async () => {
     if (images.length === 0) {
-      setError("이미지를 업로드해주세요.");
+      setError("현장 사진을 업로드해주세요.");
       return;
     }
 
@@ -152,6 +163,7 @@ export default function TripReport() {
       images.forEach((image) => formData.append("images", image));
       formData.append("reporter_name", reporterName);
       formData.append("reporter_dept", reporterDept);
+      if (hwpxFile) formData.append("hwpx_file", hwpxFile);
 
       const response = await fetch(`${API_BASE}/api/trip-report/analyze-images`, {
         method: "POST",
@@ -166,6 +178,7 @@ export default function TripReport() {
       setSelectedReportType(analysis.report_type || "회의참석");
       setEditedInfo(analysis.extracted_info || {});
       setEditedContent(analysis.main_content || []);
+      setHwpxText(analysis.hwpx_text || "");   // 추출된 HWPX 텍스트 보관
       setOriginalImages([...images]);
       setStep(2);
     } catch (err) {
@@ -191,6 +204,8 @@ export default function TripReport() {
       formData.append("reporter_name", reporterName);
       formData.append("reporter_dept", reporterDept);
       formData.append("force_report_type", newType);
+      // 재분석 시에도 HWPX 파일 유지
+      if (hwpxFile) formData.append("hwpx_file", hwpxFile);
 
       const response = await fetch(`${API_BASE}/api/trip-report/analyze-images`, {
         method: "POST",
@@ -205,6 +220,7 @@ export default function TripReport() {
       setSelectedReportType(newType);
       setEditedInfo(analysis.extracted_info || {});
       setEditedContent(analysis.main_content || []);
+      setHwpxText(analysis.hwpx_text || "");
     } catch (err) {
       setError(err.message || "재분석 오류");
     } finally {
@@ -214,14 +230,12 @@ export default function TripReport() {
 
   const handleReportTypeChange = (newType) => {
     if (newType === selectedReportType) return;
-
     const confirmReanalyze = window.confirm(
       `보고서 유형을 "${newType}"(으)로 변경하시겠습니까?\n\n` +
       `⚠️ 해당 유형에 맞게 사진을 재분석합니다.\n` +
       `⚠️ 현재 수정한 내용은 초기화됩니다.\n` +
       `💰 Vision API 비용이 추가로 발생합니다.`
     );
-
     if (confirmReanalyze) handleReanalyze(newType);
   };
 
@@ -242,6 +256,7 @@ export default function TripReport() {
           reporter_name: reporterName,
           reporter_dept: reporterDept,
           additional_notes: additionalNotes,
+          hwpx_text: hwpxText,   // 분석 단계에서 추출한 HWPX 텍스트 전달
         }),
       });
 
@@ -258,18 +273,10 @@ export default function TripReport() {
   };
 
   // ========== 편집 핸들러 ==========
-  const handleInfoChange = (key, value) => {
-    setEditedInfo((prev) => ({ ...prev, [key]: value }));
-  };
-
+  const handleInfoChange = (key, value) => setEditedInfo((prev) => ({ ...prev, [key]: value }));
   const handleContentChange = (index, value) => {
-    setEditedContent((prev) => {
-      const next = [...prev];
-      next[index] = value;
-      return next;
-    });
+    setEditedContent((prev) => { const next = [...prev]; next[index] = value; return next; });
   };
-
   const addContent = () => setEditedContent((prev) => [...prev, ""]);
   const removeContent = (index) => setEditedContent((prev) => prev.filter((_, i) => i !== index));
 
@@ -278,14 +285,12 @@ export default function TripReport() {
     navigator.clipboard.writeText(generatedReport);
     alert("클립보드에 복사되었습니다.");
   };
-
   const downloadReport = () => {
     const blob = new Blob([generatedReport], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    const timestamp = new Date().toISOString().slice(0, 10);
-    link.download = `출장보고_${timestamp}.txt`;
+    link.download = `출장보고_${new Date().toISOString().slice(0, 10)}.txt`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -294,6 +299,8 @@ export default function TripReport() {
   const resetAll = () => {
     setImages([]);
     setPreviews([]);
+    setHwpxFile(null);
+    setHwpxText("");
     setAnalysisResult(null);
     setEditedInfo({});
     setEditedContent([]);
@@ -313,18 +320,19 @@ export default function TripReport() {
   // ========== 렌더링 ==========
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
       {/* 헤더 */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white mb-2">📄 출장보고 생성기</h1>
         <p className="text-slate-400">
-          사진만 업로드하면 AI가 자동으로 분석하여 공문서 형식의 보고서를 생성합니다.
+          사진과 출장 기본자료(HWPX)를 함께 올리면 더 정확한 보고서가 생성됩니다.
         </p>
       </div>
 
       {/* 진행 단계 */}
       <div className="flex items-center justify-center mb-8">
         {[
-          { num: 1, label: "사진 업로드" },
+          { num: 1, label: "자료 업로드" },
           { num: 2, label: "AI 분석" },
           { num: 3, label: "보고서 완성" },
         ].map((s, i) => (
@@ -348,61 +356,91 @@ export default function TripReport() {
         </div>
       )}
 
-      {/* ========== Step 1: 사진 업로드 ========== */}
+      {/* ========== Step 1: 자료 업로드 ========== */}
       {step === 1 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
           {/* 업로드 영역 */}
-          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 space-y-6">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
               <FileImage size={20} />
-              현장 사진 업로드
+              출장자료 업로드
             </h2>
 
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={handleDragOver}
-              onDragEnter={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
-                isDragging
-                  ? "border-cyan-500 bg-slate-700/60"
-                  : "border-slate-600 hover:border-cyan-500 hover:bg-slate-700/50"
-              }`}
-            >
-              <Upload size={48} className="mx-auto text-slate-400 mb-4" />
-              <p className="text-slate-300 mb-2">클릭하여 사진 선택</p>
-              <p className="text-slate-500 text-sm">또는 파일을 여기에 드래그</p>
-              <p className="text-slate-500 text-sm mt-2">최대 10장, JPG/PNG 지원</p>
+            {/* 현장 사진 (필수) */}
+            <div>
+              <p className="text-slate-300 text-sm font-medium mb-2">
+                📷 현장 사진 <span className="text-red-400 text-xs ml-1">필수</span>
+              </p>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragEnter={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
+                  isDragging
+                    ? "border-cyan-500 bg-slate-700/60"
+                    : "border-slate-600 hover:border-cyan-500 hover:bg-slate-700/50"
+                }`}
+              >
+                <Upload size={36} className="mx-auto text-slate-400 mb-3" />
+                <p className="text-slate-300 text-sm mb-1">클릭하여 사진 선택</p>
+                <p className="text-slate-500 text-xs">또는 드래그 · 최대 10장 · JPG/PNG</p>
+              </div>
+              <input ref={fileInputRef} type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
+
+              {previews.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-slate-400 text-xs mb-2">업로드된 사진 ({previews.length}/10)</p>
+                  <div className="grid grid-cols-5 gap-2">
+                    {previews.map((preview, index) => (
+                      <div key={index} className="relative group">
+                        <img src={preview} alt={`미리보기 ${index + 1}`} className="w-full h-16 object-cover rounded-lg" />
+                        <button
+                          onClick={() => removeImage(index)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X size={12} className="text-white" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*"
-              onChange={handleImageUpload}
-              className="hidden"
-            />
+            {/* 구분선 */}
+            <div className="border-t border-slate-700" />
 
-            {previews.length > 0 && (
-              <div className="mt-4">
-                <p className="text-slate-400 text-sm mb-2">업로드된 사진 ({previews.length}/10)</p>
-                <div className="grid grid-cols-4 gap-2">
-                  {previews.map((preview, index) => (
-                    <div key={index} className="relative group">
-                      <img src={preview} alt={`미리보기 ${index + 1}`} className="w-full h-20 object-cover rounded-lg" />
-                      <button
-                        onClick={() => removeImage(index)}
-                        className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X size={14} className="text-white" />
-                      </button>
-                    </div>
-                  ))}
+            {/* HWPX 기본자료 (선택) */}
+            <div>
+              <p className="text-slate-300 text-sm font-medium mb-2">
+                📄 출장 기본자료 <span className="text-slate-500 text-xs ml-1">선택 · HWPX</span>
+              </p>
+              {hwpxFile ? (
+                <div className="flex items-center gap-3 px-4 py-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl">
+                  <FileText size={20} className="text-cyan-400 shrink-0" />
+                  <span className="text-cyan-300 text-sm flex-1 truncate">{hwpxFile.name}</span>
+                  <button
+                    onClick={removeHwpx}
+                    className="text-slate-400 hover:text-red-400 transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div
+                  onClick={() => hwpxInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-600 hover:border-cyan-500/60 hover:bg-slate-700/30 rounded-xl p-4 text-center cursor-pointer transition-all"
+                >
+                  <FileText size={28} className="mx-auto text-slate-500 mb-2" />
+                  <p className="text-slate-400 text-sm">클릭하여 HWPX 파일 선택</p>
+                  <p className="text-slate-500 text-xs mt-1">설명회·벤치마킹 기본자료 첨부 시 보고서 품질 향상</p>
+                </div>
+              )}
+              <input ref={hwpxInputRef} type="file" accept=".hwpx" onChange={handleHwpxUpload} className="hidden" />
+            </div>
           </div>
 
           {/* 보고자 정보 */}
@@ -444,7 +482,7 @@ export default function TripReport() {
               {analyzing ? (
                 <>
                   <Loader2 size={20} className="animate-spin" />
-                  AI가 사진을 분석 중입니다...
+                  AI가 자료를 분석 중입니다...
                 </>
               ) : (
                 <>🤖 AI 분석 시작</>
@@ -453,10 +491,10 @@ export default function TripReport() {
 
             {analyzing && (
               <div className="mt-4 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
-                <p className="text-cyan-400 text-sm">✨ GPT Vision이 사진을 분석하고 있습니다...</p>
+                <p className="text-cyan-400 text-sm">✨ GPT Vision이 자료를 분석하고 있습니다...</p>
                 <p className="text-slate-400 text-sm mt-1">• 1단계: 보고서 유형 분류</p>
                 <p className="text-slate-400 text-sm">• 2단계: 상세 정보 추출</p>
-                <p className="text-slate-400 text-sm">• 텍스트/현수막/표 인식</p>
+                {hwpxFile && <p className="text-slate-400 text-sm">• 기본자료(HWPX) 내용 반영</p>}
               </div>
             )}
           </div>
@@ -466,13 +504,22 @@ export default function TripReport() {
       {/* ========== Step 2: AI 분석 결과 ========== */}
       {step === 2 && analysisResult && (
         <div className="space-y-6">
-          {/* 분석 완료 */}
+
+          {/* 분석 완료 배너 */}
           <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4">
             <div className="flex items-center gap-3 mb-3">
               <CheckCircle size={24} className="text-green-400" />
               <div>
                 <p className="text-green-400 font-semibold">AI 분석 완료!</p>
-                <p className="text-slate-400 text-sm">신뢰도: {Math.round((analysisResult.confidence || 0) * 100)}%</p>
+                <div className="flex items-center gap-3 mt-0.5">
+                  <p className="text-slate-400 text-sm">신뢰도: {Math.round((analysisResult.confidence || 0) * 100)}%</p>
+                  {analysisResult.hwpx_attached && (
+                    <span className="flex items-center gap-1 text-cyan-400 text-xs bg-cyan-500/10 px-2 py-0.5 rounded-full">
+                      <FileText size={12} />
+                      기본자료 반영
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -485,9 +532,7 @@ export default function TripReport() {
                 className="px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
               >
                 {reportTypes.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.icon} {t.name}
-                  </option>
+                  <option key={t.id} value={t.id}>{t.icon} {t.name}</option>
                 ))}
               </select>
               {reanalyzing ? (
@@ -501,7 +546,7 @@ export default function TripReport() {
             </div>
           </div>
 
-          {/* 재분석 중 */}
+          {/* 재분석 중 오버레이 */}
           {reanalyzing && (
             <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4 flex items-center gap-3">
               <Loader2 size={24} className="text-cyan-400 animate-spin" />
@@ -519,7 +564,6 @@ export default function TripReport() {
                 <Edit3 size={20} />
                 추출된 정보 (수정 가능)
               </h2>
-
               <div className="space-y-4">
                 {typeFields.map((key) => (
                   <div key={key}>
@@ -532,7 +576,6 @@ export default function TripReport() {
                     />
                   </div>
                 ))}
-
                 {extraKeys.length > 0 && (
                   <div className="pt-3 mt-2 border-t border-slate-700">
                     <p className="text-slate-500 text-xs mb-2">추가 인식 항목</p>
@@ -555,7 +598,6 @@ export default function TripReport() {
             {/* 주요 내용 */}
             <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
               <h2 className="text-lg font-semibold text-white mb-4">📝 주요 내용 (수정 가능)</h2>
-
               <div className="space-y-2">
                 {editedContent.map((content, index) => (
                   <div key={index} className="flex gap-2">
@@ -638,10 +680,7 @@ export default function TripReport() {
               }`}
             >
               {generating ? (
-                <>
-                  <Loader2 size={20} className="animate-spin" />
-                  보고서 생성 중...
-                </>
+                <><Loader2 size={20} className="animate-spin" />보고서 생성 중...</>
               ) : (
                 <>📄 보고서 생성</>
               )}
@@ -669,19 +708,16 @@ export default function TripReport() {
                   onClick={copyToClipboard}
                   className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 flex items-center gap-2"
                 >
-                  <Copy size={16} />
-                  복사
+                  <Copy size={16} />복사
                 </button>
                 <button
                   onClick={downloadReport}
                   className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
                 >
-                  <Download size={16} />
-                  다운로드
+                  <Download size={16} />다운로드
                 </button>
               </div>
             </div>
-
             <textarea
               value={generatedReport}
               onChange={(e) => setGeneratedReport(e.target.value)}
@@ -708,15 +744,18 @@ export default function TripReport() {
         </div>
       )}
 
+      {/* 사용 팁 */}
       <div className="mt-8 bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4">
         <h3 className="font-semibold text-cyan-300 mb-2">💡 사용 팁</h3>
         <ul className="text-sm text-slate-300 space-y-1">
           <li>• 현수막/간판/PPT/표가 잘 보이는 사진을 올리면 추출 정확도가 올라갑니다</li>
+          <li>• 설명회·벤치마킹 등 기본자료(HWPX)를 함께 올리면 행사명·일시·내용이 더 정확하게 반영됩니다</li>
           <li>• 유형 변경 시 해당 유형에 맞게 재분석되어 서식이 자동 변경됩니다</li>
-          <li>• 보고서는 공문서 문체(단어형 종결: ~논의 예정, ~검토 완료)로 자동 생성됩니다</li>
+          <li>• 보고서는 공문서 문체(단어형 종결: 논의 예정, 검토 완료)로 자동 생성됩니다</li>
           <li>• 생성된 보고서는 직접 수정 후 복사/다운로드할 수 있습니다</li>
         </ul>
       </div>
+
     </div>
   );
 }
