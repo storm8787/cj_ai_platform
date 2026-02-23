@@ -236,8 +236,13 @@ def _contains_forbidden_polite(text: str) -> bool:
 
 
 def _has_required_structure(text: str) -> bool:
-    needed = ["1.", "2.", "3.", "4."]
-    return all(n in text for n in needed)
+    """1~4번 구조 존재 여부 확인 - 다양한 표기 허용"""
+    if not text or len(text.strip()) < 50:
+        return False
+    # 다양한 번호 표기 패턴 허용: 1. / 1) / ① 등
+    patterns = [r"1[.\)]", r"2[.\)]", r"3[.\)]", r"4[.\)]"]
+    return all(re.search(p, text) for p in patterns)
+
 
 
 def _build_image_contents(images_data: List[dict], detail: str) -> List[dict]:
@@ -688,28 +693,42 @@ async def generate_report(request: ReportGenerateRequest):
             temperature=1.0,
         )
 
-        if _contains_forbidden_polite(text) or not _has_required_structure(text):
-            rewrite_prompt = f"""아래 보고서를 공문서 문체로 재작성하라.
-- 경어체 → 단어형 종결로 변환
-- ~임/~함/~됨 → 명사/동사원형으로 변환
-  예: "논의할 예정임" → "논의 예정"
-  예: "검토됨" → "검토 완료"
-  예: "추진함" → "추진 계획"
-- 구조(1~4) 유지
-- 내용/수치/고유명사 변경 금지, 새로운 사실 추가 금지
-
-[원문]
-{text}
-"""
+        # 1차 생성 빈값 방어: 빈 경우 재시도
+        if not text or not text.strip():
             text = _chat(
                 model=REPORT_MODEL,
                 messages=[
-                    {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. ~임/~함/~됨 → 단어형 종결로 변환. 구조(1~4) 유지."},
+                    {"role": "system", "content": "공문서 문체(단어형 종결, 개조식) 준수. 경어체 절대 금지. 1~4 구조 유지."},
+                    {"role": "user", "content": report_prompt},
+                ],
+                max_completion_tokens=2500,
+                temperature=1.0,
+            )
+
+        # 문체/구조 검증 → 필요 시 교정 (원문이 있는 경우만)
+        needs_rewrite = text and text.strip() and (
+            _contains_forbidden_polite(text) or not _has_required_structure(text)
+        )
+        if needs_rewrite:
+            rewrite_prompt = (
+                "아래 [원문]을 공문서 문체로 교정하라.\n"
+                "규칙:\n"
+                "- 경어체(합니다/입니다 등) → 단어형 종결로 변환\n"
+                "- ~임/~함/~됨 → 명사/동사원형으로 변환 (예: 논의할 예정임 → 논의 예정, 검토됨 → 검토 완료)\n"
+                "- 1~4 구조 유지\n"
+                "- 내용·수치·고유명사 변경 금지, 새로운 사실 추가 금지\n\n"
+                f"[원문]\n{text}"
+            )
+            text = _chat(
+                model=REPORT_MODEL,
+                messages=[
+                    {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. ~임/~함/~됨 → 단어형 종결 변환. 구조(1~4) 유지."},
                     {"role": "user", "content": rewrite_prompt},
                 ],
                 max_completion_tokens=2500,
                 temperature=1.0,
             )
+
 
         return ReportResponse(
             report_text=text,
