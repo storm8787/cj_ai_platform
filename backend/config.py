@@ -1,5 +1,9 @@
 """
 Azure Container Apps 백엔드 설정
+
+⚠️ 실제 키 값은 여기에 넣지 마세요!
+- 로컬 개발: .env 파일에 작성
+- 배포: Azure Portal → Container Apps → 환경 변수에 설정
 """
 import os
 from pydantic_settings import BaseSettings
@@ -28,6 +32,9 @@ class Settings(BaseSettings):
     GIST_ID: str = ""
     GITHUB_REPO: str = ""
     
+    # 국가법령정보센터 API (법령·자치법규 챗봇용)
+    LAW_API_OC: str = ""
+    
     # CORS 설정
     CORS_ORIGINS: str = "http://localhost:5173"
     
@@ -37,9 +44,6 @@ class Settings(BaseSettings):
     
     # 임베딩 모델
     EMBEDDING_MODEL: str = "jhgan/ko-sroberta-multitask"
-
-    SUPABASE_URL: str = "https://hhlelnlvprymnymvdnsn.supabase.co"
-    SUPABASE_KEY: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhobGVsbmx2cHJ5bW55bXZkbnNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MjEwMTMsImV4cCI6MjA4NTA5NzAxM30.DoFjVf9pUCF_1giQAKlMYLJZbsqEk-gM4DKsZ5_dfbE"
     
     @property
     def cors_origins_list(self) -> List[str]:
