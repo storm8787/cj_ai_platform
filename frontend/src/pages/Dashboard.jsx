@@ -106,6 +106,13 @@ const services = [
     path: '/trip-report',
     category: 'document',
   },
+  {
+    icon: '📜',
+    title: '법령·자치법규 챗봇',
+    description: '국가법령 & 충주시 자치법규 AI 검색',
+    path: '/law-chatbot',
+    category: 'chatbot',
+  },
 ];
 
 // 카테고리별 순서 정의 (각 카테고리 클릭 시 이 순서로 표시)
@@ -113,7 +120,7 @@ const categoryOrder = {
   document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report'],  // trip-report 추가
   data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger'],
   translate: ['/news', '/translator', '/meeting-summary'],
-  chatbot: ['/election-law'],
+  chatbot: ['/election-law', '/law-chatbot'],
 };
 
 export default function Dashboard() {
