@@ -3,7 +3,7 @@
 
 - 충주시 자치법규: FAISS 벡터스토어 (의미 검색)
 - 국가법령: law.go.kr API (실시간 검색)
-- GPT가 질문 분석 → 키워드 추출 → 검색 → 답변 생성
+- 항상 둘 다 검색 후 GPT가 종합 답변 생성
 """
 
 import os
@@ -29,20 +29,18 @@ router = APIRouter(prefix="/api/law-chatbot", tags=["law-chatbot"])
 LAW_SEARCH_URL = "http://www.law.go.kr/DRF/lawSearch.do"
 LAW_SERVICE_URL = "http://www.law.go.kr/DRF/lawService.do"
 
-SEARCH_MODEL = "gpt-4o-mini"       # 질문 분석용 (가벼운 모델)
-ANSWER_MODEL = "gpt-4o-mini"       # 답변 생성용
+ANSWER_MODEL = "gpt-4o-mini"
 
-VECTORSTORE_DIR = Path("/app/data/law_chatbot/vectorstores")
-EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL  # jhgan/ko-sroberta-multitask
+VECTORSTORE_DIR = Path(settings.LAW_CHATBOT_VECTORSTORE_PATH)
+EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL
 
 # ─── 벡터스토어 & 임베딩 모델 (지연 로딩) ─────────────
 _faiss_index = None
-_faiss_data = None      # {"texts": [...], "metadatas": [...]}
+_faiss_data = None
 _embedding_model = None
 
 
 def _load_vectorstore():
-    """FAISS 인덱스 + 메타데이터 로드 (최초 1회)"""
     global _faiss_index, _faiss_data
 
     if _faiss_index is not None:
@@ -60,12 +58,10 @@ def _load_vectorstore():
     with open(pkl_path, "rb") as f:
         _faiss_data = pickle.load(f)
 
-    count = _faiss_index.ntotal
-    print(f"[law-chatbot] ✅ 벡터스토어 로드 완료: {count}개 문서")
+    print(f"[law-chatbot] ✅ 벡터스토어 로드 완료: {_faiss_index.ntotal}개 문서")
 
 
 def _load_embedding_model():
-    """임베딩 모델 로드 (최초 1회)"""
     global _embedding_model
 
     if _embedding_model is not None:
@@ -79,13 +75,13 @@ def _load_embedding_model():
 # ─── Pydantic 모델 ───────────────────────────────────
 class AskRequest(BaseModel):
     question: str
-    search_scope: str = "all"           # "all" | "national" | "local"
+    search_scope: str = "all"
     chat_history: Optional[List[dict]] = None
 
 
 class SearchRequest(BaseModel):
     query: str
-    target: str = "law"                 # "law" | "ordin"
+    target: str = "law"
     page: int = 1
     display: int = 20
 
@@ -94,42 +90,41 @@ class SearchRequest(BaseModel):
 
 @router.post("/ask")
 async def ask_question(req: AskRequest):
-    """법령/자치법규 질의응답 (하이브리드 검색)"""
+    """법령/자치법규 질의응답 (항상 둘 다 검색)"""
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-    # 1단계: GPT로 질문 분석 → 검색 키워드 추출
-    analysis = await _analyze_question(client, req.question, req.search_scope)
+    # 1단계: 질문에서 검색 키워드 추출 (간단하게)
+    search_query = _extract_keywords(req.question)
 
-    # 2단계: 하이브리드 검색
+    # 2단계: scope에 따라 검색 (기본은 둘 다)
     vector_results = []
     api_results = []
 
-    # 벡터스토어 검색 (충주시 자치법규)
-    if analysis.get("use_vector", False):
+    if req.search_scope in ("all", "local"):
         vector_results = _search_vectorstore(req.question, top_k=5)
 
-    # API 검색 (국가법령)
-    if analysis.get("use_api", False):
-        api_keyword = analysis.get("api_query", req.question)
-        api_targets = analysis.get("api_targets", ["law"])
-        api_results = await _search_law_api(api_keyword, api_targets)
+    if req.search_scope in ("all", "national"):
+        api_results = await _search_law_api(search_query, targets=["law"])
 
-    # 3단계: 필요 시 법령 본문 가져오기
+    # 자치법규도 API로 보충 검색 (all일 때)
+    if req.search_scope == "all":
+        ordin_results = await _search_law_api(search_query, targets=["ordin"])
+        api_results.extend(ordin_results)
+
+    # 3단계: 상위 결과 본문 가져오기 (최대 2건)
     detail_texts = []
-    if analysis.get("need_detail", False) and api_results:
-        # 상위 2건만 본문 조회 (토큰 절약)
-        for r in api_results[:2]:
-            mst = r.get("id", "")
-            target = "ordin" if r.get("type") == "ordin" else "law"
-            if mst:
-                detail = await _fetch_law_detail(mst, target)
-                if detail:
-                    detail_texts.append({
-                        "name": r.get("name", ""),
-                        "content": detail[:3000],  # 토큰 제한
-                    })
+    for r in api_results[:2]:
+        mst = r.get("id", "")
+        target = "ordin" if r.get("type") == "ordin" else "law"
+        if mst:
+            detail = await _fetch_law_detail(mst, target)
+            if detail:
+                detail_texts.append({
+                    "name": r.get("name", ""),
+                    "content": detail[:3000],
+                })
 
     # 4단계: GPT 답변 생성
     answer = await _generate_answer(
@@ -186,68 +181,23 @@ async def get_categories():
     }
 
 
-# ─── 내부 함수: 질문 분석 ────────────────────────────
+# ─── 내부 함수: 키워드 추출 (단순 방식) ──────────────
 
-async def _analyze_question(client, question: str, scope: str) -> dict:
-    """GPT로 질문 분석 → 검색 전략 결정"""
+def _extract_keywords(question: str) -> str:
+    """질문에서 검색용 키워드 추출 (불용어 제거)"""
+    # 불용어 제거
+    stopwords = [
+        "알려줘", "알려주세요", "뭐야", "뭔가요", "어떻게", "무엇", "어떤",
+        "규정", "규정은", "내용", "내용은", "관련", "대해", "대한",
+        "있나요", "있어", "인가요", "인가", "할까요", "해줘", "해주세요",
+        "좀", "그", "이", "저", "것", "수", "등", "및", "의", "에",
+        "은", "는", "이", "가", "를", "을", "에서", "으로", "로",
+    ]
 
-    system_prompt = """사용자의 법령 관련 질문을 분석하여 검색 전략을 JSON으로 응답하세요.
+    words = question.strip().split()
+    keywords = [w for w in words if w not in stopwords and len(w) > 1]
 
-응답 형식 (JSON만, 다른 텍스트 없이):
-{
-  "use_vector": true/false,
-  "use_api": true/false,
-  "api_query": "API에 보낼 검색 키워드",
-  "api_targets": ["law", "ordin"],
-  "need_detail": true/false,
-  "reasoning": "판단 이유 한 줄"
-}
-
-판단 기준:
-- 충주시 조례/규칙/자치법규 관련 → use_vector=true
-- 국가법령(법률/시행령/시행규칙) 관련 → use_api=true, api_targets에 "law"
-- 자치법규 검색도 API로 보충 → api_targets에 "ordin" 추가
-- 특정 조문 내용이 필요하면 → need_detail=true
-- api_query는 법령명이나 핵심 키워드만 간결하게 (예: "지방자치법", "개인정보보호법 제3자 제공")
-- scope가 "local"이면 자치법규 위주, "national"이면 국가법령 위주, "all"이면 둘 다
-
-예시:
-- "충주시 출산지원금 얼마야?" → use_vector=true, use_api=false
-- "공무원 연가일수 규정" → use_vector=false, use_api=true, api_query="국가공무원 복무규정"
-- "충주시 건축 조례와 건축법 관계" → use_vector=true, use_api=true
-"""
-
-    try:
-        response = await client.chat.completions.create(
-            model=SEARCH_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"[scope: {scope}] {question}"},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-        )
-
-        result = json.loads(response.choices[0].message.content)
-
-        # scope에 따른 강제 조정
-        if scope == "local":
-            result["use_vector"] = True
-        elif scope == "national":
-            result["use_api"] = True
-
-        return result
-
-    except Exception as e:
-        print(f"[law-chatbot] 질문 분석 실패: {e}")
-        # 폴백: 둘 다 검색
-        return {
-            "use_vector": True,
-            "use_api": True,
-            "api_query": question,
-            "api_targets": ["law", "ordin"],
-            "need_detail": False,
-        }
+    return " ".join(keywords) if keywords else question
 
 
 # ─── 내부 함수: 벡터스토어 검색 ──────────────────────
@@ -260,11 +210,9 @@ def _search_vectorstore(query: str, top_k: int = 5) -> list:
     if _faiss_index is None or _faiss_data is None or _embedding_model is None:
         return []
 
-    # 쿼리 임베딩
     query_vec = _embedding_model.encode([query], normalize_embeddings=True)
     query_vec = np.array(query_vec).astype("float32")
 
-    # FAISS 검색
     scores, indices = _faiss_index.search(query_vec, top_k)
 
     results = []
@@ -309,7 +257,6 @@ async def _search_law_api(query: str, targets: list) -> list:
                 if resp.status_code != 200:
                     continue
 
-                # HTML이 돌아오면 API 인증 실패
                 if resp.text.strip().startswith("<!DOCTYPE") or resp.text.strip().startswith("<html"):
                     print(f"[law-chatbot] ⚠️ API 인증 실패 (target={target})")
                     continue
@@ -376,7 +323,6 @@ async def _fetch_law_detail(mst: str, target: str = "law") -> str:
 # ─── 내부 함수: XML 파싱 ─────────────────────────────
 
 def _parse_search_xml(xml_text: str, target: str) -> list:
-    """검색 결과 XML 파싱"""
     results = []
 
     try:
@@ -410,7 +356,6 @@ def _parse_search_xml(xml_text: str, target: str) -> list:
 
 
 def _extract_text_from_detail_xml(xml_text: str) -> str:
-    """본문 XML에서 텍스트 추출"""
     try:
         root = ET.fromstring(xml_text)
         parts = []
@@ -440,11 +385,10 @@ async def _generate_answer(
 ) -> dict:
     """검색 결과 기반 GPT 답변 생성"""
 
-    # 컨텍스트 조합
     context_parts = []
 
     if vector_results:
-        context_parts.append("[충주시 자치법규 검색 결과]")
+        context_parts.append("[충주시 자치법규 검색 결과 - FAISS 벡터스토어]")
         for i, r in enumerate(vector_results, 1):
             meta = r.get("metadata", {})
             score = r.get("score", 0)
@@ -454,7 +398,7 @@ async def _generate_answer(
             )
 
     if api_results:
-        context_parts.append("[국가법령 검색 결과]")
+        context_parts.append("[국가법령정보센터 API 검색 결과]")
         for i, r in enumerate(api_results[:10], 1):
             context_parts.append(
                 f"({i}) [{r.get('category', '')}] {r.get('name', '')} "
@@ -473,15 +417,16 @@ async def _generate_answer(
 [역할]
 - 국가법령과 충주시 자치법규에 대한 정확한 정보를 제공합니다.
 - 관련 조문을 인용하며 근거를 밝힙니다.
-- 법률 → 시행령 → 시행규칙 → 조례 순으로 체계적으로 설명합니다.
 
-[답변 규칙]
-1. 근거 조문을 반드시 밝힐 것 (예: "지방자치법 제28조에 따르면...")
-2. 확실하지 않으면 "정확한 해석을 위해 법제팀 확인을 권장합니다" 안내
-3. 충주시 자치법규가 있으면 우선 안내
-4. 법령이 개정되었을 수 있으므로 "현행 기준" 등 시점 명시
-5. 복잡한 법률 용어는 쉽게 풀어서 설명
-6. 답변 마지막에 관련 법령 이름을 정리
+[중요 규칙]
+1. 반드시 아래 [검색된 참고자료]에 있는 내용만 근거로 답변하세요.
+2. 참고자료에 없는 내용은 추측하지 말고 "검색 결과에서 관련 내용을 찾지 못했습니다"라고 답하세요.
+3. 충주시 자치법규(FAISS 벡터스토어 결과)와 국가법령(API 결과)을 명확히 구분하여 답변하세요.
+4. 어떤 정보가 충주시 자치법규에서 온 것이고, 어떤 정보가 국가법령에서 온 것인지 출처를 밝히세요.
+5. 확실하지 않으면 "정확한 해석을 위해 법제팀 확인을 권장합니다" 안내하세요.
+6. 법령이 개정되었을 수 있으므로 "현행 기준" 등 시점을 명시하세요.
+7. 복잡한 법률 용어는 쉽게 풀어서 설명하세요.
+8. 답변 마지막에 참고한 법령/조례 이름을 정리하세요.
 
 [검색된 참고자료]
 {context}
@@ -489,7 +434,6 @@ async def _generate_answer(
 
     messages = [{"role": "system", "content": system_prompt}]
 
-    # 대화 이력 (최근 5턴)
     if chat_history:
         for msg in chat_history[-10:]:
             role = msg.get("role", "user")
@@ -558,7 +502,6 @@ async def _generate_answer(
 # ─── 유틸 ────────────────────────────────────────────
 
 async def _check_api_connection() -> dict:
-    """API 연결 테스트"""
     oc = settings.LAW_API_OC
     if not oc:
         return {"connected": False, "reason": "LAW_API_OC 미설정"}
