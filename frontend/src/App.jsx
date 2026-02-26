@@ -27,6 +27,7 @@ import BoardWrite from './pages/BoardWrite';
 import BoardEdit from './pages/BoardEdit';
 import DataValidator from './pages/DataValidator';
 import TripReport from './pages/TripReport';
+import LawChatbot from './pages/LawChatbot';
 
 // 보호된 라우트 컴포넌트
 function ProtectedRoute({ children }) {
@@ -206,6 +207,14 @@ function AppRoutes() {
             <Layout><TripReport /></Layout>
           </ProtectedRoute>
         } 
+      />
+      <Route 
+        path="/law-chatbot" 
+        element={
+          <ProtectedRoute>
+            <Layout><LawChatbot /></Layout>
+          </ProtectedRoute>
+        }
       />
 
       {/* 게시판 라우트 */}
