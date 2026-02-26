@@ -44,6 +44,7 @@ const aiServiceCategories = [
     icon: '💬',
     services: [
       { icon: '⚖️', title: '선거법 챗봇', path: '/election-law' },
+      { icon: '📜', title: '법령·자치법규 챗봇', path: '/law-chatbot' },
     ]
   },
 ];
