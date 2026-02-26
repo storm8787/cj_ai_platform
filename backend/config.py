@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # 벡터스토어 경로
     VECTORSTORE_PATH: str = "/app/data/vectorstores"
     ELECTION_VECTORSTORE_PATH: str = "/app/data/election_law/vectorstores"
+    LAW_CHATBOT_VECTORSTORE_PATH: str = "/app/data/law_chatbot/vectorstores"
     
     # 임베딩 모델
     EMBEDDING_MODEL: str = "jhgan/ko-sroberta-multitask"
