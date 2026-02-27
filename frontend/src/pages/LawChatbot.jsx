@@ -276,7 +276,7 @@ function LawChatbot() {
             </button>
           </form>
           <p className="text-center text-xs text-slate-500 mt-2">
-            ※ AI 답변은 참고용이며, 정확한 법령 해석은 법제팀에 확인하시기 바랍니다
+            ※ AI 답변은 참고용이며, 정확한 법령 해석은 담당부서에 확인하시기 바랍니다
           </p>
         </div>
       </div>
