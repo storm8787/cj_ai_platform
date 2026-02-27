@@ -1,9 +1,9 @@
 """
-법령정보 · 자치법규 챗봇 라우터 (v3)
+법령정보 · 자치법규 챗봇 라우터 (v4)
 
 - 충주시 자치법규: FAISS 벡터스토어 (의미 검색)
 - 국가법령: law.go.kr API (실시간 검색)
-- 항상 둘 다 검색 후 GPT가 종합 답변 생성
+- 항상 둘 다 검색 + 복수 키워드로 API 검색
 - resp.content.decode('utf-8') 인코딩 대응
 """
 
@@ -35,7 +35,6 @@ ANSWER_MODEL = "gpt-4o-mini"
 VECTORSTORE_DIR = Path(settings.LAW_CHATBOT_VECTORSTORE_PATH)
 EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL
 
-# 유사도 임계값 (이 이상만 결과에 포함)
 VECTOR_SCORE_THRESHOLD = 0.3
 
 # ─── 벡터스토어 & 임베딩 모델 (지연 로딩) ─────────────
@@ -94,13 +93,14 @@ class SearchRequest(BaseModel):
 
 @router.post("/ask")
 async def ask_question(req: AskRequest):
-    """법령/자치법규 질의응답 (항상 둘 다 검색)"""
+    """법령/자치법규 질의응답 (항상 둘 다 검색 + 복수 키워드)"""
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-    # 1단계: GPT로 검색 키워드 추출 (검색 범위 판단은 하지 않음)
-    search_query = await _extract_search_keywords(client, req.question)
+    # 1단계: GPT로 복수 검색 키워드 추출
+    search_keywords = await _extract_search_keywords(client, req.question)
+    print(f"[law-chatbot] 추출된 키워드: {search_keywords}")
 
     # 2단계: scope에 따라 검색 (기본은 둘 다)
     vector_results = []
@@ -110,12 +110,19 @@ async def ask_question(req: AskRequest):
         vector_results = _search_vectorstore(req.question, top_k=5)
 
     if req.search_scope in ("all", "national"):
-        api_results = await _search_law_api(search_query, targets=["law"])
+        # 복수 키워드로 각각 API 검색
+        for keyword in search_keywords:
+            results = await _search_law_api(keyword, targets=["law"])
+            api_results.extend(results)
 
     # 자치법규도 API로 보충 검색 (all일 때)
     if req.search_scope == "all":
-        ordin_results = await _search_law_api(search_query, targets=["ordin"])
-        api_results.extend(ordin_results)
+        for keyword in search_keywords[:2]:  # 자치법규는 상위 2개 키워드만
+            ordin_results = await _search_law_api(keyword, targets=["ordin"])
+            api_results.extend(ordin_results)
+
+    # API 결과 중복 제거
+    api_results = _deduplicate_api_results(api_results)
 
     # 3단계: 상위 결과 본문 가져오기 (최대 2건)
     detail_texts = []
@@ -175,7 +182,6 @@ async def get_status():
 
 @router.get("/categories")
 async def get_categories():
-    """검색 범위 카테고리"""
     return {
         "categories": [
             {"id": "all", "name": "전체 (법령 + 자치법규)", "icon": "📚"},
@@ -185,10 +191,10 @@ async def get_categories():
     }
 
 
-# ─── 내부 함수: 키워드 추출 (GPT 사용) ───────────────
+# ─── 내부 함수: 복수 키워드 추출 (GPT) ───────────────
 
-async def _extract_search_keywords(client, question: str) -> str:
-    """GPT로 질문에서 법령 검색용 키워드만 추출 (검색 범위 판단은 하지 않음)"""
+async def _extract_search_keywords(client, question: str) -> list:
+    """GPT로 질문에서 법령 API 검색용 키워드를 여러 개 추출"""
     try:
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
@@ -197,31 +203,70 @@ async def _extract_search_keywords(client, question: str) -> str:
                     "role": "system",
                     "content": (
                         "사용자의 법령 관련 질문에서 국가법령정보센터 API 검색에 적합한 키워드를 추출하세요.\n"
-                        "법령명이나 핵심 법률 용어만 간결하게 추출하세요.\n"
-                        "키워드만 출력하고 다른 설명은 하지 마세요.\n\n"
+                        "법령명, 핵심 법률 용어를 2~3개 추출하세요.\n"
+                        "반드시 JSON 배열로만 응답하세요. 다른 텍스트 없이.\n\n"
                         "예시:\n"
-                        "- '공무원 연가일수 규정 알려줘' → '국가공무원 복무규정 연가'\n"
-                        "- '소프트웨어사업 과업심의위원회 구성은?' → '소프트웨어진흥법 과업심의'\n"
-                        "- '개인정보보호법에서 제3자 제공 요건은?' → '개인정보보호법 제3자 제공'\n"
-                        "- '장기재직휴가 몇일이야?' → '공무원 장기재직휴가'\n"
+                        '- "공무원 연가일수 규정 알려줘" → ["국가공무원 복무규정", "공무원 연가"]\n'
+                        '- "소프트웨어사업 과업심의위원회 구성은?" → ["소프트웨어진흥법", "소프트웨어사업 과업심의"]\n'
+                        '- "개인정보보호법에서 제3자 제공 요건은?" → ["개인정보보호법"]\n'
+                        '- "장기재직휴가 몇일이야?" → ["공무원 복무규정", "장기재직휴가"]\n'
+                        '- "건축 허가 기준" → ["건축법", "건축 허가"]\n'
+                        '- "민원 처리 기간" → ["민원 처리에 관한 법률"]\n'
                     ),
                 },
                 {"role": "user", "content": question},
             ],
             temperature=0.1,
-            max_tokens=50,
+            max_tokens=100,
         )
-        keyword = response.choices[0].message.content.strip()
-        return keyword if keyword else question
+        raw = response.choices[0].message.content.strip()
+
+        # JSON 파싱
+        # ```json 감싸기 제거
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        keywords = json.loads(raw)
+
+        if isinstance(keywords, list) and len(keywords) > 0:
+            return keywords[:3]  # 최대 3개
+
     except Exception as e:
         print(f"[law-chatbot] 키워드 추출 실패: {e}")
-        return question
+
+    # 폴백: 불용어 제거 후 원문 반환
+    return [_simple_keyword_extract(question)]
+
+
+def _simple_keyword_extract(question: str) -> str:
+    """단순 불용어 제거 폴백"""
+    stopwords = [
+        "알려줘", "알려주세요", "뭐야", "뭔가요", "어떻게", "무엇", "어떤",
+        "규정", "규정은", "내용", "내용은", "관련", "대해", "대한",
+        "있나요", "있어", "인가요", "인가", "할까요", "해줘", "해주세요",
+        "좀", "그", "이", "저", "것", "수", "등", "및", "의", "에",
+        "은", "는", "가", "를", "을", "에서", "으로", "로", "어떻게돼",
+        "몇일이야", "몇일", "기준이", "기준", "어떻게", "구성은",
+    ]
+    words = question.strip().split()
+    keywords = [w for w in words if w not in stopwords and len(w) > 1]
+    return " ".join(keywords) if keywords else question
+
+
+# ─── 내부 함수: API 결과 중복 제거 ───────────────────
+
+def _deduplicate_api_results(results: list) -> list:
+    seen = set()
+    unique = []
+    for r in results:
+        key = r.get("id", "") or r.get("name", "")
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(r)
+    return unique
 
 
 # ─── 내부 함수: 벡터스토어 검색 ──────────────────────
 
 def _search_vectorstore(query: str, top_k: int = 5) -> list:
-    """FAISS 벡터스토어에서 충주시 자치법규 검색 (유사도 threshold 적용)"""
     _load_vectorstore()
     _load_embedding_model()
 
@@ -237,8 +282,6 @@ def _search_vectorstore(query: str, top_k: int = 5) -> list:
     for score, idx in zip(scores[0], indices[0]):
         if idx < 0 or idx >= len(_faiss_data["texts"]):
             continue
-
-        # 유사도 threshold 이하는 제외
         if score < VECTOR_SCORE_THRESHOLD:
             continue
 
@@ -254,7 +297,6 @@ def _search_vectorstore(query: str, top_k: int = 5) -> list:
 # ─── 내부 함수: 법령 API 검색 ────────────────────────
 
 async def _search_law_api(query: str, targets: list) -> list:
-    """국가법령정보센터 API 검색"""
     oc = settings.LAW_API_OC
     if not oc:
         print("[law-chatbot] ⚠️ LAW_API_OC 환경변수 미설정")
@@ -279,7 +321,6 @@ async def _search_law_api(query: str, targets: list) -> list:
                 if resp.status_code != 200:
                     continue
 
-                # content.decode로 인코딩 문제 해결
                 text = resp.content.decode("utf-8")
 
                 if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
@@ -296,7 +337,6 @@ async def _search_law_api(query: str, targets: list) -> list:
 
 
 async def _call_law_search_api(target: str, query: str, page: int, display: int) -> list:
-    """직접 검색용 API 호출"""
     oc = settings.LAW_API_OC
     if not oc:
         raise HTTPException(status_code=500, detail="LAW_API_OC 환경변수 미설정")
@@ -321,7 +361,6 @@ async def _call_law_search_api(target: str, query: str, page: int, display: int)
 
 
 async def _fetch_law_detail(mst: str, target: str = "law") -> str:
-    """법령/자치법규 본문 조회"""
     oc = settings.LAW_API_OC
     if not oc:
         return ""
@@ -395,9 +434,7 @@ def _extract_text_from_detail_xml(xml_text: str) -> str:
             if any(k in tag for k in ["조문내용", "조문제목", "항내용", "호내용", "목내용"]):
                 parts.append(text)
 
-        # 폴백: 조문 태그 못 찾으면 한글 포함 텍스트 추출
         if not parts:
-            import re
             for elem in root.iter():
                 text = (elem.text or "").strip()
                 if text and re.search(r"[가-힣]{2,}", text) and len(text) > 10:
@@ -418,7 +455,6 @@ async def _generate_answer(
     detail_texts: list,
     chat_history: list = None,
 ) -> dict:
-    """검색 결과 기반 GPT 답변 생성"""
 
     context_parts = []
 
@@ -484,7 +520,6 @@ async def _generate_answer(
             messages=messages,
             temperature=0.3,
         )
-
         answer_text = response.choices[0].message.content
     except Exception as e:
         print(f"[law-chatbot] GPT 답변 생성 실패: {e}")
@@ -514,7 +549,6 @@ async def _generate_answer(
             "source": "vectorstore",
         })
 
-    # 중복 제거
     seen = set()
     unique_refs = []
     for ref in references:
