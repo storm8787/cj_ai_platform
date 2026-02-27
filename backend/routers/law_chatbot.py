@@ -1,9 +1,10 @@
 """
-법령정보 · 자치법규 챗봇 라우터
+법령정보 · 자치법규 챗봇 라우터 (v3)
 
 - 충주시 자치법규: FAISS 벡터스토어 (의미 검색)
 - 국가법령: law.go.kr API (실시간 검색)
 - 항상 둘 다 검색 후 GPT가 종합 답변 생성
+- resp.content.decode('utf-8') 인코딩 대응
 """
 
 import os
@@ -33,6 +34,9 @@ ANSWER_MODEL = "gpt-4o-mini"
 
 VECTORSTORE_DIR = Path(settings.LAW_CHATBOT_VECTORSTORE_PATH)
 EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL
+
+# 유사도 임계값 (이 이상만 결과에 포함)
+VECTOR_SCORE_THRESHOLD = 0.3
 
 # ─── 벡터스토어 & 임베딩 모델 (지연 로딩) ─────────────
 _faiss_index = None
@@ -95,8 +99,8 @@ async def ask_question(req: AskRequest):
 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-    # 1단계: 질문에서 검색 키워드 추출 (간단하게)
-    search_query = _extract_keywords(req.question)
+    # 1단계: GPT로 검색 키워드 추출 (검색 범위 판단은 하지 않음)
+    search_query = await _extract_search_keywords(client, req.question)
 
     # 2단계: scope에 따라 검색 (기본은 둘 다)
     vector_results = []
@@ -181,29 +185,43 @@ async def get_categories():
     }
 
 
-# ─── 내부 함수: 키워드 추출 (단순 방식) ──────────────
+# ─── 내부 함수: 키워드 추출 (GPT 사용) ───────────────
 
-def _extract_keywords(question: str) -> str:
-    """질문에서 검색용 키워드 추출 (불용어 제거)"""
-    # 불용어 제거
-    stopwords = [
-        "알려줘", "알려주세요", "뭐야", "뭔가요", "어떻게", "무엇", "어떤",
-        "규정", "규정은", "내용", "내용은", "관련", "대해", "대한",
-        "있나요", "있어", "인가요", "인가", "할까요", "해줘", "해주세요",
-        "좀", "그", "이", "저", "것", "수", "등", "및", "의", "에",
-        "은", "는", "이", "가", "를", "을", "에서", "으로", "로",
-    ]
-
-    words = question.strip().split()
-    keywords = [w for w in words if w not in stopwords and len(w) > 1]
-
-    return " ".join(keywords) if keywords else question
+async def _extract_search_keywords(client, question: str) -> str:
+    """GPT로 질문에서 법령 검색용 키워드만 추출 (검색 범위 판단은 하지 않음)"""
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "사용자의 법령 관련 질문에서 국가법령정보센터 API 검색에 적합한 키워드를 추출하세요.\n"
+                        "법령명이나 핵심 법률 용어만 간결하게 추출하세요.\n"
+                        "키워드만 출력하고 다른 설명은 하지 마세요.\n\n"
+                        "예시:\n"
+                        "- '공무원 연가일수 규정 알려줘' → '국가공무원 복무규정 연가'\n"
+                        "- '소프트웨어사업 과업심의위원회 구성은?' → '소프트웨어진흥법 과업심의'\n"
+                        "- '개인정보보호법에서 제3자 제공 요건은?' → '개인정보보호법 제3자 제공'\n"
+                        "- '장기재직휴가 몇일이야?' → '공무원 장기재직휴가'\n"
+                    ),
+                },
+                {"role": "user", "content": question},
+            ],
+            temperature=0.1,
+            max_tokens=50,
+        )
+        keyword = response.choices[0].message.content.strip()
+        return keyword if keyword else question
+    except Exception as e:
+        print(f"[law-chatbot] 키워드 추출 실패: {e}")
+        return question
 
 
 # ─── 내부 함수: 벡터스토어 검색 ──────────────────────
 
 def _search_vectorstore(query: str, top_k: int = 5) -> list:
-    """FAISS 벡터스토어에서 충주시 자치법규 검색"""
+    """FAISS 벡터스토어에서 충주시 자치법규 검색 (유사도 threshold 적용)"""
     _load_vectorstore()
     _load_embedding_model()
 
@@ -218,6 +236,10 @@ def _search_vectorstore(query: str, top_k: int = 5) -> list:
     results = []
     for score, idx in zip(scores[0], indices[0]):
         if idx < 0 or idx >= len(_faiss_data["texts"]):
+            continue
+
+        # 유사도 threshold 이하는 제외
+        if score < VECTOR_SCORE_THRESHOLD:
             continue
 
         results.append({
@@ -257,11 +279,14 @@ async def _search_law_api(query: str, targets: list) -> list:
                 if resp.status_code != 200:
                     continue
 
-                if resp.text.strip().startswith("<!DOCTYPE") or resp.text.strip().startswith("<html"):
+                # content.decode로 인코딩 문제 해결
+                text = resp.content.decode("utf-8")
+
+                if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
                     print(f"[law-chatbot] ⚠️ API 인증 실패 (target={target})")
                     continue
 
-                items = _parse_search_xml(resp.text, target)
+                items = _parse_search_xml(text, target)
                 all_results.extend(items)
 
             except Exception as e:
@@ -287,11 +312,12 @@ async def _call_law_search_api(target: str, query: str, page: int, display: int)
         }
 
         resp = await client.get(LAW_SEARCH_URL, params=params)
+        text = resp.content.decode("utf-8")
 
-        if resp.text.strip().startswith("<!DOCTYPE"):
+        if text.strip().startswith("<!DOCTYPE"):
             raise HTTPException(status_code=502, detail="법령 API 인증 실패")
 
-        return _parse_search_xml(resp.text, target)
+        return _parse_search_xml(text, target)
 
 
 async def _fetch_law_detail(mst: str, target: str = "law") -> str:
@@ -310,11 +336,12 @@ async def _fetch_law_detail(mst: str, target: str = "law") -> str:
 
         try:
             resp = await client.get(LAW_SERVICE_URL, params=params)
+            text = resp.content.decode("utf-8")
 
-            if resp.text.strip().startswith("<!DOCTYPE"):
+            if text.strip().startswith("<!DOCTYPE"):
                 return ""
 
-            return _extract_text_from_detail_xml(resp.text)
+            return _extract_text_from_detail_xml(text)
         except Exception as e:
             print(f"[law-chatbot] 본문 조회 실패 (MST={mst}): {e}")
             return ""
@@ -335,8 +362,8 @@ def _parse_search_xml(xml_text: str, target: str) -> list:
             if target == "ordin":
                 r["id"] = item.findtext("자치법규일련번호", item.findtext("법령일련번호", ""))
                 r["name"] = item.findtext("자치법규명", item.findtext("법령명한글", ""))
-                r["category"] = item.findtext("자치법규구분", item.findtext("법령구분명", ""))
-                r["region"] = item.findtext("자치단체명", "")
+                r["category"] = item.findtext("자치법규종류", item.findtext("자치법규구분", item.findtext("법령구분명", "")))
+                r["region"] = item.findtext("지자체기관명", item.findtext("자치단체명", ""))
                 r["enforcement_date"] = item.findtext("시행일자", "")
             else:
                 r["id"] = item.findtext("법령일련번호", "")
@@ -365,8 +392,16 @@ def _extract_text_from_detail_xml(xml_text: str) -> str:
             text = (elem.text or "").strip()
             if not text:
                 continue
-            if any(k in tag for k in ["조문내용", "조문", "항내용", "호내용", "목내용", "조문제목"]):
+            if any(k in tag for k in ["조문내용", "조문제목", "항내용", "호내용", "목내용"]):
                 parts.append(text)
+
+        # 폴백: 조문 태그 못 찾으면 한글 포함 텍스트 추출
+        if not parts:
+            import re
+            for elem in root.iter():
+                text = (elem.text or "").strip()
+                if text and re.search(r"[가-힣]{2,}", text) and len(text) > 10:
+                    parts.append(text)
 
         return "\n".join(parts) if parts else ""
     except ET.ParseError:
@@ -512,7 +547,8 @@ async def _check_api_connection() -> dict:
                 LAW_SEARCH_URL,
                 params={"OC": oc, "target": "law", "type": "XML", "query": "헌법", "display": 1},
             )
-            is_xml = not resp.text.strip().startswith("<!DOCTYPE")
+            text = resp.content.decode("utf-8")
+            is_xml = not text.strip().startswith("<!DOCTYPE")
             return {"connected": is_xml, "status_code": resp.status_code}
     except Exception as e:
         return {"connected": False, "reason": str(e)}
