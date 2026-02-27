@@ -180,7 +180,7 @@ async def _extract_search_keywords(client, question: str) -> list:
     """GPT로 법령 API 검색용 키워드 2~3개 추출"""
     try:
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -395,7 +395,7 @@ async def _fetch_relevant_articles(
             selected.append(article_text)
             total_chars += len(article_text)
             if total_chars > 3000:
-                break
+                break   
 
     return "\n\n".join(selected)
 
