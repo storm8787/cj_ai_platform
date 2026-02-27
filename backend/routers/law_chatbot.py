@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/law-chatbot", tags=["law-chatbot"])
 LAW_SEARCH_URL = "http://www.law.go.kr/DRF/lawSearch.do"
 LAW_SERVICE_URL = "http://www.law.go.kr/DRF/lawService.do"
 
-ANSWER_MODEL = "gpt-4o-mini"
+ANSWER_MODEL = "gpt-4o"
 
 VECTORSTORE_DIR = Path(settings.LAW_CHATBOT_VECTORSTORE_PATH)
 EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL
@@ -383,7 +383,7 @@ async def _fetch_relevant_articles(
     total_chars = 0
     for score, article in scored_articles[:10]:
         article_text = f"[{article.get('number', '')} {article.get('title', '')}]\n{article.get('content', '')}"
-        if total_chars + len(article_text) > 5000:
+        if total_chars + len(article_text) > 8000:
             break
         selected.append(article_text)
         total_chars += len(article_text)
