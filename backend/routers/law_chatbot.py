@@ -600,7 +600,24 @@ def _deduplicate_api_results(results: list) -> list:
             unique.append(r)
     return unique
 
-
+@router.get("/debug-api")
+async def debug_api():
+    """API 응답 디버그"""
+    oc = settings.LAW_API_OC
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            LAW_SEARCH_URL,
+            params={"OC": oc, "target": "law", "type": "XML", "query": "헌법", "display": 1},
+        )
+        text = resp.content.decode("utf-8")
+        return {
+            "status_code": resp.status_code,
+            "oc": oc,
+            "starts_with_doctype": text.strip().startswith("<!DOCTYPE"),
+            "starts_with_html": text.strip().startswith("<html"),
+            "first_200_chars": text[:200],
+            "encoding": resp.headers.get("content-type", ""),
+        }
 async def _check_api_connection() -> dict:
     oc = settings.LAW_API_OC
     if not oc:
