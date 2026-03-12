@@ -21,7 +21,8 @@ import httpx
 import xml.etree.ElementTree as ET
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
+#from sentence_transformers import SentenceTransformer
+from FlagEmbedding import BGEM3FlagModel
 
 from config import settings
 
@@ -69,9 +70,12 @@ def _load_embedding_model():
     global _embedding_model
     if _embedding_model is not None:
         return
-    print(f"[law-chatbot] 임베딩 모델 로딩: {EMBEDDING_MODEL_NAME}")
-    _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    print(f"[law-chatbot] ✅ 임베딩 모델 로드 완료")
+    try:
+        _embedding_model = BGEM3FlagModel(EMBEDDING_MODEL_NAME, use_fp16=True)
+        print(f"[law-chatbot] ✅ BGEM3 임베딩 모델 로드 완료: {EMBEDDING_MODEL_NAME}")
+    except Exception as e:
+        print(f"[law-chatbot] ❌ BGEM3 임베딩 모델 로드 실패: {e}")
+        _embedding_model = None
 
 
 # ─── Pydantic 모델 ───────────────────────────────────
@@ -340,9 +344,24 @@ def _search_vectorstore(query: str, top_k: int = 7) -> list:
     _load_embedding_model()
     if _faiss_index is None or _faiss_data is None or _embedding_model is None:
         return []
-    query_vec = _embedding_model.encode([query], normalize_embeddings=True)
-    query_vec = np.array(query_vec).astype("float32")
+
+    output = _embedding_model.encode(
+        [query],
+        batch_size=1,
+        max_length=512,
+        return_dense=True,
+        return_sparse=False,
+        return_colbert_vecs=False,
+    )
+
+    query_vec = np.array(output["dense_vecs"]).astype("float32")
+
+    norms = np.linalg.norm(query_vec, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    query_vec = query_vec / norms
+
     scores, indices = _faiss_index.search(query_vec, top_k)
+
     results = []
     for score, idx in zip(scores[0], indices[0]):
         if idx < 0 or idx >= len(_faiss_data["texts"]):
