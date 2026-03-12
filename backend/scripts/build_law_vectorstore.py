@@ -1,13 +1,22 @@
 """
-충주시 자치법규 벡터스토어 구축 스크립트 (v2 - 인코딩 수정)
+충주시 자치법규 벡터스토어 구축 스크립트 (v3)
+
+v2 → v3 변경사항:
+1. 임베딩 모델: ko-sroberta → BAAI/bge-m3 (1024차원, dense+sparse)
+2. BM25 sparse 벡터도 함께 저장 (Hybrid Search용)
+3. 컨텍스트 보강 청크: 법령명+조문제목을 prefix로 추가
+4. 조문 제목(조제목) 추출 추가
+5. 별표 제목도 청크에 포함
 
 사용법:
   cd backend
+  pip install FlagEmbedding
   python scripts/build_law_vectorstore.py --oc YOUR_OC_CODE
 
 결과물:
-  backend/data/law_chatbot/vectorstores/index.faiss
-  backend/data/law_chatbot/vectorstores/index.pkl
+  C:\\temp\\law_vectorstore\\index.faiss      (dense 벡터)
+  C:\\temp\\law_vectorstore\\index.pkl         (텍스트 + 메타데이터)
+  C:\\temp\\law_vectorstore\\bm25_corpus.pkl   (BM25 토큰화 코퍼스)
 """
 
 import os
@@ -27,15 +36,14 @@ import xml.etree.ElementTree as ET
 LAW_SEARCH_URL = "http://www.law.go.kr/DRF/lawSearch.do"
 LAW_SERVICE_URL = "http://www.law.go.kr/DRF/lawService.do"
 
-EMBEDDING_MODEL = r"C:\Users\User\Desktop\파이썬코드\rag_test\models\ko-sroberta-multitask"
+EMBEDDING_MODEL = r"C:\Users\User\Desktop\파이썬코드\rag_test\models\bge-m3"
 
-OUTPUT_DIR = Path(r"C:\temp\law_vectorstore")
+OUTPUT_DIR = Path(r"C:\temp\law_vectorstore_v3")
 
 MAX_CHUNK_CHARS = 1500
 
 
 def _decode_response(resp) -> str:
-    """응답을 안전하게 UTF-8 디코딩 (관공서 네트워크 인코딩 변조 대응)"""
     return resp.content.decode("utf-8")
 
 
@@ -49,14 +57,9 @@ def fetch_chungju_ordinance_list(oc: str) -> list:
 
     while True:
         params = {
-            "OC": oc,
-            "target": "ordin",
-            "type": "XML",
-            "query": "충주시",
-            "display": 100,
-            "page": page,
+            "OC": oc, "target": "ordin", "type": "XML",
+            "query": "충주시", "display": 100, "page": page,
         }
-
         try:
             resp = requests.get(LAW_SEARCH_URL, params=params, timeout=30)
             resp.raise_for_status()
@@ -72,35 +75,18 @@ def fetch_chungju_ordinance_list(oc: str) -> list:
             break
 
         total = int(root.findtext("totalCnt", "0"))
-
         if page == 1:
             print(f"  총 {total}건 발견")
 
         items_found = 0
         for item in list(root.findall("law")) + list(root.findall("ordin")):
-            mst = (
-                item.findtext("자치법규일련번호", "")
-                or item.findtext("법령일련번호", "")
-                or ""
-            )
-            name = (
-                item.findtext("자치법규명", "")
-                or item.findtext("법령명한글", "")
-                or ""
-            )
-            category = (
-                item.findtext("자치법규종류", "")
-                or item.findtext("자치법규구분", "")
-                or item.findtext("법령구분명", "")
-                or ""
-            )
+            mst = item.findtext("자치법규일련번호", "") or item.findtext("법령일련번호", "")
+            name = item.findtext("자치법규명", "") or item.findtext("법령명한글", "")
+            category = (item.findtext("자치법규종류", "")
+                       or item.findtext("자치법규구분", "")
+                       or item.findtext("법령구분명", ""))
             enforcement_date = item.findtext("시행일자", "")
             status = item.findtext("현행연혁코드", "")
-            detail_link = (
-                item.findtext("자치법규상세링크", "")
-                or item.findtext("법령상세링크", "")
-                or ""
-            )
 
             if not mst or not name:
                 continue
@@ -110,12 +96,8 @@ def fetch_chungju_ordinance_list(oc: str) -> list:
                 continue
 
             all_items.append({
-                "mst": mst,
-                "name": name,
-                "category": category,
-                "enforcement_date": enforcement_date,
-                "status": status,
-                "detail_link": detail_link,
+                "mst": mst, "name": name, "category": category,
+                "enforcement_date": enforcement_date, "status": status,
             })
             items_found += 1
 
@@ -123,7 +105,6 @@ def fetch_chungju_ordinance_list(oc: str) -> list:
 
         if page * 100 >= total or items_found == 0:
             break
-
         page += 1
         time.sleep(0.5)
 
@@ -131,177 +112,259 @@ def fetch_chungju_ordinance_list(oc: str) -> list:
     return all_items
 
 
-# ─── Step 2: 각 법규 본문 수집 ───────────────────────
-def fetch_ordinance_detail(oc: str, mst: str) -> str:
-    """자치법규 1건의 본문 텍스트 추출"""
-    params = {
-        "OC": oc,
-        "target": "ordin",
-        "MST": mst,
-        "type": "XML",
-    }
+# ─── Step 2: 본문 수집 (조문 단위 + 조제목 포함) ─────
+def fetch_ordinance_articles(oc: str, mst: str) -> list:
+    """자치법규 1건의 조문을 구조화하여 추출 (조제목 포함)"""
+    params = {"OC": oc, "target": "ordin", "MST": mst, "type": "XML"}
 
     try:
         resp = requests.get(LAW_SERVICE_URL, params=params, timeout=30)
         resp.raise_for_status()
     except requests.RequestException:
-        return ""
+        return []
 
     try:
         text = _decode_response(resp)
         root = ET.fromstring(text)
     except (ET.ParseError, UnicodeDecodeError):
-        return ""
+        return []
 
-    # 조문 텍스트 추출
-    parts = []
+    articles = []
 
-    # 방법 1: 조문 구조 탐색
-    for elem in root.iter():
-        tag = elem.tag or ""
-        text_content = (elem.text or "").strip()
-        if not text_content:
-            continue
+    # 조문 단위 파싱
+    for jo in root.iter("조문"):
+        number = ""
+        title = ""
+        content_parts = []
 
-        if any(keyword in tag for keyword in [
-            "조문내용", "조문제목", "항내용", "호내용", "목내용"
-        ]):
-            parts.append(text_content)
+        for child in jo.iter():
+            tag = child.tag
+            text_val = (child.text or "").strip()
+            if not text_val:
+                continue
+            if tag in ("조문번호", "조문여부"):
+                continue
+            elif tag in ("조내용", "조문내용"):
+                content_parts.append(text_val)
+                match = re.match(r"(제\d+조(?:의\d+)?)", text_val)
+                if match:
+                    number = match.group(1)
+            elif tag in ("조제목", "조문제목"):
+                title = text_val
+            elif tag in ("항내용", "호내용", "목내용"):
+                content_parts.append(text_val)
 
-    # 방법 2: 조문이 못 찾아지면 모든 텍스트 노드에서 한글 추출
-    if not parts:
+        if content_parts:
+            articles.append({
+                "number": number,
+                "title": title,
+                "content": "\n".join(content_parts),
+            })
+
+    # 조문 태그 없으면 폴백
+    if not articles:
         for elem in root.iter():
-            text_content = (elem.text or "").strip()
-            # 한글이 포함된 의미있는 텍스트만 (숫자/코드 제외)
-            if text_content and re.search(r"[가-힣]{2,}", text_content) and len(text_content) > 10:
-                parts.append(text_content)
+            tag = elem.tag
+            text_val = (elem.text or "").strip()
+            if not text_val:
+                continue
+            if any(k in tag for k in ["조문내용", "조내용"]):
+                match = re.match(r"(제\d+조(?:의\d+)?)", text_val)
+                number = match.group(1) if match else ""
+                articles.append({"number": number, "title": "", "content": text_val})
 
-    return "\n".join(parts)
+    # 별표 추출
+    for bt in root.iter("별표단위"):
+        bt_title = bt.findtext("별표제목", "")
+        bt_content = bt.findtext("별표내용", "").strip()
+        if bt_title:
+            articles.append({
+                "number": bt_title,
+                "title": "",
+                "content": bt_content if bt_content else f"(첨부파일로 제공 - {bt_title})",
+            })
+
+    return articles
 
 
-# ─── Step 3: 조문 단위 분할 (chunking) ───────────────
-def split_into_chunks(full_text: str, law_name: str) -> list:
+# ─── Step 3: 컨텍스트 보강 청크 생성 ─────────────────
+def create_contextual_chunks(articles: list, law_name: str, ordin_meta: dict) -> list:
+    """
+    각 조문에 법령명+조문제목을 prefix로 추가하여 컨텍스트 보강
+    v2: "제10조 (휴가) 공무원의 휴가는..."
+    v3: "[충주시 지방공무원 복무 조례 > 제10조 휴가] 공무원의 휴가는..."
+    """
     chunks = []
 
-    if not full_text.strip():
-        return chunks
+    for article in articles:
+        number = article.get("number", "")
+        title = article.get("title", "")
+        content = article.get("content", "")
 
-    # "제N조" 또는 "제N조의N" 패턴으로 분할
-    pattern = r"(제\d+조(?:의\d+)?)"
-    parts = re.split(pattern, full_text)
+        if not content.strip():
+            continue
 
-    current_article = ""
-    current_content = ""
-
-    for part in parts:
-        if re.match(pattern, part):
-            if current_article and current_content.strip():
-                chunk_text = f"{current_article} {current_content.strip()}"
-                chunks.extend(
-                    _maybe_split_long_chunk(chunk_text, law_name, current_article)
-                )
-            current_article = part
-            current_content = ""
+        # 컨텍스트 prefix 생성
+        if title:
+            prefix = f"[{law_name} > {number} {title}]"
+        elif number:
+            prefix = f"[{law_name} > {number}]"
         else:
-            current_content += part
+            prefix = f"[{law_name}]"
 
-    if current_article and current_content.strip():
-        chunk_text = f"{current_article} {current_content.strip()}"
-        chunks.extend(
-            _maybe_split_long_chunk(chunk_text, law_name, current_article)
-        )
+        full_text = f"{prefix}\n{content}"
 
-    # 조문 패턴 없는 경우 (부칙 등)
-    if not chunks and full_text.strip():
-        for i in range(0, len(full_text), 800):
-            chunk = full_text[i:i + 1000].strip()
-            if chunk and len(chunk) > 20:
+        # 긴 청크 분할
+        if len(full_text) <= MAX_CHUNK_CHARS:
+            chunks.append({
+                "content": full_text,
+                "metadata": {
+                    "law_name": law_name,
+                    "article": number,
+                    "article_title": title,
+                    "category": ordin_meta.get("category", ""),
+                    "enforcement_date": ordin_meta.get("enforcement_date", ""),
+                    "mst": ordin_meta.get("mst", ""),
+                    "region": "충주시",
+                    "type": "자치법규",
+                },
+            })
+        else:
+            # 항(①②③) 단위로 분할
+            sub_chunks = _split_by_paragraph(content, prefix, number)
+            for sc in sub_chunks:
                 chunks.append({
-                    "content": chunk,
-                    "article": f"(본문 {i // 800 + 1})",
+                    "content": sc,
+                    "metadata": {
+                        "law_name": law_name,
+                        "article": number,
+                        "article_title": title,
+                        "category": ordin_meta.get("category", ""),
+                        "enforcement_date": ordin_meta.get("enforcement_date", ""),
+                        "mst": ordin_meta.get("mst", ""),
+                        "region": "충주시",
+                        "type": "자치법규",
+                    },
                 })
 
     return chunks
 
 
-def _maybe_split_long_chunk(text: str, law_name: str, article: str) -> list:
-    if len(text) <= MAX_CHUNK_CHARS:
-        return [{"content": text, "article": article}]
-
-    sub_pattern = r"([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]|\d+\.)"
-    sub_parts = re.split(sub_pattern, text)
+def _split_by_paragraph(content: str, prefix: str, article: str) -> list:
+    """항(①②③) 단위로 분할"""
+    sub_pattern = r"([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳])"
+    parts = re.split(sub_pattern, content)
 
     sub_chunks = []
     current = ""
 
-    for part in sub_parts:
+    for part in parts:
         if re.match(sub_pattern, part):
             if current.strip() and len(current) > 50:
-                sub_chunks.append({
-                    "content": f"{article} {current.strip()}",
-                    "article": article,
-                })
+                sub_chunks.append(f"{prefix}\n{current.strip()}")
             current = part
         else:
             current += part
 
     if current.strip() and len(current) > 50:
-        sub_chunks.append({
-            "content": f"{article} {current.strip()}",
-            "article": article,
-        })
+        sub_chunks.append(f"{prefix}\n{current.strip()}")
 
-    return sub_chunks if sub_chunks else [{"content": text, "article": article}]
+    if not sub_chunks:
+        # 분할 실패 시 고정 길이 분할
+        for i in range(0, len(content), 1200):
+            chunk = content[i:i + 1400].strip()
+            if chunk and len(chunk) > 30:
+                sub_chunks.append(f"{prefix}\n{chunk}")
+
+    return sub_chunks
 
 
-# ─── Step 4 & 5: 임베딩 생성 + FAISS 저장 ────────────
-def build_faiss_index(all_chunks: list):
-    print(f"\n[Step 4] 임베딩 생성 ({EMBEDDING_MODEL})")
+# ─── Step 4: bge-m3 임베딩 + BM25 인덱스 생성 ────────
+def build_indices(all_chunks: list):
+    print(f"\n[Step 4] bge-m3 임베딩 생성")
     print("-" * 50)
+    print(f"  모델: {EMBEDDING_MODEL}")
 
-    from sentence_transformers import SentenceTransformer
-    import faiss
+    from FlagEmbedding import BGEM3FlagModel
 
-    model = SentenceTransformer(EMBEDDING_MODEL)
+    model = BGEM3FlagModel(EMBEDDING_MODEL, use_fp16=True)
 
     texts = [c["content"] for c in all_chunks]
     metadatas = [c["metadata"] for c in all_chunks]
 
-    print(f"  {len(texts)}개 청크 임베딩 생성 중...")
-    embeddings = model.encode(
+    print(f"  {len(texts)}개 청크 임베딩 생성 중... (시간이 걸릴 수 있습니다)")
+
+    # bge-m3는 dense + sparse 동시 생성
+    output = model.encode(
         texts,
-        show_progress_bar=True,
-        batch_size=64,
-        normalize_embeddings=True,
+        batch_size=32,
+        max_length=512,
+        return_dense=True,
+        return_sparse=True,
+        return_colbert_vecs=False,  # ColBERT은 메모리 많이 먹어서 제외
     )
-    embeddings = np.array(embeddings).astype("float32")
 
-    dimension = embeddings.shape[1]
-    print(f"  임베딩 차원: {dimension}")
+    dense_embeddings = output["dense_vecs"]
+    sparse_weights = output["lexical_weights"]
 
+    dense_embeddings = np.array(dense_embeddings).astype("float32")
+    # normalize for cosine similarity
+    norms = np.linalg.norm(dense_embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    dense_embeddings = dense_embeddings / norms
+
+    dimension = dense_embeddings.shape[1]
+    print(f"  Dense 임베딩: {dimension}차원")
+    print(f"  Sparse 벡터: {len(sparse_weights)}개")
+
+    # ── FAISS 인덱스 생성 (Dense) ──
+    import faiss
     index = faiss.IndexFlatIP(dimension)
-    index.add(embeddings)
+    index.add(dense_embeddings)
 
+    # ── 저장 ──
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     faiss_path = OUTPUT_DIR / "index.faiss"
     pkl_path = OUTPUT_DIR / "index.pkl"
+    bm25_path = OUTPUT_DIR / "bm25_corpus.pkl"
 
     faiss.write_index(index, str(faiss_path))
 
     with open(pkl_path, "wb") as f:
         pickle.dump({"texts": texts, "metadatas": metadatas}, f)
 
+    # BM25용 토큰화 코퍼스 저장
+    # sparse_weights는 [{token_id: weight, ...}, ...] 형태
+    # 별도로 텍스트 기반 BM25도 저장 (rank_bm25 호환)
+    tokenized_corpus = [_tokenize_korean(t) for t in texts]
+    with open(bm25_path, "wb") as f:
+        pickle.dump({
+            "tokenized_corpus": tokenized_corpus,
+            "sparse_weights": sparse_weights,
+        }, f)
+
     print(f"\n[Step 5] 저장 완료")
-    print(f"  FAISS: {faiss_path} ({faiss_path.stat().st_size / 1024 / 1024:.1f} MB)")
-    print(f"  PKL:   {pkl_path} ({pkl_path.stat().st_size / 1024 / 1024:.1f} MB)")
+    print(f"  FAISS:  {faiss_path} ({faiss_path.stat().st_size / 1024 / 1024:.1f} MB)")
+    print(f"  PKL:    {pkl_path} ({pkl_path.stat().st_size / 1024 / 1024:.1f} MB)")
+    print(f"  BM25:   {bm25_path} ({bm25_path.stat().st_size / 1024 / 1024:.1f} MB)")
 
     return len(texts), dimension
 
 
+def _tokenize_korean(text: str) -> list:
+    """한국어 텍스트를 단순 토큰화 (공백 + 조사 제거)"""
+    # 한글, 영문, 숫자만 남기고 공백 분리
+    text = re.sub(r"[^\w가-힣]", " ", text)
+    tokens = text.split()
+    # 1글자 제거 + 소문자
+    tokens = [t.lower() for t in tokens if len(t) > 1]
+    return tokens
+
+
 # ─── 메인 ────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="충주시 자치법규 벡터스토어 구축")
+    parser = argparse.ArgumentParser(description="충주시 자치법규 벡터스토어 구축 (v3)")
     parser.add_argument("--oc", type=str, help="국가법령정보센터 API OC 코드")
     args = parser.parse_args()
 
@@ -311,10 +374,15 @@ def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("  충주시 자치법규 벡터스토어 구축 (v2)")
+    print("  충주시 자치법규 벡터스토어 구축 (v3 - bge-m3)")
     print("=" * 60)
     print(f"  임베딩 모델: {EMBEDDING_MODEL}")
     print(f"  출력 경로:   {OUTPUT_DIR}")
+    print(f"  개선사항:")
+    print(f"    - bge-m3 (1024차원, dense+sparse)")
+    print(f"    - BM25 Hybrid Search용 인덱스")
+    print(f"    - 컨텍스트 보강 청크 (법령명+조문제목 prefix)")
+    print(f"    - 별표 제목 포함")
 
     # API 연결 테스트
     print("\n  API 연결 테스트...")
@@ -327,35 +395,30 @@ def main():
         test_text = _decode_response(test_resp)
         test_root = ET.fromstring(test_text)
         test_total = test_root.findtext("totalCnt", "0")
-
-        # 태그명 확인
         first_law = test_root.find("law")
-        if first_law is not None:
-            name = first_law.findtext("자치법규명", "")
-            print(f"  ✅ 연결 성공 ({test_total}건, 첫 번째: {name})")
-        else:
-            print(f"  ✅ 연결 성공 ({test_total}건)")
+        name = first_law.findtext("자치법규명", "") if first_law is not None else ""
+        print(f"  ✅ 연결 성공 ({test_total}건{', 첫 번째: ' + name if name else ''})")
     except Exception as e:
         print(f"  ❌ 연결 실패: {e}")
         sys.exit(1)
 
     start_time = time.time()
 
-    # Step 1
+    # Step 1: 목록 수집
     ordinances = fetch_chungju_ordinance_list(oc)
-
     if not ordinances:
         print("❌ 수집된 자치법규가 없습니다.")
         sys.exit(1)
 
-    # Step 2 & 3
-    print(f"\n[Step 2-3] 본문 수집 + 조문 분할")
+    # Step 2 & 3: 본문 수집 + 컨텍스트 보강 청크 생성
+    print(f"\n[Step 2-3] 본문 수집 + 컨텍스트 보강 청크 생성")
     print("-" * 50)
 
     all_chunks = []
     success_count = 0
     fail_count = 0
     empty_count = 0
+    table_count = 0
 
     for i, ordin in enumerate(ordinances):
         name = ordin["name"]
@@ -364,49 +427,45 @@ def main():
         if (i + 1) % 50 == 0 or i == 0:
             print(f"  ({i + 1}/{len(ordinances)}) {name[:30]}...")
 
-        detail_text = fetch_ordinance_detail(oc, mst)
-        if not detail_text:
+        articles = fetch_ordinance_articles(oc, mst)
+        if not articles:
             fail_count += 1
             continue
 
-        chunks = split_into_chunks(detail_text, name)
+        # 별표 개수 카운트
+        for a in articles:
+            if a.get("number", "").startswith("[별표"):
+                table_count += 1
+
+        chunks = create_contextual_chunks(articles, name, ordin)
         if not chunks:
             empty_count += 1
             continue
 
-        for chunk in chunks:
-            chunk["metadata"] = {
-                "law_name": name,
-                "article": chunk.pop("article", ""),
-                "category": ordin["category"],
-                "enforcement_date": ordin["enforcement_date"],
-                "mst": mst,
-                "region": "충주시",
-                "type": "자치법규",
-            }
-            all_chunks.append(chunk)
-
+        all_chunks.extend(chunks)
         success_count += 1
         time.sleep(0.3)
 
-    print(f"\n  ✅ 본문 수집 완료: 성공 {success_count}건 / 실패 {fail_count}건 / 빈 본문 {empty_count}건")
-    print(f"  ✅ 총 {len(all_chunks)}개 청크 생성")
+    print(f"\n  ✅ 본문 수집 완료:")
+    print(f"     성공 {success_count}건 / 실패 {fail_count}건 / 빈 본문 {empty_count}건")
+    print(f"     별표/서식 {table_count}건 포함")
+    print(f"     총 {len(all_chunks)}개 청크 생성")
 
     # 샘플 출력
     if all_chunks:
-        print(f"\n  --- 샘플 청크 ---")
+        print(f"\n  --- 샘플 청크 (컨텍스트 보강 확인) ---")
         for c in all_chunks[:3]:
             meta = c["metadata"]
-            print(f"  [{meta['law_name']}] {meta['article']}")
-            print(f"    {c['content'][:100]}...")
+            print(f"  [{meta['law_name']}] {meta['article']} {meta.get('article_title', '')}")
+            print(f"    {c['content'][:120]}...")
             print()
 
     if not all_chunks:
         print("❌ 생성된 청크가 없습니다.")
         sys.exit(1)
 
-    # Step 4 & 5
-    total_chunks, dimension = build_faiss_index(all_chunks)
+    # Step 4 & 5: bge-m3 임베딩 + BM25
+    total_chunks, dimension = build_indices(all_chunks)
 
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
@@ -418,11 +477,13 @@ def main():
         category_stats[cat] = category_stats.get(cat, 0) + 1
 
     print(f"\n{'=' * 60}")
-    print(f"  ✅ 벡터스토어 구축 완료! (v2)")
+    print(f"  ✅ 벡터스토어 구축 완료! (v3 - bge-m3)")
     print(f"{'=' * 60}")
-    print(f"  자치법규:  {success_count}건 (실패 {fail_count}건, 빈 본문 {empty_count}건)")
+    print(f"  자치법규:  {success_count}건")
+    print(f"  별표/서식: {table_count}건")
     print(f"  총 청크:   {total_chunks}개")
-    print(f"  임베딩:    {dimension}차원")
+    print(f"  임베딩:    {dimension}차원 (bge-m3)")
+    print(f"  BM25:      토큰화 코퍼스 저장")
     print(f"  소요시간:  {minutes}분 {seconds}초")
     print(f"\n  카테고리별:")
     for cat, count in sorted(category_stats.items(), key=lambda x: -x[1]):
@@ -430,6 +491,11 @@ def main():
     print(f"\n  출력 파일:")
     print(f"    {OUTPUT_DIR / 'index.faiss'}")
     print(f"    {OUTPUT_DIR / 'index.pkl'}")
+    print(f"    {OUTPUT_DIR / 'bm25_corpus.pkl'}")
+    print(f"\n  ⚠️ 구축 완료 후:")
+    print(f"    1. {OUTPUT_DIR} 파일을 backend/data/law_chatbot/vectorstores/에 복사")
+    print(f"    2. law_chatbot.py에서 EMBEDDING_MODEL을 bge-m3 경로로 변경")
+    print(f"    3. GitHub 푸시 + Azure 배포")
 
 
 if __name__ == "__main__":
