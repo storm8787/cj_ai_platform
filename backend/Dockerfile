@@ -10,9 +10,18 @@ RUN apt-get update && apt-get install -y \
 # 작업 디렉토리
 WORKDIR /app
 
+ENV HF_HOME=/app/.cache/huggingface
+ENV HF_HUB_CACHE=/app/.cache/huggingface/hub
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface/transformers
+ENV EMBEDDING_MODEL=/app/models/bge-m3
+ENV PYTHONUNBUFFERED=1
+
 # 의존성 먼저 설치 (캐시 활용)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org -r requirements.txt
+
+RUN mkdir -p /app/models && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='BAAI/bge-m3', local_dir='/app/models/bge-m3', local_dir_use_symlinks=False)"
 
 # 애플리케이션 코드 복사 (vectorstore 파일 포함)
 COPY . .
