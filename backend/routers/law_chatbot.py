@@ -1,11 +1,9 @@
 """
-법령정보 · 자치법규 챗봇 라우터 (v7)
+법령정보 · 자치법규 챗봇 라우터 (v8)
 
-v6 → v7 변경사항:
-1. Agentic 재검색 루프: 검색 실패 시 GPT가 키워드 변경 후 재검색 (최대 2회)
-2. 시스템 프롬프트 대폭 강화: 근거 형식 표준화, 엉뚱한 인용 방지, 실무형 답변
-3. 유사도 threshold 동적 조정: 최고 유사도 기준으로 상대적 필터링
-4. 벡터 검색용 쿼리 리라이팅: 자연어 → 법령용어 변환
+v7 → v8 변경사항:
+1. BM25 Hybrid Search 연결: dense + BM25 결과를 RRF로 합산
+2. bm25_corpus.pkl 로드 + rank_bm25 라이브러리 사용
 """
 
 import os
@@ -25,6 +23,14 @@ from pydantic import BaseModel
 from FlagEmbedding import BGEM3FlagModel
 
 from config import settings
+
+# BM25 Hybrid Search
+try:
+    from rank_bm25 import BM25Okapi
+    _BM25_AVAILABLE = True
+except ImportError:
+    _BM25_AVAILABLE = False
+    print("[law-chatbot] ⚠️ rank_bm25 미설치, dense 검색만 사용")
 
 router = APIRouter(prefix="/api/law-chatbot", tags=["law-chatbot"])
 
@@ -49,14 +55,17 @@ MAX_RETRY = 2  # 재검색 최대 횟수
 _faiss_index = None
 _faiss_data = None
 _embedding_model = None
+_bm25_index = None
+_bm25_corpus = None
 
 
 def _load_vectorstore():
-    global _faiss_index, _faiss_data
+    global _faiss_index, _faiss_data, _bm25_index, _bm25_corpus
     if _faiss_index is not None:
         return
     faiss_path = VECTORSTORE_DIR / "index.faiss"
     pkl_path = VECTORSTORE_DIR / "index.pkl"
+    bm25_path = VECTORSTORE_DIR / "bm25_corpus.pkl"
     if not faiss_path.exists() or not pkl_path.exists():
         print(f"[law-chatbot] ⚠️ 벡터스토어 없음: {VECTORSTORE_DIR}")
         return
@@ -64,6 +73,20 @@ def _load_vectorstore():
     with open(pkl_path, "rb") as f:
         _faiss_data = pickle.load(f)
     print(f"[law-chatbot] ✅ 벡터스토어 로드 완료: {_faiss_index.ntotal}개 문서")
+
+    # BM25 인덱스 로드
+    if _BM25_AVAILABLE and bm25_path.exists():
+        try:
+            with open(bm25_path, "rb") as f:
+                bm25_data = pickle.load(f)
+            _bm25_corpus = bm25_data.get("tokenized_corpus", [])
+            if _bm25_corpus:
+                _bm25_index = BM25Okapi(_bm25_corpus)
+                print(f"[law-chatbot] ✅ BM25 인덱스 로드 완료: {len(_bm25_corpus)}개 문서")
+            else:
+                print("[law-chatbot] ⚠️ BM25 코퍼스가 비어있음")
+        except Exception as e:
+            print(f"[law-chatbot] ⚠️ BM25 로드 실패: {e}")
 
 
 def _load_embedding_model():
@@ -340,11 +363,13 @@ def _simple_keyword_extract(question: str) -> str:
 # ══════════════════════════════════════════════════════
 
 def _search_vectorstore(query: str, top_k: int = 7) -> list:
+    """Hybrid Search: dense(FAISS) + BM25 결과를 RRF로 합산"""
     _load_vectorstore()
     _load_embedding_model()
     if _faiss_index is None or _faiss_data is None or _embedding_model is None:
         return []
 
+    # ── Dense 검색 (FAISS) ──
     output = _embedding_model.encode(
         [query],
         batch_size=1,
@@ -355,25 +380,79 @@ def _search_vectorstore(query: str, top_k: int = 7) -> list:
     )
 
     query_vec = np.array(output["dense_vecs"]).astype("float32")
-
     norms = np.linalg.norm(query_vec, axis=1, keepdims=True)
     norms[norms == 0] = 1
     query_vec = query_vec / norms
 
-    scores, indices = _faiss_index.search(query_vec, top_k)
+    dense_k = top_k * 3  # RRF 합산을 위해 더 많이 가져옴
+    scores, indices = _faiss_index.search(query_vec, dense_k)
 
-    results = []
-    for score, idx in zip(scores[0], indices[0]):
+    dense_results = {}
+    for rank, (score, idx) in enumerate(zip(scores[0], indices[0])):
         if idx < 0 or idx >= len(_faiss_data["texts"]):
             continue
         if score < VECTOR_SCORE_MIN:
             continue
+        dense_results[int(idx)] = {"rank": rank, "score": float(score)}
+
+    # ── BM25 검색 ──
+    bm25_results = {}
+    if _bm25_index is not None:
+        query_tokens = _tokenize_korean(query)
+        if query_tokens:
+            bm25_scores = _bm25_index.get_scores(query_tokens)
+            bm25_top_indices = np.argsort(bm25_scores)[::-1][:dense_k]
+            for rank, idx in enumerate(bm25_top_indices):
+                if bm25_scores[idx] > 0:
+                    bm25_results[int(idx)] = {"rank": rank, "score": float(bm25_scores[idx])}
+
+    # ── RRF 합산 ──
+    k = 60  # RRF 상수
+    rrf_scores = {}
+    all_indices = set(dense_results.keys()) | set(bm25_results.keys())
+
+    for idx in all_indices:
+        rrf = 0.0
+        if idx in dense_results:
+            rrf += 1.0 / (k + dense_results[idx]["rank"] + 1)
+        if idx in bm25_results:
+            rrf += 1.0 / (k + bm25_results[idx]["rank"] + 1)
+        rrf_scores[idx] = rrf
+
+    # RRF 점수 높은 순 정렬
+    sorted_indices = sorted(rrf_scores.items(), key=lambda x: -x[1])
+
+    results = []
+    for idx, rrf_score in sorted_indices[:top_k]:
+        # dense score가 있으면 그걸 표시, 없으면 RRF 점수
+        display_score = dense_results[idx]["score"] if idx in dense_results else rrf_score
+
         results.append({
             "content": _faiss_data["texts"][idx],
             "metadata": _faiss_data["metadatas"][idx],
-            "score": float(score),
+            "score": float(display_score),
+            "rrf_score": float(rrf_score),
+            "sources": {
+                "dense": idx in dense_results,
+                "bm25": idx in bm25_results,
+            },
         })
+
+    if results:
+        dense_only = sum(1 for r in results if r["sources"]["dense"] and not r["sources"]["bm25"])
+        bm25_only = sum(1 for r in results if r["sources"]["bm25"] and not r["sources"]["dense"])
+        both = sum(1 for r in results if r["sources"]["dense"] and r["sources"]["bm25"])
+        print(f"[law-chatbot] Hybrid 검색: dense만={dense_only}, bm25만={bm25_only}, 둘다={both}")
+
     return results
+
+
+def _tokenize_korean(text: str) -> list:
+    """한국어 텍스트를 단순 토큰화"""
+    text = re.sub(r"[^\w가-힣]", " ", text)
+    tokens = text.split()
+    tokens = [t.lower() for t in tokens if len(t) > 1]
+    return tokens
 
 
 def _apply_dynamic_threshold(results: list) -> list:
