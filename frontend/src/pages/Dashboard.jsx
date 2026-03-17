@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, Sparkles, Sun, Moon, CloudSun } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { ArrowRight, Sparkles, Sun, Moon, CloudSun, CalendarRange } from 'lucide-react';
 
