@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Sparkles, Sun, Moon, CloudSun } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { ArrowRight, Sparkles, Sun, Moon, CloudSun, CalendarRange } from 'lucide-react';
 
 // 카테고리 정의
 const categories = [
@@ -113,12 +114,19 @@ const services = [
     path: '/law-chatbot',
     category: 'chatbot',
   },
+  {
+    icon: '📅',  // CalendarRange 대신 이모지
+    title: "사업 타임라인",
+    description: "AI 일정 추천 + 간트차트 시각화",
+    path: "/timeline",
+    category: 'data',
+  }
 ];
 
 // 카테고리별 순서 정의 (각 카테고리 클릭 시 이 순서로 표시)
 const categoryOrder = {
   document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report'],  // trip-report 추가
-  data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger'],
+  data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger', '/timeline'],
   translate: ['/news', '/translator', '/meeting-summary'],
   chatbot: ['/election-law', '/law-chatbot'],
 };
