@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef } from "react";
 import {
-  CalendarRange,
   Sparkles,
   Plus,
   Trash2,
