@@ -20,6 +20,7 @@ from routers import data_validator
 from routers import board
 from routers import trip_report
 from routers import law_chatbot
+from routers import timeline_planner
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -69,6 +70,7 @@ app.include_router(data_validator.router, prefix="/api/data-validator", tags=["�
 app.include_router(trip_report.router, prefix="/api/trip-report", tags=["출장보고"])
 #app.include_router(law_chatbot.router, prefix="/api/law-chatbot", tags=["법령,자치법규 챗봇"])
 app.include_router(law_chatbot.router)
+app.include_router(timeline_planner.router)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
 app.include_router(board.router, prefix="/api/board", tags=["게시판"])
