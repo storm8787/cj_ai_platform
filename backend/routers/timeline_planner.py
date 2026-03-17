@@ -77,8 +77,10 @@ SUGGEST_SYSTEM_PROMPT = """당신은 한국 지방자치단체의 사업 일정 
    - 입찰/계약: 1~2개월
    - 시공/집행: 사업 규모에 따라 3~12개월
    - 준공/완료/정산: 1~2개월
-8. 마일스톤(주요 시점)에는 is_milestone: true 표시
+8. is_milestone은 항상 false로 설정하세요. 모든 단계는 기간이 있는 바(bar) 형태로 표시됩니다.
 9. 현실적이고 보수적인 일정 산출 (여유 기간 포함)
+10. 사용자가 완료 목표 시기를 지정한 경우, 반드시 해당 시기 이내에 모든 일정을 완료해야 합니다. 목표 시기를 초과하는 일정은 절대 불가합니다. 기간이 부족하면 각 단계를 압축하세요.
+11. 사업 설명에 포함된 기술, 장비, 방법론 등을 일정 단계명과 summary에 반영하세요.
 
 반드시 아래 JSON 형식만 반환하세요 (다른 텍스트 없이):
 {
@@ -93,7 +95,7 @@ SUGGEST_SYSTEM_PROMPT = """당신은 한국 지방자치단체의 사업 일정 
       "is_milestone": false
     }
   ],
-  "summary": "일정 산출 근거 요약 (2~3문장)"
+  "summary": "일정 산출 근거 요약 (2~3문장, 사업 설명에 언급된 내용도 반영)"
 }"""
 
 
@@ -140,7 +142,7 @@ async def suggest_timeline(request: AutoSuggestRequest):
                 "start_year": t.get("start_year", current_year),
                 "end_year": t.get("end_year", current_year),
                 "category": t.get("category", "시행"),
-                "is_milestone": t.get("is_milestone", False),
+                "is_milestone": False,
             })
 
         return {
