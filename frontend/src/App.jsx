@@ -28,6 +28,7 @@ import BoardEdit from './pages/BoardEdit';
 import DataValidator from './pages/DataValidator';
 import TripReport from './pages/TripReport';
 import LawChatbot from './pages/LawChatbot';
+import TimelinePlanner from "./pages/TimelinePlanner";
 
 // 보호된 라우트 컴포넌트
 function ProtectedRoute({ children }) {
@@ -215,6 +216,14 @@ function AppRoutes() {
             <Layout><LawChatbot /></Layout>
           </ProtectedRoute>
         }
+      />
+      <Route 
+        path="/timeline" 
+        element={
+          <ProtectedRoute>
+            <Layout><TimelinePlanner /></Layout>
+            </ProtectedRoute>
+        } 
       />
 
       {/* 게시판 라우트 */}
