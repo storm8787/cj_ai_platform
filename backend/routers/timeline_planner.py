@@ -176,7 +176,7 @@ PROJECT_TYPES = [
     {"value": "welfare", "label": "복지/지원 사업", "icon": "🤝"},
     {"value": "education", "label": "교육/홍보 사업", "icon": "📚"},
     {"value": "environment", "label": "환경/녹지 사업", "icon": "🌳"},
-    {"value": "other", "label": "기타", "icon": "📌"},
+    {"value": "other", "label": "기타", "icon": "📌"}
 ]
 
 
