@@ -285,12 +285,12 @@ export default function TimelinePlanner() {
     <div className="max-w-6xl mx-auto space-y-6">
       {/* 헤더 */}
       <div className="flex items-center gap-3">
-        <div className="p-2.5 rounded-xl bg-gradient-to-br from-orange-100 to-amber-50">
-          <CalendarRange className="w-6 h-6 text-orange-600" />
+        <div className="p-2.5 rounded-xl bg-gradient-to-br from-cyan-100 to-blue-100">
+          <CalendarRange className="w-6 h-6 text-cyan-600" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">사업 타임라인 생성기</h1>
-          <p className="text-sm text-gray-500">AI가 추천하는 사업 일정, 간트차트로 시각화</p>
+          <h1 className="text-2xl font-bold text-white">사업 타임라인 생성기</h1>
+          <p className="text-sm text-slate-400">AI가 추천하는 사업 일정, 간트차트로 시각화</p>
         </div>
       </div>
 
@@ -394,7 +394,7 @@ export default function TimelinePlanner() {
           <button
             onClick={handleAiSuggest}
             disabled={loading}
-            className="w-full py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-medium rounded-lg hover:from-orange-600 hover:to-amber-600 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full py-3 bg-cyan-600 text-white font-semibold rounded-lg hover:bg-cyan-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
