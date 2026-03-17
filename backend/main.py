@@ -70,6 +70,7 @@ app.include_router(data_validator.router, prefix="/api/data-validator", tags=["�
 app.include_router(trip_report.router, prefix="/api/trip-report", tags=["출장보고"])
 #app.include_router(law_chatbot.router, prefix="/api/law-chatbot", tags=["법령,자치법규 챗봇"])
 app.include_router(law_chatbot.router)
+# v5.0.0 - timeline_planner 추가
 app.include_router(timeline_planner.router)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
