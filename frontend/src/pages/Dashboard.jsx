@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { ArrowRight, Sparkles, Sun, Moon, CloudSun, CalendarRange } from 'lucide-react';
+import { ArrowRight, Sparkles, Sun, Moon, CloudSun } from 'lucide-react';
 
 // 카테고리 정의
 const categories = [
