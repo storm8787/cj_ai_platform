@@ -14,7 +14,7 @@ import io
 import base64
 import logging
 
-from services.openai_service import get_openai_client
+from services.openai_service import OpenAIService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/timeline", tags=["timeline"])
@@ -101,7 +101,8 @@ SUGGEST_SYSTEM_PROMPT = """당신은 한국 지방자치단체의 사업 일정 
 async def suggest_timeline(request: AutoSuggestRequest):
     """GPT 기반 자동 일정 추천"""
     try:
-        client = get_openai_client()
+        #client = get_openai_client()
+        openai_service = OpenAIService()
 
         # 사용자 프롬프트 구성
         user_parts = [f"사업명: {request.project_name}"]
@@ -120,18 +121,13 @@ async def suggest_timeline(request: AutoSuggestRequest):
 
         user_prompt = "\n".join(user_parts)
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": SUGGEST_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            response_format={"type": "json_object"},
+        result_text = await openai_service.generate_text(
+            prompt=f"{SUGGEST_SYSTEM_PROMPT}\n\n{user_prompt}",
+            max_tokens=2000,
+            temperature=0.7
         )
-
-        result_text = response.choices[0].message.content.strip()
         result = json.loads(result_text)
+        #result = json.loads(result_text)
 
         # 유효성 검증
         tasks = result.get("tasks", [])
