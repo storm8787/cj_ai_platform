@@ -21,6 +21,7 @@ const services = [
   { icon: '🤖', title: '공공데이터 검증기', description: '공공데이터 제공표준 적합성 검증', path: '/data-validator' },
   { icon: '📋', title: '출장보고 생성기', description: '이미지 기반 출장보고서 작성', path: '/trip-report' },
   { icon: '📜', title: '법령·자치법규 챗봇', description: '국가법령 & 충주시 자치법규 AI 검색', path: '/law-chatbot' },
+  { icon: '📅', title: '사업 타임라인', description: 'AI 일정 추천 + 간트차트 시각화', path: '/timeline' },
 ];
 
 // 기술 스택
@@ -131,7 +132,7 @@ export default function About() {
                 </li>
                 <li className="flex items-start gap-3">
                   <CheckCircle className="text-green-500 flex-shrink-0 mt-0.5" size={20} />
-                  <span><strong>AI 서비스:</strong> 총 14개 기능 제공</span>
+                  <span><strong>AI 서비스:</strong> 총 15개 기능 제공</span>
                 </li>
               </ul>
             </div>
@@ -194,7 +195,7 @@ export default function About() {
         <div className="max-w-5xl mx-auto px-4">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold text-slate-900 mb-4">AI 서비스</h2>
-            <p className="text-slate-600">총 14개의 AI 기반 행정 서비스를 제공합니다</p>
+            <p className="text-slate-600">총 15개의 AI 기반 행정 서비스를 제공합니다</p>
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
