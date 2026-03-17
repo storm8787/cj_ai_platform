@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
+  CalendarRange,
   Sparkles,
   Plus,
   Trash2,
@@ -129,10 +130,11 @@ export default function TimelinePlanner() {
   const exportRef = useRef(null);
 
   // 사업유형 로드
-  useState(() => {
+  // 올바른 코드
+  useEffect(() => {
     api.get("/api/timeline/project-types")
-      .then((res) => setProjectTypes(res.data.types || []))
-      .catch(() => {});
+        .then((res) => setProjectTypes(res.data.types || []))
+        .catch(() => {});
   }, []);
 
   // ─── AI 자동 추천 ───
