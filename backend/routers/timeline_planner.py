@@ -1,14 +1,13 @@
 """
 사업 타임라인 생성기 (Project Timeline Planner)
-- GPT 자동 일정 추천
-- 단계별 세부 업무 자동 생성 (법령 챗봇 연동)
-- 수동 일정 입력
+- 4단계 구조: 계획 → 계약 → 시행 → 완료
+- 단계별 세부 업무 자동 생성 (법령 챗봇 선택적 연동)
 - 다중 포맷 내보내기 (PNG, XLSX, PPTX)
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 import json
 import io
@@ -34,23 +33,23 @@ class TimelineTask(BaseModel):
     end_month: int = Field(..., ge=1, le=12)
     start_year: int = Field(...)
     end_year: int = Field(...)
-    category: Optional[str] = Field(None, description="준비/시행/마무리")
+    category: Optional[str] = Field(None, description="계획/계약/시행/완료")
     is_milestone: bool = Field(False)
 
 
 class TimelineData(BaseModel):
-    title: str = Field(..., description="사업명")
-    tasks: list[TimelineTask] = Field(..., description="일정 목록")
-    base_year: int = Field(..., description="기준 연도")
+    title: str = Field(...)
+    tasks: list[TimelineTask] = Field(...)
+    base_year: int = Field(...)
 
 
 class AutoSuggestRequest(BaseModel):
-    project_name: str = Field(..., description="사업명")
-    project_description: Optional[str] = Field(None, description="사업 설명")
-    budget: Optional[str] = Field(None, description="예산 규모")
-    deadline: Optional[str] = Field(None, description="완료 목표 시기")
-    project_type: Optional[str] = Field(None, description="사업 유형")
-    contract_type: Optional[str] = Field(None, description="계약 방식")
+    project_name: str = Field(...)
+    project_description: Optional[str] = Field(None)
+    budget: Optional[str] = Field(None)
+    deadline: Optional[str] = Field(None)
+    project_type: Optional[str] = Field(None)
+    contract_type: Optional[str] = Field(None)
 
 
 class ExportRequest(BaseModel):
@@ -59,9 +58,9 @@ class ExportRequest(BaseModel):
 
 
 class DetailTasksRequest(BaseModel):
-    task_name: str = Field(..., description="단계명")
-    task_category: str = Field(..., description="카테고리 (준비/시행/마무리)")
-    project_name: str = Field(..., description="사업명")
+    task_name: str = Field(...)
+    task_category: str = Field(..., description="계획/계약/시행/완료")
+    project_name: str = Field(...)
     project_type: Optional[str] = Field(None)
     contract_type: Optional[str] = Field(None)
     budget: Optional[str] = Field(None)
@@ -71,6 +70,13 @@ class DetailTasksRequest(BaseModel):
 # ──────────────────────────────────────────────
 # 상수
 # ──────────────────────────────────────────────
+
+CATEGORIES = [
+    {"value": "계획", "label": "계획", "color": "#7F77DD", "description": "기본계획 수립, 사전 심의/검토"},
+    {"value": "계약", "label": "계약", "color": "#3B8BD4", "description": "입찰, 평가, 계약체결"},
+    {"value": "시행", "label": "시행", "color": "#1D9E75", "description": "실제 사업 수행"},
+    {"value": "완료", "label": "완료", "color": "#D85A30", "description": "준공검사, 정산, 하자보증"},
+]
 
 PROJECT_TYPES = [
     {"value": "construction", "label": "건설/토목 공사", "icon": "🏗️"},
@@ -95,57 +101,7 @@ CONTRACT_TYPES = [
 ]
 
 
-# ──────────────────────────────────────────────
-# GPT 자동 일정 추천
-# ──────────────────────────────────────────────
-
-SUGGEST_SYSTEM_PROMPT = """당신은 한국 지방자치단체의 사업 일정 전문가입니다.
-사용자가 입력한 사업 정보를 바탕으로 현실적인 추진 일정을 추천해야 합니다.
-
-규칙:
-1. 일정은 반드시 JSON 배열로 반환
-2. 각 단계에는 name, start_month, end_month, start_year, end_year, category 포함
-3. category는 "준비", "시행", "마무리" 중 하나
-4. 실제 지자체 행정 절차를 반영 (예산편성, 입찰, 계약 등)
-5. 상하반기 인사이동(1월, 7월)에 주요 일정 시작 배치 지양
-6. 연말(11~12월) 결산/정산 기간 고려
-7. 단계별 최소 소요기간 준수:
-   - 기본계획 수립: 1~2개월
-   - 설계/용역: 2~4개월
-   - 입찰/계약: 1~2개월
-   - 시공/집행: 사업 규모에 따라 3~12개월
-   - 준공/완료/정산: 1~2개월
-8. is_milestone은 항상 false로 설정하세요. 모든 단계는 기간이 있는 바(bar) 형태로 표시됩니다.
-9. 현실적이고 보수적인 일정 산출 (여유 기간 포함)
-10. 사용자가 완료 목표 시기를 지정한 경우, 반드시 해당 시기 이내에 모든 일정을 완료해야 합니다. 목표 시기를 초과하는 일정은 절대 불가합니다. 기간이 부족하면 각 단계를 압축하세요.
-11. 사업 설명에 포함된 기술, 장비, 방법론 등을 일정 단계명과 summary에 반영하세요.
-12. 계약 방식이 지정된 경우, 해당 계약 절차에 맞는 단계를 반영하세요:
-    - 수의계약: 견적 징구 → 계약체결 (간소화)
-    - 소액수의계약: 견적비교 → 계약체결
-    - 제한경쟁(적격심사): 설계서 작성 → 입찰공고 → 적격심사 → 낙찰자결정 → 계약
-    - 제한경쟁(협상): 제안요청서 → 제안서접수 → 기술평가 → 가격협상 → 계약
-    - 일반경쟁입찰: 설계서 작성 → 입찰공고 → 개찰 → 낙찰자결정 → 계약
-    - 긴급계약: 긴급사유서 → 수의계약 체결
-
-반드시 아래 JSON 형식만 반환하세요 (다른 텍스트 없이):
-{
-  "tasks": [
-    {
-      "name": "단계명",
-      "start_month": 3,
-      "end_month": 4,
-      "start_year": 2026,
-      "end_year": 2026,
-      "category": "준비",
-      "is_milestone": false
-    }
-  ],
-  "summary": "일정 산출 근거 요약 (2~3문장, 사업 설명 및 계약 방식 반영)"
-}"""
-
-
-def _clean_json_response(text: str) -> str:
-    """GPT 응답에서 JSON 부분만 추출"""
+def _clean_json(text: str) -> str:
     clean = text.strip()
     if clean.startswith("```"):
         clean = clean.split("\n", 1)[1] if "\n" in clean else clean
@@ -154,68 +110,100 @@ def _clean_json_response(text: str) -> str:
     return clean.strip()
 
 
-def _get_type_label(value: str) -> str:
-    return next((t["label"] for t in PROJECT_TYPES if t["value"] == value), value)
+def _type_label(v):
+    return next((t["label"] for t in PROJECT_TYPES if t["value"] == v), v) if v else ""
 
 
-def _get_contract_label(value: str) -> str:
-    return next((c["label"] for c in CONTRACT_TYPES if c["value"] == value), value)
+def _contract_label(v):
+    return next((c["label"] for c in CONTRACT_TYPES if c["value"] == v), v) if v else ""
+
+
+# ──────────────────────────────────────────────
+# GPT 자동 일정 추천
+# ──────────────────────────────────────────────
+
+SUGGEST_PROMPT = """당신은 한국 지방자치단체의 사업 일정 전문가입니다.
+
+사업 일정을 4단계로 구분하여 추천하세요:
+- "계획": 기본계획 수립, 사전 심의/검토, 일상감사, 예산확보 등
+- "계약": 설계서/과업지시서 작성, 입찰공고, 제안평가, 계약체결 등
+- "시행": 실제 사업 수행 (공사, 개발, 용역수행 등)
+- "완료": 준공검사/검수, 대가지급, 정산, 하자보증 등
+
+규칙:
+1. category는 반드시 "계획", "계약", "시행", "완료" 중 하나
+2. is_milestone은 항상 false
+3. 사용자가 완료 목표 시기를 지정한 경우, 반드시 해당 시기 이내에 모든 일정 완료. 초과 불가. 부족하면 압축.
+4. 사업 설명의 기술/방법론을 단계명과 summary에 반영
+5. 계약 방식이 지정된 경우 해당 절차 반영:
+   - 수의계약: 견적 징구 → 계약체결 (간소)
+   - 소액수의계약: 견적비교 → 계약체결
+   - 제한경쟁(적격심사): 설계서 → 입찰공고 → 적격심사 → 낙찰 → 계약
+   - 제한경쟁(협상): 제안요청서 → 제안서접수 → 기술평가 → 협상 → 계약
+   - 일반경쟁입찰: 설계서 → 입찰공고 → 개찰 → 낙찰 → 계약
+   - 긴급계약: 긴급사유서 → 수의계약
+6. 상하반기 인사이동(1월, 7월) 주요 일정 시작 지양
+7. 연말(11~12월) 결산/정산 기간 고려
+8. 현실적이고 보수적인 일정 산출
+
+반드시 아래 JSON만 반환 (다른 텍스트 없이):
+{
+  "tasks": [
+    {"name": "단계명", "start_month": 3, "end_month": 4, "start_year": 2026, "end_year": 2026, "category": "계획", "is_milestone": false}
+  ],
+  "summary": "일정 산출 근거 요약 (2~3문장)"
+}"""
 
 
 @router.post("/suggest")
 async def suggest_timeline(request: AutoSuggestRequest):
-    """GPT 기반 자동 일정 추천"""
     try:
-        openai_service = OpenAIService()
-
-        user_parts = [f"사업명: {request.project_name}"]
+        svc = OpenAIService()
+        parts = [f"사업명: {request.project_name}"]
         if request.project_description:
-            user_parts.append(f"사업 설명: {request.project_description}")
+            parts.append(f"사업 설명: {request.project_description}")
         if request.budget:
-            user_parts.append(f"예산 규모: {request.budget}")
+            parts.append(f"예산 규모: {request.budget}")
         if request.deadline:
-            user_parts.append(f"완료 목표: {request.deadline}")
+            parts.append(f"완료 목표: {request.deadline}")
         if request.project_type:
-            user_parts.append(f"사업 유형: {_get_type_label(request.project_type)}")
+            parts.append(f"사업 유형: {_type_label(request.project_type)}")
         if request.contract_type:
-            user_parts.append(f"계약 방식: {_get_contract_label(request.contract_type)}")
+            parts.append(f"계약 방식: {_contract_label(request.contract_type)}")
 
-        current_year = datetime.now().year
-        user_parts.append(f"현재 시점: {current_year}년 {datetime.now().month}월")
-        user_parts.append("위 사업의 현실적인 추진 일정을 추천해 주세요.")
+        now = datetime.now()
+        parts.append(f"현재 시점: {now.year}년 {now.month}월")
+        parts.append("위 사업의 현실적인 추진 일정을 추천해 주세요.")
 
-        user_prompt = "\n".join(user_parts)
-
-        result_text = await openai_service.generate_text(
-            prompt=f"{SUGGEST_SYSTEM_PROMPT}\n\n{user_prompt}",
-            max_tokens=2000,
-            temperature=0.7
+        result_text = await svc.generate_text(
+            prompt=f"{SUGGEST_PROMPT}\n\n" + "\n".join(parts),
+            max_tokens=2000, temperature=0.7
         )
+        result = json.loads(_clean_json(result_text))
 
-        result = json.loads(_clean_json_response(result_text))
-
-        tasks = result.get("tasks", [])
-        validated_tasks = []
-        for t in tasks:
-            validated_tasks.append({
+        valid_categories = {"계획", "계약", "시행", "완료"}
+        validated = []
+        for t in result.get("tasks", []):
+            cat = t.get("category", "시행")
+            if cat not in valid_categories:
+                cat = "시행"
+            validated.append({
                 "name": t.get("name", "미정"),
                 "start_month": max(1, min(12, t.get("start_month", 1))),
                 "end_month": max(1, min(12, t.get("end_month", 1))),
-                "start_year": t.get("start_year", current_year),
-                "end_year": t.get("end_year", current_year),
-                "category": t.get("category", "시행"),
+                "start_year": t.get("start_year", now.year),
+                "end_year": t.get("end_year", now.year),
+                "category": cat,
                 "is_milestone": False,
             })
 
         return {
             "success": True,
-            "tasks": validated_tasks,
+            "tasks": validated,
             "summary": result.get("summary", ""),
             "project_name": request.project_name,
         }
-
-    except json.JSONDecodeError as e:
-        logger.error(f"GPT 응답 JSON 파싱 실패: {e}")
+    except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="AI 응답을 파싱할 수 없습니다.")
     except Exception as e:
         logger.error(f"일정 추천 실패: {e}")
@@ -223,144 +211,184 @@ async def suggest_timeline(request: AutoSuggestRequest):
 
 
 # ──────────────────────────────────────────────
-# 단계별 세부 업무 생성 (법령 챗봇 연동)
+# 단계별 세부 업무 생성
 # ──────────────────────────────────────────────
 
-DETAIL_TASKS_PROMPT = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
-주어진 사업의 특정 단계에 대해 세부 업무(TODO) 목록을 생성해야 합니다.
+# 계획/계약 단계: 법령 챗봇 + GPT
+DETAIL_PROMPT_WITH_LAW = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
+주어진 단계의 세부 업무(TODO) 목록을 생성하세요.
 
 규칙:
-1. 해당 단계에서 실제로 수행해야 하는 구체적인 업무를 나열하세요.
-2. 각 업무에는 법적 근거가 있으면 반드시 포함하세요.
-3. 예산 규모에 따른 법정 의무사항(감리, 심의, 검토 등)을 반드시 반영하세요.
-4. 계약 방식에 따른 세부 절차를 반영하세요.
-5. 사업 유형별 특수 절차를 반영하세요:
-   - 정보화사업: 보안성검토, SW과업심의, 정보화사전협의, SW사업감리 등
-   - 건설공사: 설계심의, 안전관리계획, 환경영향평가, 건설사업관리 등
-   - 용역사업: 과업지시서 작성, 중간보고, 최종보고, 성과심의 등
-   - 행사/축제: 안전관리계획, 도로점용허가, 소음신고 등
-6. 준비 단계: 사전 행정절차, 심의, 검토, 일상감사 등
-7. 시행 단계: 실제 작업을 세부 공정으로 분해
-   - 공사: 세부 공종별 분해 (가설공사, 토공, 포장, 마감 등)
-   - 시스템구축: 분석, 설계, 개발, 테스트, 이행 등
-   - 용역: 착수, 중간점검, 성과물 작성 등
-8. 마무리 단계: 검수, 준공검사, 정산, 하자보증 등
+1. 해당 단계에서 실제 수행할 구체적 업무 나열
+2. 법적 근거가 있으면 반드시 포함
+3. 예산 규모에 따른 법정 의무사항 반영 (감리, 심의 기준금액 등)
+4. 계약 방식에 따른 절차 반영
+5. 사업 유형별 특수 절차:
+   - 정보화: 보안성검토, SW과업심의, 정보화사전협의, SW감리 등
+   - 건설: 설계심의, 안전관리계획, 환경영향평가, 건설사업관리 등
+   - 용역: 과업지시서, 중간보고, 성과심의 등
+   - 행사: 안전관리계획, 도로점용허가 등
+6. 아래 법령 검색 결과가 있으면 참고하여 정확한 근거 포함
 
-아래에 법령 검색 결과가 제공되면 이를 참고하여 정확한 법적 근거를 포함하세요.
-
-반드시 아래 JSON 형식만 반환하세요 (다른 텍스트 없이):
+반드시 아래 JSON만 반환:
 {
   "detail_tasks": [
-    {
-      "order": 1,
-      "task": "세부 업무명",
-      "description": "구체적인 설명 (1~2문장)",
-      "legal_basis": "근거 법령 (없으면 null)",
-      "required": true,
-      "note": "참고사항 (없으면 null)"
-    }
+    {"order": 1, "task": "업무명", "description": "설명", "legal_basis": "근거법령 또는 null", "required": true, "note": "참고사항 또는 null"}
+  ]
+}"""
+
+# 시행 단계: GPT만 (법령 불필요)
+DETAIL_PROMPT_EXECUTE = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
+사업의 시행 단계에서 실제 수행할 세부 작업을 구체적으로 분해하세요.
+
+규칙:
+1. 사업 내용을 바탕으로 실제 작업 공정을 세부적으로 나눠주세요
+2. 공사: 가설공사, 토공, 기초, 골조, 포장, 마감 등 공종별 분해
+3. 시스템구축: 요구분석, 설계, 개발, 단위테스트, 통합테스트, 데이터이관, 시범운영 등
+4. 용역: 착수보고, 현황조사, 분석, 중간보고, 성과물작성, 최종보고 등
+5. 행사/축제: 기획, 섭외, 홍보, 시설설치, 리허설, 본행사, 철거 등
+6. 각 작업에 대한 구체적 설명 포함
+7. 법적 근거는 불필요 (legal_basis는 null)
+
+반드시 아래 JSON만 반환:
+{
+  "detail_tasks": [
+    {"order": 1, "task": "작업명", "description": "구체적 설명", "legal_basis": null, "required": true, "note": "참고사항 또는 null"}
+  ]
+}"""
+
+# 완료 단계: 법령 + GPT 혼합
+DETAIL_PROMPT_COMPLETE = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
+사업 완료 단계의 세부 업무를 생성하세요.
+
+규칙:
+1. 법정 필수 절차를 먼저 나열 (준공검사, 대가지급, 정산, 하자보증 등)
+2. 법적 근거가 있는 항목은 반드시 근거 포함
+3. 사업 유형별 마무리 업무도 포함:
+   - 정보화: 데이터 이관, 운영 인수인계, 교육, 유지보수 계약
+   - 건설: 준공도서 작성, 시설물 등록, 관리 이관
+   - 용역: 최종보고회, 성과물 납품, 성과심의
+   - 행사: 정산, 결과보고서, 성과분석
+4. 아래 법령 검색 결과가 있으면 참고
+
+반드시 아래 JSON만 반환:
+{
+  "detail_tasks": [
+    {"order": 1, "task": "업무명", "description": "설명", "legal_basis": "근거법령 또는 null", "required": true, "note": "참고사항 또는 null"}
   ]
 }"""
 
 
 async def _query_law_chatbot(question: str) -> str:
-    """법령 챗봇 API 내부 호출"""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
+            resp = await client.post(
                 f"{INTERNAL_BASE_URL}/api/law-chatbot/ask",
-                json={
-                    "question": question,
-                    "search_scope": "all"
-                }
+                json={"question": question, "search_scope": "all"}
             )
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("answer", "")
-            else:
-                logger.warning(f"법령 챗봇 호출 실패: {response.status_code}")
-                return ""
+            if resp.status_code == 200:
+                return resp.json().get("answer", "")
     except Exception as e:
-        logger.warning(f"법령 챗봇 연동 실패 (GPT 자체 지식 활용): {e}")
-        return ""
+        logger.warning(f"법령 챗봇 연동 실패: {e}")
+    return ""
 
 
 @router.post("/detail-tasks")
 async def generate_detail_tasks(request: DetailTasksRequest):
-    """단계별 세부 업무 자동 생성 (법령 챗봇 연동)"""
     try:
-        openai_service = OpenAIService()
+        svc = OpenAIService()
+        tl = _type_label(request.project_type)
+        cl = _contract_label(request.contract_type)
+        cat = request.task_category
 
-        type_label = _get_type_label(request.project_type) if request.project_type else ""
-        contract_label = _get_contract_label(request.contract_type) if request.contract_type else ""
-
-        # 법령 챗봇 질의 구성
-        law_queries = []
-
-        if request.task_category == "준비":
-            if type_label:
-                law_queries.append(f"{type_label} 사업 사전 행정절차 필수사항 (심의, 검토, 협의)")
-            if request.budget:
-                law_queries.append(f"{type_label} 사업 예산 {request.budget} 규모 법정 필수 절차 (감리, 심의 기준금액)")
-            law_queries.append("지방자치단체 사업 일상감사 대상 기준")
-
-        elif request.task_category == "시행":
-            if contract_label:
-                law_queries.append(f"{contract_label} 계약 세부 절차와 법적 근거")
-            if type_label:
-                law_queries.append(f"{type_label} 사업 시행 단계 법정 의무사항")
-
-        elif request.task_category == "마무리":
-            if type_label:
-                law_queries.append(f"{type_label} 사업 완료 후 필수 절차 (준공검사, 정산, 하자보증)")
-
-        # 법령 챗봇 호출
-        law_results = []
-        for query in law_queries:
-            result = await _query_law_chatbot(query)
-            if result:
-                law_results.append(result)
-
+        # ── 단계별 프롬프트 & 법령 연동 분기 ──
         law_context = ""
-        if law_results:
-            law_context = "\n\n[법령 검색 결과 참고]\n" + "\n---\n".join(law_results)
 
-        # GPT 프롬프트 구성
+        if cat == "계획":
+            # 법령 챗봇 연동
+            queries = []
+            if tl:
+                queries.append(f"{tl} 사업 사전 행정절차 필수사항 (심의, 검토, 협의)")
+            if request.budget:
+                queries.append(f"{tl} 사업 예산 {request.budget} 규모 법정 필수 절차 (감리, 심의 기준금액)")
+            queries.append("지방자치단체 사업 일상감사 대상 기준")
+
+            for q in queries:
+                r = await _query_law_chatbot(q)
+                if r:
+                    law_context += f"\n---\n{r}"
+
+            base_prompt = DETAIL_PROMPT_WITH_LAW
+
+        elif cat == "계약":
+            # 법령 챗봇 연동
+            queries = []
+            if cl:
+                queries.append(f"{cl} 계약 세부 절차와 법적 근거")
+            if tl:
+                queries.append(f"{tl} 사업 계약 시 법정 의무사항")
+
+            for q in queries:
+                r = await _query_law_chatbot(q)
+                if r:
+                    law_context += f"\n---\n{r}"
+
+            base_prompt = DETAIL_PROMPT_WITH_LAW
+
+        elif cat == "시행":
+            # GPT만 (법령 불필요)
+            base_prompt = DETAIL_PROMPT_EXECUTE
+
+        elif cat == "완료":
+            # 법령 + GPT 혼합
+            queries = []
+            if tl:
+                queries.append(f"{tl} 사업 완료 후 필수 절차 (준공검사, 정산, 하자보증)")
+            queries.append("지방자치단체 계약 하자보증 기간 기준")
+
+            for q in queries:
+                r = await _query_law_chatbot(q)
+                if r:
+                    law_context += f"\n---\n{r}"
+
+            base_prompt = DETAIL_PROMPT_COMPLETE
+
+        else:
+            base_prompt = DETAIL_PROMPT_WITH_LAW
+
+        # 사용자 프롬프트 구성
         user_parts = [
             f"사업명: {request.project_name}",
-            f"현재 단계: {request.task_name} ({request.task_category})",
+            f"현재 단계: {request.task_name} ({cat})",
         ]
-        if type_label:
-            user_parts.append(f"사업 유형: {type_label}")
-        if contract_label:
-            user_parts.append(f"계약 방식: {contract_label}")
+        if tl:
+            user_parts.append(f"사업 유형: {tl}")
+        if cl:
+            user_parts.append(f"계약 방식: {cl}")
         if request.budget:
             user_parts.append(f"예산 규모: {request.budget}")
         if request.project_description:
             user_parts.append(f"사업 설명: {request.project_description}")
+        user_parts.append("\n위 단계의 세부 업무 목록을 생성해 주세요.")
 
-        user_parts.append("\n위 단계에서 수행해야 할 세부 업무 목록을 생성해 주세요.")
+        if law_context:
+            full_prompt = f"{base_prompt}\n\n[법령 검색 결과 참고]{law_context}\n\n" + "\n".join(user_parts)
+        else:
+            full_prompt = f"{base_prompt}\n\n" + "\n".join(user_parts)
 
-        user_prompt = "\n".join(user_parts)
-        full_prompt = f"{DETAIL_TASKS_PROMPT}{law_context}\n\n{user_prompt}"
-
-        result_text = await openai_service.generate_text(
-            prompt=full_prompt,
-            max_tokens=2000,
-            temperature=0.5
+        result_text = await svc.generate_text(
+            prompt=full_prompt, max_tokens=2000, temperature=0.5
         )
-
-        result = json.loads(_clean_json_response(result_text))
+        result = json.loads(_clean_json(result_text))
 
         return {
             "success": True,
             "task_name": request.task_name,
+            "task_category": cat,
             "detail_tasks": result.get("detail_tasks", []),
-            "law_referenced": len(law_results) > 0,
+            "law_referenced": bool(law_context),
         }
-
-    except json.JSONDecodeError as e:
-        logger.error(f"세부 업무 JSON 파싱 실패: {e}")
+    except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="AI 응답을 파싱할 수 없습니다.")
     except Exception as e:
         logger.error(f"세부 업무 생성 실패: {e}")
@@ -375,14 +403,17 @@ async def generate_detail_tasks(request: DetailTasksRequest):
 async def get_project_types():
     return {"types": PROJECT_TYPES}
 
-
 @router.get("/contract-types")
 async def get_contract_types():
     return {"types": CONTRACT_TYPES}
 
+@router.get("/categories")
+async def get_categories():
+    return {"categories": CATEGORIES}
+
 
 # ──────────────────────────────────────────────
-# PNG 내보내기
+# PNG
 # ──────────────────────────────────────────────
 
 def _generate_png(timeline: TimelineData) -> bytes:
@@ -392,13 +423,8 @@ def _generate_png(timeline: TimelineData) -> bytes:
     tasks = timeline.tasks
     title = timeline.title
 
-    LEFT_LABEL_W = 280
-    MONTH_COL_W = 100
-    ROW_H = 56
-    HEADER_H = 70
-    TITLE_H = 50
-    LEGEND_H = 50
-    PADDING = 24
+    LEFT_LABEL_W = 280; MONTH_COL_W = 100; ROW_H = 56
+    HEADER_H = 70; TITLE_H = 50; LEGEND_H = 50; PADDING = 24
 
     all_months = []
     for t in tasks:
@@ -407,10 +433,8 @@ def _generate_png(timeline: TimelineData) -> bytes:
             em = t.end_month if y == t.end_year else 12
             for m in range(sm, em + 1):
                 all_months.append((y, m))
-
     if not all_months:
         all_months = [(timeline.base_year, m) for m in range(1, 13)]
-
     all_months = sorted(set(all_months))
     num_months = len(all_months)
     month_index = {ym: i for i, ym in enumerate(all_months)}
@@ -438,257 +462,173 @@ def _generate_png(timeline: TimelineData) -> bytes:
             except Exception:
                 continue
     if font is None:
-        font = ImageFont.load_default()
-        font_bold = font
-        font_small = font
+        font = ImageFont.load_default(); font_bold = font; font_small = font
 
-    CATEGORY_COLORS = {
-        "준비": {"fill": (238, 237, 254), "bar": (127, 119, 221), "text": (60, 52, 137)},
+    CAT_COLORS = {
+        "계획": {"fill": (238, 237, 254), "bar": (127, 119, 221), "text": (60, 52, 137)},
+        "계약": {"fill": (230, 241, 251), "bar": (59, 139, 212), "text": (12, 68, 124)},
         "시행": {"fill": (225, 245, 238), "bar": (29, 158, 117), "text": (8, 80, 65)},
-        "마무리": {"fill": (250, 236, 231), "bar": (216, 90, 48), "text": (113, 43, 19)},
+        "완료": {"fill": (250, 236, 231), "bar": (216, 90, 48), "text": (113, 43, 19)},
     }
-    DEFAULT_COLOR = {"fill": (230, 241, 251), "bar": (55, 138, 221), "text": (12, 68, 124)}
+    DEF_COLOR = {"fill": (240, 240, 240), "bar": (150, 150, 150), "text": (80, 80, 80)}
 
     bbox = draw.textbbox((0, 0), title, font=font_bold)
-    tw = bbox[2] - bbox[0]
-    draw.text(((TOTAL_W - tw) / 2, 16), title, fill=(44, 44, 42), font=font_bold)
+    draw.text(((TOTAL_W - (bbox[2] - bbox[0])) / 2, 16), title, fill=(44, 44, 42), font=font_bold)
 
     chart_x = PADDING + LEFT_LABEL_W
     header_y = TITLE_H
-
     for i, (year, month) in enumerate(all_months):
         x = chart_x + i * MONTH_COL_W
-        label = f"{month}월"
-        if month == 1 or i == 0:
-            label = f"{year}년 {month}월"
+        label = f"{year}년 {month}월" if (month == 1 or i == 0) else f"{month}월"
         draw.rectangle([x, header_y, x + MONTH_COL_W, header_y + 30], fill=(241, 239, 232))
         draw.rectangle([x, header_y, x + MONTH_COL_W, header_y + 30], outline=(211, 209, 199))
         bbox = draw.textbbox((0, 0), label, font=font_small)
-        mw = bbox[2] - bbox[0]
-        draw.text((x + (MONTH_COL_W - mw) / 2, header_y + 8), label, fill=(68, 68, 65), font=font_small)
+        draw.text((x + (MONTH_COL_W - (bbox[2] - bbox[0])) / 2, header_y + 8), label, fill=(68, 68, 65), font=font_small)
 
     row_top = header_y + 30
     for idx, task in enumerate(tasks):
         y = row_top + idx * ROW_H
-        colors = CATEGORY_COLORS.get(task.category, DEFAULT_COLOR)
-
+        colors = CAT_COLORS.get(task.category, DEF_COLOR)
         if idx % 2 == 0:
             draw.rectangle([PADDING, y, TOTAL_W - PADDING, y + ROW_H], fill=(250, 250, 248))
         draw.line([PADDING, y + ROW_H, TOTAL_W - PADDING, y + ROW_H], fill=(230, 228, 222), width=1)
         draw.text((PADDING + 12, y + (ROW_H - 18) / 2), task.name, fill=(44, 44, 42), font=font)
 
-        start_idx = month_index.get((task.start_year, task.start_month), 0)
-        end_idx = month_index.get((task.end_year, task.end_month), num_months - 1)
-        bar_x1 = chart_x + start_idx * MONTH_COL_W + 6
-        bar_x2 = chart_x + (end_idx + 1) * MONTH_COL_W - 6
-        bar_y = y + 14
-        bar_h = ROW_H - 28
-
-        draw.rounded_rectangle([bar_x1, bar_y, bar_x2, bar_y + bar_h], radius=5, fill=colors["fill"], outline=colors["bar"], width=2)
-        months_span = end_idx - start_idx + 1
-        if months_span > 1 and (bar_x2 - bar_x1) > 60:
-            span_text = f"{months_span}개월"
-            bbox = draw.textbbox((0, 0), span_text, font=font_small)
-            stw = bbox[2] - bbox[0]
-            draw.text(((bar_x1 + bar_x2 - stw) / 2, bar_y + 4), span_text, fill=colors["text"], font=font_small)
+        si = month_index.get((task.start_year, task.start_month), 0)
+        ei = month_index.get((task.end_year, task.end_month), num_months - 1)
+        bx1 = chart_x + si * MONTH_COL_W + 6
+        bx2 = chart_x + (ei + 1) * MONTH_COL_W - 6
+        by = y + 14; bh = ROW_H - 28
+        draw.rounded_rectangle([bx1, by, bx2, by + bh], radius=5, fill=colors["fill"], outline=colors["bar"], width=2)
+        span = ei - si + 1
+        if span > 1 and (bx2 - bx1) > 60:
+            st = f"{span}개월"
+            bbox = draw.textbbox((0, 0), st, font=font_small)
+            draw.text(((bx1 + bx2 - (bbox[2] - bbox[0])) / 2, by + 4), st, fill=colors["text"], font=font_small)
 
     for i in range(num_months + 1):
         x = chart_x + i * MONTH_COL_W
         draw.line([x, row_top, x, row_top + len(tasks) * ROW_H], fill=(238, 236, 230), width=1)
 
-    legend_y = row_top + len(tasks) * ROW_H + 16
-    lx = PADDING + 16
-    for cat, colors in CATEGORY_COLORS.items():
-        draw.rounded_rectangle([lx, legend_y + 2, lx + 14, legend_y + 16], radius=3, fill=colors["bar"])
-        draw.text((lx + 20, legend_y), cat, fill=(68, 68, 65), font=font_small)
+    ly = row_top + len(tasks) * ROW_H + 16; lx = PADDING + 16
+    for cat, colors in CAT_COLORS.items():
+        draw.rounded_rectangle([lx, ly + 2, lx + 14, ly + 16], radius=3, fill=colors["bar"])
+        draw.text((lx + 20, ly), cat, fill=(68, 68, 65), font=font_small)
         bbox = draw.textbbox((0, 0), cat, font=font_small)
         lx += 20 + (bbox[2] - bbox[0]) + 28
 
     draw.rectangle([0, 0, TOTAL_W - 1, TOTAL_H - 1], outline=(211, 209, 199), width=1)
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", dpi=(150, 150))
-    return buf.getvalue()
+    buf = io.BytesIO(); img.save(buf, format="PNG", dpi=(150, 150)); return buf.getvalue()
 
 
 # ──────────────────────────────────────────────
-# XLSX 내보내기
+# XLSX
 # ──────────────────────────────────────────────
 
 def _generate_xlsx(timeline: TimelineData) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "사업추진일정"
-
+    wb = Workbook(); ws = wb.active; ws.title = "사업추진일정"
     all_months = []
     for t in timeline.tasks:
         for y in range(t.start_year, t.end_year + 1):
             sm = t.start_month if y == t.start_year else 1
             em = t.end_month if y == t.end_year else 12
-            for m in range(sm, em + 1):
-                all_months.append((y, m))
+            for m in range(sm, em + 1): all_months.append((y, m))
     all_months = sorted(set(all_months))
-    month_index = {ym: i for i, ym in enumerate(all_months)}
+    mi = {ym: i for i, ym in enumerate(all_months)}
 
-    header_font = Font(name="맑은 고딕", size=14, bold=True)
-    col_header_font = Font(name="맑은 고딕", size=10, bold=True, color="FFFFFF")
-    cell_font = Font(name="맑은 고딕", size=10)
-    header_fill = PatternFill(start_color="2D3748", end_color="2D3748", fill_type="solid")
-    thin_border = Border(
-        left=Side(style="thin", color="D1D5DB"), right=Side(style="thin", color="D1D5DB"),
-        top=Side(style="thin", color="D1D5DB"), bottom=Side(style="thin", color="D1D5DB"),
-    )
+    hf = Font(name="맑은 고딕", size=14, bold=True)
+    chf = Font(name="맑은 고딕", size=10, bold=True, color="FFFFFF")
+    cf = Font(name="맑은 고딕", size=10)
+    hfill = PatternFill(start_color="2D3748", end_color="2D3748", fill_type="solid")
+    tb = Border(left=Side(style="thin", color="D1D5DB"), right=Side(style="thin", color="D1D5DB"),
+                top=Side(style="thin", color="D1D5DB"), bottom=Side(style="thin", color="D1D5DB"))
 
-    CATEGORY_FILLS = {
-        "준비": PatternFill(start_color="EEEDFE", end_color="EEEDFE", fill_type="solid"),
+    CF = {
+        "계획": PatternFill(start_color="EEEDFE", end_color="EEEDFE", fill_type="solid"),
+        "계약": PatternFill(start_color="E6F1FB", end_color="E6F1FB", fill_type="solid"),
         "시행": PatternFill(start_color="E1F5EE", end_color="E1F5EE", fill_type="solid"),
-        "마무리": PatternFill(start_color="FAECE7", end_color="FAECE7", fill_type="solid"),
+        "완료": PatternFill(start_color="FAECE7", end_color="FAECE7", fill_type="solid"),
     }
-    default_fill = PatternFill(start_color="E6F1FB", end_color="E6F1FB", fill_type="solid")
+    df = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3 + len(all_months))
-    title_cell = ws.cell(row=1, column=1, value=timeline.title)
-    title_cell.font = header_font
-    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    tc = ws.cell(row=1, column=1, value=timeline.title); tc.font = hf; tc.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 36
 
     headers = ["단계명", "시작", "종료"] + [f"{y}년 {m}월" if m == 1 or i == 0 else f"{m}월" for i, (y, m) in enumerate(all_months)]
-    for col_idx, header in enumerate(headers, 1):
-        cell = ws.cell(row=3, column=col_idx, value=header)
-        cell.font = col_header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = thin_border
-
-    ws.column_dimensions["A"].width = 30
-    ws.column_dimensions["B"].width = 12
-    ws.column_dimensions["C"].width = 12
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=3, column=ci, value=h); c.font = chf; c.fill = hfill; c.alignment = Alignment(horizontal="center", vertical="center"); c.border = tb
+    ws.column_dimensions["A"].width = 30; ws.column_dimensions["B"].width = 12; ws.column_dimensions["C"].width = 12
     for i in range(len(all_months)):
-        col_letter = chr(68 + i) if i < 22 else None
-        if col_letter:
-            ws.column_dimensions[col_letter].width = 6
+        cl = chr(68 + i) if i < 22 else None
+        if cl: ws.column_dimensions[cl].width = 6
 
-    for row_idx, task in enumerate(timeline.tasks, 4):
-        ws.cell(row=row_idx, column=1, value=task.name).font = cell_font
-        ws.cell(row=row_idx, column=1).border = thin_border
-        ws.cell(row=row_idx, column=2, value=f"{task.start_year}.{task.start_month:02d}").font = cell_font
-        ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal="center")
-        ws.cell(row=row_idx, column=2).border = thin_border
-        ws.cell(row=row_idx, column=3, value=f"{task.end_year}.{task.end_month:02d}").font = cell_font
-        ws.cell(row=row_idx, column=3).alignment = Alignment(horizontal="center")
-        ws.cell(row=row_idx, column=3).border = thin_border
-
-        start_idx = month_index.get((task.start_year, task.start_month), 0)
-        end_idx = month_index.get((task.end_year, task.end_month), len(all_months) - 1)
-        fill = CATEGORY_FILLS.get(task.category, default_fill)
+    for ri, task in enumerate(timeline.tasks, 4):
+        ws.cell(row=ri, column=1, value=task.name).font = cf; ws.cell(row=ri, column=1).border = tb
+        ws.cell(row=ri, column=2, value=f"{task.start_year}.{task.start_month:02d}").font = cf
+        ws.cell(row=ri, column=2).alignment = Alignment(horizontal="center"); ws.cell(row=ri, column=2).border = tb
+        ws.cell(row=ri, column=3, value=f"{task.end_year}.{task.end_month:02d}").font = cf
+        ws.cell(row=ri, column=3).alignment = Alignment(horizontal="center"); ws.cell(row=ri, column=3).border = tb
+        si = mi.get((task.start_year, task.start_month), 0)
+        ei = mi.get((task.end_year, task.end_month), len(all_months) - 1)
+        fill = CF.get(task.category, df)
         for i in range(len(all_months)):
-            cell = ws.cell(row=row_idx, column=4 + i)
-            cell.border = thin_border
-            if start_idx <= i <= end_idx:
-                cell.fill = fill
-                cell.value = "■"
-                cell.alignment = Alignment(horizontal="center")
-                cell.font = Font(size=10, color="666666")
+            c = ws.cell(row=ri, column=4 + i); c.border = tb
+            if si <= i <= ei:
+                c.fill = fill; c.value = "■"; c.alignment = Alignment(horizontal="center"); c.font = Font(size=10, color="666666")
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
 
 
 # ──────────────────────────────────────────────
-# PPTX 내보내기
+# PPTX
 # ──────────────────────────────────────────────
 
 def _generate_pptx(timeline: TimelineData) -> bytes:
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-    from pptx.dml.color import RGBColor
-    from pptx.enum.text import PP_ALIGN
+    from pptx import Presentation; from pptx.util import Inches, Pt; from pptx.dml.color import RGBColor; from pptx.enum.text import PP_ALIGN
 
-    prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
+    prs = Presentation(); prs.slide_width = Inches(13.333); prs.slide_height = Inches(7.5)
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.7))
-    p = txBox.text_frame.paragraphs[0]
-    p.text = timeline.title
-    p.font.size = Pt(28)
-    p.font.bold = True
-    p.font.color.rgb = RGBColor(0x2D, 0x37, 0x48)
-    p.alignment = PP_ALIGN.LEFT
-
-    txBox2 = slide.shapes.add_textbox(Inches(0.5), Inches(0.9), Inches(12), Inches(0.4))
-    p2 = txBox2.text_frame.paragraphs[0]
-    p2.text = "사업 추진 일정표"
-    p2.font.size = Pt(14)
-    p2.font.color.rgb = RGBColor(0x71, 0x71, 0x71)
+    tb = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.7))
+    p = tb.text_frame.paragraphs[0]; p.text = timeline.title; p.font.size = Pt(28); p.font.bold = True; p.font.color.rgb = RGBColor(0x2D, 0x37, 0x48); p.alignment = PP_ALIGN.LEFT
+    tb2 = slide.shapes.add_textbox(Inches(0.5), Inches(0.9), Inches(12), Inches(0.4))
+    p2 = tb2.text_frame.paragraphs[0]; p2.text = "사업 추진 일정표"; p2.font.size = Pt(14); p2.font.color.rgb = RGBColor(0x71, 0x71, 0x71)
 
     all_months = []
     for t in timeline.tasks:
         for y in range(t.start_year, t.end_year + 1):
-            sm = t.start_month if y == t.start_year else 1
-            em = t.end_month if y == t.end_year else 12
-            for m in range(sm, em + 1):
-                all_months.append((y, m))
-    all_months = sorted(set(all_months))
-    month_index = {ym: i for i, ym in enumerate(all_months)}
-    num_months = len(all_months)
+            sm = t.start_month if y == t.start_year else 1; em = t.end_month if y == t.end_year else 12
+            for m in range(sm, em + 1): all_months.append((y, m))
+    all_months = sorted(set(all_months)); mi = {ym: i for i, ym in enumerate(all_months)}; nm = len(all_months)
 
-    LEFT = Inches(0.5)
-    TOP = Inches(1.6)
-    LABEL_W = Inches(2.8)
-    CHART_W = Inches(9.5)
-    ROW_H = Inches(0.45)
-    MONTH_W = CHART_W / num_months if num_months > 0 else Inches(1)
+    LEFT = Inches(0.5); TOP = Inches(1.6); LW = Inches(2.8); CW = Inches(9.5); RH = Inches(0.45)
+    MW = CW / nm if nm > 0 else Inches(1)
 
-    CATEGORY_COLORS = {
-        "준비": RGBColor(0x7F, 0x77, 0xDD),
-        "시행": RGBColor(0x1D, 0x9E, 0x75),
-        "마무리": RGBColor(0xD8, 0x5A, 0x30),
-    }
+    CC = {"계획": RGBColor(0x7F, 0x77, 0xDD), "계약": RGBColor(0x3B, 0x8B, 0xD4), "시행": RGBColor(0x1D, 0x9E, 0x75), "완료": RGBColor(0xD8, 0x5A, 0x30)}
 
-    for i, (year, month) in enumerate(all_months):
-        x = LEFT + LABEL_W + int(MONTH_W * i)
-        label = f"'{str(year)[2:]}.{month}월" if (month == 1 or i == 0) else f"{month}월"
-        hb = slide.shapes.add_textbox(x, TOP - Inches(0.35), int(MONTH_W), Inches(0.3))
-        hp = hb.text_frame.paragraphs[0]
-        hp.text = label
-        hp.font.size = Pt(9)
-        hp.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-        hp.alignment = PP_ALIGN.CENTER
+    for i, (yr, mo) in enumerate(all_months):
+        x = LEFT + LW + int(MW * i)
+        lb = f"'{str(yr)[2:]}.{mo}월" if (mo == 1 or i == 0) else f"{mo}월"
+        hb = slide.shapes.add_textbox(x, TOP - Inches(0.35), int(MW), Inches(0.3))
+        hp = hb.text_frame.paragraphs[0]; hp.text = lb; hp.font.size = Pt(9); hp.font.color.rgb = RGBColor(0x55, 0x55, 0x55); hp.alignment = PP_ALIGN.CENTER
 
     for idx, task in enumerate(timeline.tasks):
-        y = TOP + int(ROW_H * idx)
-        lb = slide.shapes.add_textbox(LEFT, y, LABEL_W, ROW_H)
-        lb.text_frame.word_wrap = True
-        lp = lb.text_frame.paragraphs[0]
-        lp.text = task.name
-        lp.font.size = Pt(11)
-        lp.font.color.rgb = RGBColor(0x2D, 0x37, 0x48)
-
-        si = month_index.get((task.start_year, task.start_month), 0)
-        ei = month_index.get((task.end_year, task.end_month), num_months - 1)
-        bx = LEFT + LABEL_W + int(MONTH_W * si) + Inches(0.05)
-        bw = int(MONTH_W * (ei - si + 1)) - Inches(0.1)
-        by = y + Inches(0.08)
-        bh = ROW_H - Inches(0.16)
-
+        y = TOP + int(RH * idx)
+        lb = slide.shapes.add_textbox(LEFT, y, LW, RH); lb.text_frame.word_wrap = True
+        lp = lb.text_frame.paragraphs[0]; lp.text = task.name; lp.font.size = Pt(11); lp.font.color.rgb = RGBColor(0x2D, 0x37, 0x48)
+        si = mi.get((task.start_year, task.start_month), 0); ei = mi.get((task.end_year, task.end_month), nm - 1)
+        bx = LEFT + LW + int(MW * si) + Inches(0.05); bw = int(MW * (ei - si + 1)) - Inches(0.1)
+        by = y + Inches(0.08); bh = RH - Inches(0.16)
         shape = slide.shapes.add_shape(1, int(bx), int(by), int(bw), int(bh))
-        shape.fill.solid()
-        shape.fill.fore_color.rgb = CATEGORY_COLORS.get(task.category, RGBColor(0x37, 0x8A, 0xDD))
-        shape.line.fill.background()
-        shape.text_frame.paragraphs[0].text = f"{ei - si + 1}개월"
-        shape.text_frame.paragraphs[0].font.size = Pt(8)
-        shape.text_frame.paragraphs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        shape.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+        shape.fill.solid(); shape.fill.fore_color.rgb = CC.get(task.category, RGBColor(0x99, 0x99, 0x99)); shape.line.fill.background()
+        shape.text_frame.paragraphs[0].text = f"{ei - si + 1}개월"; shape.text_frame.paragraphs[0].font.size = Pt(8)
+        shape.text_frame.paragraphs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF); shape.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
 
-    buf = io.BytesIO()
-    prs.save(buf)
-    return buf.getvalue()
+    buf = io.BytesIO(); prs.save(buf); return buf.getvalue()
 
 
 # ──────────────────────────────────────────────
@@ -698,49 +638,20 @@ def _generate_pptx(timeline: TimelineData) -> bytes:
 @router.post("/export")
 async def export_timeline(request: ExportRequest):
     try:
-        if request.format == "png":
-            data = _generate_png(request.timeline)
-            filename = f"{request.timeline.title}_일정표.png"
-            mime = "image/png"
-        elif request.format == "xlsx":
-            data = _generate_xlsx(request.timeline)
-            filename = f"{request.timeline.title}_일정표.xlsx"
-            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        elif request.format == "pptx":
-            data = _generate_pptx(request.timeline)
-            filename = f"{request.timeline.title}_일정표.pptx"
-            mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        fmt = request.format
+        if fmt == "png":
+            data = _generate_png(request.timeline); fn = f"{request.timeline.title}_일정표.png"; mime = "image/png"
+        elif fmt == "xlsx":
+            data = _generate_xlsx(request.timeline); fn = f"{request.timeline.title}_일정표.xlsx"; mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        elif fmt == "pptx":
+            data = _generate_pptx(request.timeline); fn = f"{request.timeline.title}_일정표.pptx"; mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         else:
-            raise HTTPException(status_code=400, detail="지원하지 않는 형식입니다.")
-
-        return {
-            "success": True,
-            "data": base64.b64encode(data).decode("utf-8"),
-            "filename": filename,
-            "mime_type": mime,
-            "format": request.format,
-        }
+            raise HTTPException(status_code=400, detail="지원하지 않는 형식")
+        return {"success": True, "data": base64.b64encode(data).decode("utf-8"), "filename": fn, "mime_type": mime, "format": fmt}
     except Exception as e:
-        logger.error(f"내보내기 실패: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"내보내기 실패: {e}"); raise HTTPException(status_code=500, detail=str(e))
 
-
-# ──────────────────────────────────────────────
-# 헬스체크
-# ──────────────────────────────────────────────
 
 @router.get("/status")
 async def timeline_status():
-    return {
-        "status": "ok",
-        "features": {
-            "auto_suggest": True,
-            "detail_tasks": True,
-            "law_chatbot_integration": True,
-            "export_png": True,
-            "export_xlsx": True,
-            "export_pptx": True,
-        },
-        "project_types": len(PROJECT_TYPES),
-        "contract_types": len(CONTRACT_TYPES),
-    }
+    return {"status": "ok", "features": {"auto_suggest": True, "detail_tasks": True, "law_chatbot_integration": True, "export_png": True, "export_xlsx": True, "export_pptx": True}, "project_types": len(PROJECT_TYPES), "contract_types": len(CONTRACT_TYPES), "categories": len(CATEGORIES)}
