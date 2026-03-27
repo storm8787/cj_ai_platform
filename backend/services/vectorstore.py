@@ -9,21 +9,35 @@ from config import settings
 # 지연 로딩을 위한 전역 변수
 _faiss_index = None
 _embedding_model = None
+_press_release_embedding_model = None  # ✅ 보도자료 전용 임베딩 모델
 _metadata = None
 
 # 선거법 벡터스토어
 _election_indexes = {}
 _election_metadata = {}
 
+# ✅ 보도자료 + 선거법 벡터스토어 빌드 시 사용한 모델 (768차원)
+KOSROBERTA_MODEL = "jhgan/ko-sroberta-multitask"
+
 
 def get_embedding_model():
-    """임베딩 모델 로드 (싱글톤)"""
+    """임베딩 모델 로드 (싱글톤) - settings 기반 (법령 챗봇용 bge-m3)"""
     global _embedding_model
     if _embedding_model is None:
         from sentence_transformers import SentenceTransformer
         _embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
         print(f"✅ 임베딩 모델 로드: {settings.EMBEDDING_MODEL}")
     return _embedding_model
+
+
+def get_kosroberta_model():
+    """ko-sroberta-multitask 모델 로드 (싱글톤) - 보도자료 + 선거법용 (768차원)"""
+    global _press_release_embedding_model
+    if _press_release_embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _press_release_embedding_model = SentenceTransformer(KOSROBERTA_MODEL)
+        print(f"✅ ko-sroberta 임베딩 모델 로드: {KOSROBERTA_MODEL}")
+    return _press_release_embedding_model
 
 
 def _unwrap_metadata(loaded):
@@ -105,7 +119,8 @@ class VectorStoreService:
         try:
             import faiss  # ✅ 여기서 사용 (정규화)
 
-            model = get_embedding_model()
+            # ✅ 보도자료는 ko-sroberta-multitask (768차원) 전용 모델 사용
+            model = get_kosroberta_model()
             query_embedding = model.encode([query])[0]
             query_embedding = np.array([query_embedding]).astype("float32")
 
@@ -215,7 +230,8 @@ class VectorStoreService:
         try:
             import faiss
 
-            model = get_embedding_model()
+            # ✅ 선거법도 ko-sroberta-multitask (768차원)으로 빌드됨
+            model = get_kosroberta_model()
             query_embedding = model.encode([query])[0]
             query_embedding = np.array([query_embedding]).astype("float32")
 
