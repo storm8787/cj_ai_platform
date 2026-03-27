@@ -22,7 +22,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org -r requirements.txt
 
 RUN mkdir -p /app/models && \
-    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='BAAI/bge-m3', local_dir='/app/models/bge-m3', local_dir_use_symlinks=False)"
+    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='BAAI/bge-m3', local_dir='/app/models/bge-m3', local_dir_use_symlinks=False)" && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='jhgan/ko-sroberta-multitask', local_dir='/app/models/ko-sroberta-multitask', local_dir_use_symlinks=False)"
 
 # 애플리케이션 코드 복사 (vectorstore 파일 포함)
 COPY . .
