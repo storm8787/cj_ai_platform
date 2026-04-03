@@ -719,7 +719,12 @@ async def _generate_answer(
 
     context = "\n".join(context_parts) if context_parts else "(검색 결과 없음)"
 
-    print(f"[law-chatbot] GPT 컨텍스트: {len(context)}자")
+    # ✅ 컨텍스트 길이 제한 (GPT-4o 128K 토큰 ≈ 약 80,000자 한국어)
+    MAX_CONTEXT_CHARS = 60000
+    if len(context) > MAX_CONTEXT_CHARS:
+        print(f"[law-chatbot] ⚠️ 컨텍스트 초과: {len(context)}자 → {MAX_CONTEXT_CHARS}자로 절삭")
+        context = context[:MAX_CONTEXT_CHARS] + "\n\n... (이하 생략)"
+   
 
     system_prompt = f"""당신은 충주시청 공무원을 위한 법령·자치법규 전문 AI 어시스턴트입니다.
 
