@@ -21,6 +21,8 @@ from routers import board
 from routers import trip_report
 from routers import law_chatbot
 from routers import timeline_planner
+from routers.prompt_manager import router as prompt_manager_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -72,6 +74,9 @@ app.include_router(trip_report.router, prefix="/api/trip-report", tags=["출장�
 app.include_router(law_chatbot.router)
 # v5.0.0 - timeline_planner 추가
 app.include_router(timeline_planner.router)
+
+app.include_router(prompt_manager_router)
+
 
 app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
 app.include_router(board.router, prefix="/api/board", tags=["게시판"])
