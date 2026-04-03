@@ -176,7 +176,17 @@ async def generate_promo(request: PromoRequest):
         raise HTTPException(status_code=400, detail="잘못된 카테고리입니다.")
     
     try:
-        prompt = PROMPT_TEMPLATES[request.category].format(content=request.content)
+        #prompt = PROMPT_TEMPLATES[request.category].format(content=request.content)
+        # 변경 후
+        from services.prompt_service import prompt_service
+
+        # DB에 있으면 DB 프롬프트 사용, 없으면 기존 PROMPT_TEMPLATES 사용
+        prompt_template = prompt_service.get(
+            "kakao_promo", 
+            request.category, 
+            default=PROMPT_TEMPLATES[request.category]
+        )
+        prompt = prompt_template.format(content=request.content)
         
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
