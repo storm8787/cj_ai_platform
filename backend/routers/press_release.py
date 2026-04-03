@@ -9,6 +9,8 @@ from services.openai_service import OpenAIService
 from services.supabase_service import SupabaseService
 from utils.prompt_filter import check_text_security
 
+from services.prompt_service import prompt_service
+
 router = APIRouter()
 
 # 서비스 인스턴스
@@ -133,10 +135,10 @@ async def generate_press_release(request: GenerateRequest):
             "1개": "전체 글은 1개 문단으로 구성해주세요.\n"
         }.get(request.paragraphs, "")
         
-        # 시스템 프롬프트
-        system_prompt = (
-            "너는 지방정부 보도자료 작성 전문가야. "
-            "아래 유사 사례를 참고해, 행정기관 스타일로 공공 보도자료를 작성해줘."
+        # 변경 후
+        system_prompt = prompt_service.get(
+            "press_release", "system_prompt",
+            default="너는 지방정부 보도자료 작성 전문가야. 아래 유사 사례를 참고해, 행정기관 스타일로 공공 보도자료를 작성해줘."
         )
         
         # 추가 지시사항
