@@ -29,6 +29,8 @@ import DataValidator from './pages/DataValidator';
 import TripReport from './pages/TripReport';
 import LawChatbot from './pages/LawChatbot';
 import TimelinePlanner from "./pages/TimelinePlanner";
+import PromptManager from './pages/PromptManager';
+
 
 // 보호된 라우트 컴포넌트
 function ProtectedRoute({ children }) {
@@ -223,6 +225,12 @@ function AppRoutes() {
           <ProtectedRoute>
             <Layout><TimelinePlanner /></Layout>
             </ProtectedRoute>
+        } 
+      />
+      <Route path="/prompt-manager" 
+        element={
+          <ProtectedRoute><PromptManager />
+          </ProtectedRoute>
         } 
       />
 
