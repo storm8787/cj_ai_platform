@@ -6,6 +6,7 @@ from typing import Optional, List
 from services.vectorstore import VectorStoreService
 from services.openai_service import OpenAIService
 from utils.prompt_filter import check_text_security
+from services.prompt_service import prompt_service
 
 router = APIRouter()
 
@@ -33,6 +34,54 @@ class Reference(BaseModel):
     content: str
     similarity: float
     type: str
+
+
+# ─── 프롬프트 기본값 (DB에 없을 때 사용) ───
+_DEFAULT_CLASSIFY = """다음 질문의 유형을 분류해주세요.
+
+질문: {question}
+
+유형:
+- list_type: "어떤 것들이 있나요?", "종류는?", "사례를 알려주세요" 등 여러 항목을 나열해야 하는 질문
+- single_case: 특정 사례나 상황에 대한 질문
+- definition: 정의나 개념을 묻는 질문
+- period: 기간이나 시기를 묻는 질문
+- general: 기타 일반 질문
+
+답변은 유형 이름만 출력하세요 (예: list_type)"""
+
+_DEFAULT_MULTI_QUERY = """다음 질문에 답하기 위해 검색해야 할 키워드나 하위 질문 3개를 생성하세요.
+
+질문: {question}
+
+JSON 형식으로 출력:
+["키워드1", "키워드2", "키워드3"]"""
+
+_DEFAULT_ANSWER_LIST = """다음 참고 자료를 바탕으로 질문에 답변하세요.
+
+질문: {question}
+
+참고 자료:
+{ref_text}
+
+답변 지침:
+1. 참고 자료에서 관련 내용을 최대한 많이 찾아 나열하세요
+2. 각 항목에 대해 간략한 설명을 포함하세요
+3. 번호나 불릿 포인트로 정리하세요
+4. 참고 자료에 없는 내용은 추측하지 마세요"""
+
+_DEFAULT_ANSWER_GENERAL = """다음 참고 자료를 바탕으로 질문에 답변하세요.
+
+질문: {question}
+
+참고 자료:
+{ref_text}
+
+답변 지침:
+1. 참고 자료의 내용을 기반으로 정확하게 답변하세요
+2. 법령이나 판례가 있으면 구체적으로 인용하세요
+3. 참고 자료에 없는 내용은 추측하지 마세요
+4. 명확하고 이해하기 쉽게 설명하세요"""
 
 
 @router.post("/ask")
@@ -81,18 +130,11 @@ async def ask_question(request: QuestionRequest):
 
 async def classify_question_type(question: str) -> str:
     """질문 유형 분류"""
-    prompt = f"""다음 질문의 유형을 분류해주세요.
-
-질문: {question}
-
-유형:
-- list_type: "어떤 것들이 있나요?", "종류는?", "사례를 알려주세요" 등 여러 항목을 나열해야 하는 질문
-- single_case: 특정 사례나 상황에 대한 질문
-- definition: 정의나 개념을 묻는 질문
-- period: 기간이나 시기를 묻는 질문
-- general: 기타 일반 질문
-
-답변은 유형 이름만 출력하세요 (예: list_type)"""
+    _template = prompt_service.get(
+        "election_law", "classify_question_type",
+        default=_DEFAULT_CLASSIFY
+    )
+    prompt = _template.format(question=question)
     
     try:
         result = await openai_service.generate_text(
@@ -111,12 +153,11 @@ async def classify_question_type(question: str) -> str:
 async def search_multi_query(question: str, target: str) -> List[dict]:
     """멀티쿼리 검색 (목록형 질문용)"""
     # 서브쿼리 생성
-    prompt = f"""다음 질문에 답하기 위해 검색해야 할 키워드나 하위 질문 3개를 생성하세요.
-
-질문: {question}
-
-JSON 형식으로 출력:
-["키워드1", "키워드2", "키워드3"]"""
+    _template = prompt_service.get(
+        "election_law", "multi_query_generation",
+        default=_DEFAULT_MULTI_QUERY
+    )
+    prompt = _template.format(question=question)
     
     try:
         result = await openai_service.generate_text(
@@ -169,31 +210,17 @@ async def generate_answer(question: str, references: List[dict], question_type: 
     ])
     
     if question_type == "list_type":
-        prompt = f"""다음 참고 자료를 바탕으로 질문에 답변하세요.
-
-질문: {question}
-
-참고 자료:
-{ref_text}
-
-답변 지침:
-1. 참고 자료에서 관련 내용을 최대한 많이 찾아 나열하세요
-2. 각 항목에 대해 간략한 설명을 포함하세요
-3. 번호나 불릿 포인트로 정리하세요
-4. 참고 자료에 없는 내용은 추측하지 마세요"""
+        _template = prompt_service.get(
+            "election_law", "answer_list_type",
+            default=_DEFAULT_ANSWER_LIST
+        )
     else:
-        prompt = f"""다음 참고 자료를 바탕으로 질문에 답변하세요.
-
-질문: {question}
-
-참고 자료:
-{ref_text}
-
-답변 지침:
-1. 참고 자료의 내용을 기반으로 정확하게 답변하세요
-2. 법령이나 판례가 있으면 구체적으로 인용하세요
-3. 참고 자료에 없는 내용은 추측하지 마세요
-4. 명확하고 이해하기 쉽게 설명하세요"""
+        _template = prompt_service.get(
+            "election_law", "answer_general",
+            default=_DEFAULT_ANSWER_GENERAL
+        )
+    
+    prompt = _template.format(question=question, ref_text=ref_text)
     
     result = await openai_service.generate_text(
         prompt=prompt,
