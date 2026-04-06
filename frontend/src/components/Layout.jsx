@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Home, Info, Cpu, MessageSquare, LogOut } from 'lucide-react';
+import { ChevronDown, ChevronRight, Home, Info, Cpu, MessageSquare, LogOut, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 // AI 서비스 카테고리별 정리
@@ -14,7 +14,7 @@ const aiServiceCategories = [
       { icon: '🏅', title: '공적조서 생성기', path: '/merit-report' },
       { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
       { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
-      { icon: '📋', title: '출장보고 생성기', path: '/trip-report' },  // 신규 추가
+      { icon: '📋', title: '출장보고 생성기', path: '/trip-report' },
     ]
   },
   {
@@ -196,7 +196,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, activ
 export default function Layout({ children }) {
   const location = useLocation();
   const [openMenu, setOpenMenu] = useState(null);
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
 
   // 메뉴 열기 - 다른 메뉴가 열려있으면 바로 전환
   const handleOpen = (menu) => {
@@ -278,6 +278,17 @@ export default function Layout({ children }) {
                 onClose={handleClose}
                 active={isCommunityActive}
               />
+
+              {/* 관리자 전용: 프롬프트 관리 */}
+              {isAdmin && (
+                <Link
+                  to="/prompt-manager"
+                  className={`nav-link ${location.pathname === '/prompt-manager' ? 'nav-link-active' : ''}`}
+                >
+                  <Settings size={18} />
+                  <span>프롬프트 관리</span>
+                </Link>
+              )}
             </nav>
 
             {/* 사용자 정보 & 로그아웃 */}
