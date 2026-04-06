@@ -15,6 +15,7 @@ from lxml import etree
 from openai import OpenAI
 
 from config import settings
+from services.prompt_service import prompt_service
 
 router = APIRouter()
 
@@ -39,6 +40,20 @@ SUPPORTED_LANGUAGES = {
     "PT": "포르투갈어",
     "PT-BR": "포르투갈어 (브라질)",
 }
+
+
+# ─── 프롬프트 기본값 (DB에 없을 때 사용) ───
+_DEFAULT_TRANSLATE_SYSTEM = "You are a professional translator. Translate Korean to {target_lang_name}."
+
+_DEFAULT_TRANSLATE_PROMPT = """Translate the following Korean text to {target_lang_name}.
+Preserve all formatting, numbers, and special characters.
+
+Korean text:
+{original}
+
+Return ONLY the translation, no explanations.
+
+Translation:"""
 
 
 class LanguagesResponse(BaseModel):
@@ -146,22 +161,24 @@ def translate_hwpx_preserve_format(
         }
         target_lang_name = lang_names.get(target_lang, "English")
         
-        prompt = f"""Translate the following Korean text to {target_lang_name}.
-Preserve all formatting, numbers, and special characters.
-
-Korean text:
-{original}
-
-Return ONLY the translation, no explanations.
-
-Translation:"""
+        # 시스템 프롬프트 (DB 우선, 없으면 기본값)
+        system_content = prompt_service.get(
+            "translator", "gpt_translate_system",
+            default=_DEFAULT_TRANSLATE_SYSTEM
+        ).format(target_lang_name=target_lang_name)
+        
+        # 번역 프롬프트 (DB 우선, 없으면 기본값)
+        user_content = prompt_service.get(
+            "translator", "gpt_translate_prompt",
+            default=_DEFAULT_TRANSLATE_PROMPT
+        ).format(target_lang_name=target_lang_name, original=original)
         
         try:
             resp = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": f"You are a professional translator. Translate Korean to {target_lang_name}."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_content}
                 ],
                 temperature=0.1
             )
