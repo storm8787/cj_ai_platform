@@ -10,6 +10,7 @@ from datetime import datetime
 
 from config import settings
 from services.openai_service import OpenAIService
+from services.prompt_service import prompt_service
 
 router = APIRouter()
 openai_service = OpenAIService()
@@ -26,6 +27,33 @@ class NewsResponse(BaseModel):
     last_updated: str
     news: List[Dict[str, Any]]
     source: str
+
+
+# ─── 프롬프트 기본값 (DB에 없을 때 사용) ───
+_DEFAULT_SUMMARIZE_SYSTEM = "당신은 지역 뉴스를 시민들이 이해하기 쉽게 요약하는 전문 기자입니다. 핵심 정보를 빠뜨리지 않으면서도 읽기 쉽게 정리합니다."
+
+_DEFAULT_SUMMARIZE_PROMPT = """다음 충주시 관련 뉴스 기사를 정성껏 요약해주세요.
+
+제목: {clean_title}
+
+본문:
+{clean_content}
+
+요약 작성 규칙:
+1. 5-7문장으로 핵심 내용을 충실히 담아 작성
+2. 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 최대한 반영
+3. 주요 수치나 날짜가 있으면 포함
+4. 시민에게 미치는 영향이나 의의가 있다면 언급
+5. 객관적이고 명확한 문체 사용
+6. 마지막에 한 줄로 핵심 의의나 전망 정리
+
+형식:
+[요약]
+(본문 요약 5-7문장)
+
+[핵심 포인트]
+• (중요 포인트 2-3개)
+"""
 
 
 # ============================================
@@ -183,33 +211,26 @@ async def summarize_news(request: SummarizeRequest):
     clean_title = html.unescape(request.title)
     clean_content = html.unescape(request.content)
     
-    prompt = f"""다음 충주시 관련 뉴스 기사를 정성껏 요약해주세요.
-
-제목: {clean_title}
-
-본문:
-{clean_content[:3000]}
-
-요약 작성 규칙:
-1. 5-7문장으로 핵심 내용을 충실히 담아 작성
-2. 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 최대한 반영
-3. 주요 수치나 날짜가 있으면 포함
-4. 시민에게 미치는 영향이나 의의가 있다면 언급
-5. 객관적이고 명확한 문체 사용
-6. 마지막에 한 줄로 핵심 의의나 전망 정리
-
-형식:
-[요약]
-(본문 요약 5-7문장)
-
-[핵심 포인트]
-• (중요 포인트 2-3개)
-"""
+    # 시스템 프롬프트 (DB 우선, 없으면 기본값)
+    system_prompt = prompt_service.get(
+        "news", "summarize_system",
+        default=_DEFAULT_SUMMARIZE_SYSTEM
+    )
+    
+    # 요약 프롬프트 (DB 우선, 없으면 기본값)
+    _prompt_template = prompt_service.get(
+        "news", "summarize_prompt",
+        default=_DEFAULT_SUMMARIZE_PROMPT
+    )
+    prompt = _prompt_template.format(
+        clean_title=clean_title,
+        clean_content=clean_content[:3000]
+    )
     
     try:
         summary = await openai_service.generate_text(
             prompt=prompt,
-            system_prompt="당신은 지역 뉴스를 시민들이 이해하기 쉽게 요약하는 전문 기자입니다. 핵심 정보를 빠뜨리지 않으면서도 읽기 쉽게 정리합니다.",
+            system_prompt=system_prompt,
             max_tokens=600,
             temperature=0.3
         )
