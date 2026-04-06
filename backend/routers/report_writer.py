@@ -1,15 +1,17 @@
 """
 업무보고 생성기 API - 공무원 행정문서 스타일
 섹션별 특성에 맞는 차별화된 프롬프트 적용
+DB 프롬프트 우선 + 하드코딩 fallback 유지
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import json
 import re
 from datetime import datetime
 
 from config import settings
+from services.prompt_service import prompt_service
 
 router = APIRouter()
 
@@ -88,9 +90,6 @@ LENGTH_RULES = {
 # 🎯 섹션별 작성 스타일 정의 (핵심!)
 # ===========================================
 SECTION_STYLES = {
-    # ==================
-    # 서술형 섹션 (문장형, 상세 설명 필요)
-    # ==================
     "추진배경": {
         "style": "서술형",
         "guide": "왜 이 사업/정책이 필요한지 배경과 필요성을 구체적 수치와 함께 2~3문장으로 상세히 기술",
@@ -131,10 +130,6 @@ SECTION_STYLES = {
         "guide": "사건의 경위를 시간 순서대로 구체적으로 기술",
         "example": "2026. 1. 15.(월) 14:30경 ○○교차로에서 신호위반 차량이 횡단보도를 건너던 보행자를 충격하는 사고가 발생함. 피해자는 인근 병원으로 이송되어 치료 중이며 생명에는 지장이 없는 것으로 확인됨"
     },
-    
-    # ==================
-    # 나열형 섹션 (항목:내용 형태, 간결하게)
-    # ==================
     "추진일정": {
         "style": "나열형",
         "guide": "시기:내용 형태로 간결하게 나열. 문장형 종결어미 사용 금지",
@@ -180,10 +175,6 @@ SECTION_STYLES = {
         "guide": "일시, 장소, 참석인원 등을 간결하게 기술",
         "example": "일시: 2026. 1. 20.(월) 10:00~12:00 / 장소: 시청 3층 대회의실 / 참석: 15명"
     },
-    
-    # ==================
-    # 목표/효과형 섹션 (정량+정성 목표 기술)
-    # ==================
     "기대효과": {
         "style": "효과형",
         "guide": "정량적 목표(수치)와 정성적 효과를 모두 포함하여 2~3문장으로 기술",
@@ -199,10 +190,6 @@ SECTION_STYLES = {
         "guide": "개선을 통해 달성하고자 하는 목표를 구체적으로 기술",
         "example": "노후 장비 교체 및 신규 설치를 통해 CCTV 영상품질을 HD급 이상으로 향상시키고, 야간 식별률을 현재 40%에서 85%까지 개선하여 범죄 예방 및 검거 효율성을 높이고자 함"
     },
-    
-    # ==================
-    # 대책/방안형 섹션 (구체적 실행방안 기술)
-    # ==================
     "추진계획": {
         "style": "방안형",
         "guide": "무엇을, 어디에, 얼마나 할 것인지 구체적으로 기술",
@@ -243,10 +230,6 @@ SECTION_STYLES = {
         "guide": "향후 취할 후속 조치를 구체적으로 기술",
         "example": "유사 사고 재발 방지를 위해 해당 구간에 과속방지턱 및 보행자 안전시설을 추가 설치하고, 사고다발지점 안내표지를 설치하여 운전자 주의를 환기시킬 계획임"
     },
-    
-    # ==================
-    # 분석/진단형 섹션 (객관적 분석 결과 기술)
-    # ==================
     "현상진단": {
         "style": "분석형",
         "guide": "현재 상황을 객관적으로 진단하고 분석 결과를 기술",
@@ -282,10 +265,6 @@ SECTION_STYLES = {
         "guide": "정책이나 사업이 미치는 영향을 분석하여 기술",
         "example": "CCTV 추가 설치 시 예상되는 영향을 분석한 결과, 긍정적 측면으로는 범죄 예방 효과 및 주민 안심 효과가 있으며, 부정적 측면으로는 사생활 침해 우려 및 유지관리 비용 증가가 예상됨"
     },
-    
-    # ==================
-    # 기타 섹션
-    # ==================
     "추진전략": {
         "style": "방안형",
         "guide": "목표 달성을 위한 전략적 접근방법을 기술",
@@ -415,44 +394,25 @@ SECTION_STYLES = {
 
 
 # ===========================================
-# 🎯 프롬프트 생성 함수
+# 기본 프롬프트 (DB에 없을 때 사용)
 # ===========================================
-def build_prompt(title: str, report_type: str, detail_type: str, keywords: str, length_key: str) -> str:
-    """섹션별 특성을 반영한 프롬프트 생성"""
-    
-    sections = REPORT_STRUCTURES[report_type][detail_type]
-    rule = LENGTH_RULES[length_key]
-    keyword_list = [kw.strip() for kw in keywords.split(",") if kw.strip()]
-    
-    # 섹션별 가이드 생성
-    section_guides = []
-    for sec in sections:
-        if sec in SECTION_STYLES:
-            style_info = SECTION_STYLES[sec]
-            section_guides.append(f"""
-### {sec} ({style_info['style']})
-- 작성방법: {style_info['guide']}
-- 예시: "{style_info['example']}"
-""")
-        else:
-            section_guides.append(f"""
-### {sec}
-- 작성방법: 해당 내용을 구체적으로 기술
-""")
-    
-    section_guide_text = "\n".join(section_guides)
-    
-    return f"""당신은 대한민국 지방자치단체에서 15년간 근무한 7급 공무원입니다.
+_DEFAULT_SYSTEM_PROMPT = (
+    "당신은 대한민국 지방자치단체 공무원 업무보고서 작성 전문가입니다. "
+    "섹션별 특성(서술형/나열형/효과형/방안형/분석형)에 맞게 작성합니다. "
+    "반드시 JSON 형식으로만 응답하세요."
+)
+
+_DEFAULT_BUILD_PROMPT_TEMPLATE = """당신은 대한민국 지방자치단체에서 15년간 근무한 7급 공무원입니다.
 실제 업무에서 사용하는 수준의 보고서를 작성해주세요.
 
 ## 작성할 보고서 정보
 - 제목: {title}
 - 유형: {report_type} > {detail_type}
-- 핵심 키워드: {', '.join(keyword_list)}
-- 분량: 섹션당 {rule['items_per_section']}개 항목
+- 핵심 키워드: {keywords_joined}
+- 분량: 섹션당 {items_per_section}개 항목
 
 ## 섹션 구성
-{' → '.join(sections)}
+{sections_joined}
 
 ## 문체 규칙 (개괄식 종결어미)
 - 서술형 섹션: "~임", "~음", "~함", "~됨" 등으로 문장 종결
@@ -460,7 +420,7 @@ def build_prompt(title: str, report_type: str, detail_type: str, keywords: str, 
 - 절대 금지: "~했습니다", "~합니다", "~했다", "~한다"
 
 ## 핵심 규칙
-1. 키워드 "{', '.join(keyword_list)}"를 반드시 내용에 자연스럽게 포함
+1. 키워드 "{keywords_joined}"를 반드시 내용에 자연스럽게 포함
 2. 구체적 숫자(수량, 금액, 일정, 비율 등)를 반드시 포함
 3. 각 섹션의 스타일(서술형/나열형/효과형/방안형/분석형)에 맞게 작성
 4. 섹션 간 내용 중복 금지
@@ -489,12 +449,62 @@ def build_prompt(title: str, report_type: str, detail_type: str, keywords: str, 
     }}
   ],
   "metadata": {{
-    "generatedAt": "{datetime.now().isoformat()}",
-    "totalSections": {len(sections)},
-    "keywords": {json.dumps(keyword_list, ensure_ascii=False)}
+    "generatedAt": "{generated_at}",
+    "totalSections": {total_sections},
+    "keywords": {keywords_json}
   }}
 }}
 """
+
+
+# ===========================================
+# 🎯 프롬프트 생성 함수
+# ===========================================
+def build_prompt(title: str, report_type: str, detail_type: str, keywords: str, length_key: str) -> str:
+    """섹션별 특성을 반영한 프롬프트 생성"""
+    sections = REPORT_STRUCTURES[report_type][detail_type]
+    rule = LENGTH_RULES[length_key]
+    keyword_list = [kw.strip() for kw in keywords.split(",") if kw.strip()]
+
+    section_guides = []
+    for sec in sections:
+        if sec in SECTION_STYLES:
+            style_info = SECTION_STYLES[sec]
+            section_guides.append(
+                f"""
+### {sec} ({style_info['style']})
+- 작성방법: {style_info['guide']}
+- 예시: "{style_info['example']}"
+"""
+            )
+        else:
+            section_guides.append(
+                f"""
+### {sec}
+- 작성방법: 해당 내용을 구체적으로 기술
+"""
+            )
+
+    section_guide_text = "\n".join(section_guides)
+
+    prompt_template = prompt_service.get(
+        "report_writer",
+        "build_prompt_template",
+        default=_DEFAULT_BUILD_PROMPT_TEMPLATE
+    )
+
+    return prompt_template.format(
+        title=title,
+        report_type=report_type,
+        detail_type=detail_type,
+        keywords_joined=", ".join(keyword_list),
+        items_per_section=rule["items_per_section"],
+        sections_joined=" → ".join(sections),
+        section_guide_text=section_guide_text,
+        generated_at=datetime.now().isoformat(),
+        total_sections=len(sections),
+        keywords_json=json.dumps(keyword_list, ensure_ascii=False),
+    )
 
 
 # ===========================================
@@ -527,13 +537,13 @@ def add_number_commas(text: str) -> str:
     """숫자에 천단위 콤마 추가 (연도 제외)"""
     def replace_number(match):
         num = match.group(0)
-        if len(num) == 4 and (num.startswith('19') or num.startswith('20')):
+        if len(num) == 4 and (num.startswith("19") or num.startswith("20")):
             return num
         if len(num) >= 4:
             return f"{int(num):,}"
         return num
-    
-    return re.sub(r'\b\d{4,}\b', replace_number, text)
+
+    return re.sub(r"\b\d{4,}\b", replace_number, text)
 
 
 def fix_ending(sentence: str) -> str:
@@ -541,15 +551,15 @@ def fix_ending(sentence: str) -> str:
     sentence = sentence.strip()
     if not sentence:
         return sentence
-    
-    if sentence.endswith('.'):
+
+    if sentence.endswith("."):
         sentence = sentence[:-1]
-    
+
     for wrong, correct in TERM_CORRECTIONS.items():
         if sentence.endswith(wrong):
             sentence = sentence[:-len(wrong)] + correct
             break
-    
+
     return sentence
 
 
@@ -557,31 +567,30 @@ def clean_content(text: str) -> str:
     """콘텐츠 정리"""
     text = BULLET_PATTERN.sub("", text)
     text = MARKDOWN_PATTERN.sub(r"\1\2\3", text)
-    text = re.sub(r'[^\w\s가-힣.,()%~\-:/·○△▷]', '', text)
-    text = re.sub(r'\s{2,}', ' ', text)
+    text = re.sub(r"[^\w\s가-힣.,()%~\-:/·○△▷]", "", text)
+    text = re.sub(r"\s{2,}", " ", text)
     text = add_number_commas(text)
-    
     return text.strip()
 
 
 def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
     """보고서 전체 후처리"""
     result = dict(data)
-    
+
     if isinstance(result.get("summary"), str):
         summary = clean_content(result["summary"])
-        sentences = re.split(r'(?<=[.。])\s*', summary)
+        sentences = re.split(r"(?<=[.。])\s*", summary)
         processed_sentences = [fix_ending(s) for s in sentences if s.strip()]
-        result["summary"] = ' '.join(processed_sentences)
-    
+        result["summary"] = " ".join(processed_sentences)
+
     processed_sections = []
     for sec in result.get("sections", []):
         sec = dict(sec)
         contents = sec.get("content", [])
-        
+
         if isinstance(contents, str):
             contents = [contents]
-        
+
         processed_contents = []
         for item in contents:
             if isinstance(item, str) and item.strip():
@@ -589,10 +598,10 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
                 fixed = fix_ending(cleaned)
                 if fixed:
                     processed_contents.append(fixed)
-        
+
         sec["content"] = processed_contents
         processed_sections.append(sec)
-    
+
     result["sections"] = processed_sections
     return result
 
@@ -612,16 +621,16 @@ async def get_report_structures():
 @router.post("/generate", response_model=ReportResponse)
 async def generate_report(request: ReportGenerateRequest):
     """업무보고서 생성"""
-    
+
     if request.report_type not in REPORT_STRUCTURES:
         raise HTTPException(status_code=400, detail=f"지원하지 않는 보고서 유형: {request.report_type}")
-    
+
     if request.detail_type not in REPORT_STRUCTURES[request.report_type]:
         raise HTTPException(status_code=400, detail=f"지원하지 않는 세부 유형: {request.detail_type}")
-    
+
     if request.length not in LENGTH_RULES:
         raise HTTPException(status_code=400, detail=f"지원하지 않는 분량 옵션: {request.length}")
-    
+
     try:
         prompt = build_prompt(
             title=request.title,
@@ -630,29 +639,38 @@ async def generate_report(request: ReportGenerateRequest):
             keywords=request.keywords,
             length_key=request.length
         )
-        
+
+        system_prompt = prompt_service.get(
+            "report_writer",
+            "system_prompt",
+            default=_DEFAULT_SYSTEM_PROMPT
+        )
+
         from openai import OpenAI
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
-        
+
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {
-                    "role": "system", 
-                    "content": "당신은 대한민국 지방자치단체 공무원 업무보고서 작성 전문가입니다. 섹션별 특성(서술형/나열형/효과형/방안형/분석형)에 맞게 작성합니다. 반드시 JSON 형식으로만 응답하세요."
+                    "role": "system",
+                    "content": system_prompt
                 },
-                {"role": "user", "content": prompt}
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ],
             temperature=0.4,
             response_format={"type": "json_object"},
             max_tokens=4000
         )
-        
+
         raw_content = response.choices[0].message.content or ""
         data = json.loads(raw_content)
-        
+
         data = postprocess_report(data)
-        
+
         sections = [
             ReportSection(
                 title=sec.get("title", ""),
@@ -661,7 +679,7 @@ async def generate_report(request: ReportGenerateRequest):
             )
             for idx, sec in enumerate(data.get("sections", []))
         ]
-        
+
         return ReportResponse(
             title=data.get("title", request.title),
             type=data.get("type", request.report_type),
@@ -671,7 +689,7 @@ async def generate_report(request: ReportGenerateRequest):
             metadata=data.get("metadata", {}),
             success=True
         )
-        
+
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"JSON 파싱 실패: {str(e)}")
     except Exception as e:
@@ -684,6 +702,6 @@ async def get_status():
     return {
         "status": "active",
         "service": "업무보고 생성기",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "supported_types": list(REPORT_STRUCTURES.keys())
     }
