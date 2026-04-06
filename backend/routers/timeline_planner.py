@@ -4,6 +4,7 @@
 - 법령 질의 구체화 (사업유형+예산+계약방식별 핀포인트 질의)
 - 시행 단계 2회 호출 (1차 큰 공정 → 2차 세부 분해)
 - 세부 업무 + 소요기간 + XLSX 시트2
+- DB 프롬프트 우선 + 하드코딩 fallback 유지
 """
 
 from fastapi import APIRouter, HTTPException
@@ -13,6 +14,7 @@ from datetime import datetime
 import json, io, base64, logging, httpx
 
 from services.openai_service import OpenAIService
+from services.prompt_service import prompt_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/timeline", tags=["timeline"])
@@ -241,73 +243,10 @@ def _cl(v):
 
 
 # ══════════════════════════════════════════════
-# 법령 챗봇 연동
+# 기본 프롬프트 (DB에 없을 때 사용)
 # ══════════════════════════════════════════════
 
-async def _ask_law(question: str) -> str:
-    """법령 챗봇 API 내부 호출"""
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{INTERNAL_BASE_URL}/api/law-chatbot/ask",
-                json={"question": question, "search_scope": "all"}
-            )
-            if resp.status_code == 200:
-                return resp.json().get("answer", "")
-    except Exception as e:
-        logger.warning(f"법령 챗봇 연동 실패: {e}")
-    return ""
-
-
-def _build_law_queries(project_type: str, category: str, budget: str = None) -> list:
-    """사업유형 + 카테고리 + 예산에 따른 구체적 법령 질의 목록 생성"""
-    queries = []
-
-    # 사업 유형별 질의
-    type_queries = LAW_QUERIES_BY_TYPE.get(project_type, {}).get(category, [])
-    queries.extend(type_queries)
-
-    # 공통 질의
-    common = COMMON_LAW_QUERIES.get(category, [])
-    queries.extend(common)
-
-    # 예산 규모별 추가 질의
-    if budget and category == "계획":
-        for bq in BUDGET_LAW_QUERIES:
-            queries.append(bq["query"])
-
-    # 사업 유형이 매핑에 없는 경우 일반적 질의
-    if not type_queries:
-        general_queries = {
-            "계획": [f"지방자치단체 사업 사전 행정절차 심의 검토 협의 기준"],
-            "계약": [f"지방계약법 계약 체결 절차"],
-            "완료": [f"지방계약법 사업 완료 검수 정산 절차"],
-        }
-        queries.extend(general_queries.get(category, []))
-
-    return queries
-
-
-async def _get_law_context(project_type: str, category: str, budget: str = None) -> str:
-    """법령 질의를 실행하고 결과를 컨텍스트 문자열로 반환"""
-    queries = _build_law_queries(project_type, category, budget)
-    results = []
-
-    for q in queries:
-        answer = await _ask_law(q)
-        if answer and len(answer) > 20:  # 너무 짧은 답변은 무시
-            results.append(f"[질의: {q}]\n{answer}")
-
-    if results:
-        return "\n\n---\n\n".join(results)
-    return ""
-
-
-# ══════════════════════════════════════════════
-# 일정 추천
-# ══════════════════════════════════════════════
-
-SUGGEST_PROMPT = """당신은 한국 지방자치단체의 사업 일정 전문가입니다.
+_DEFAULT_SUGGEST_PROMPT = """당신은 한국 지방자치단체의 사업 일정 전문가입니다.
 
 사업 일정을 4단계로 구분하여 추천하세요:
 - "계획": 기본계획 수립, 사전 심의/검토, 일상감사, 예산확보 등
@@ -366,71 +305,7 @@ SUGGEST_PROMPT = """당신은 한국 지방자치단체의 사업 일정 전문�
   "summary": "일정 산출 근거 2~3문장"
 }"""
 
-
-@router.post("/suggest")
-async def suggest_timeline(request: AutoSuggestRequest):
-    """GPT 기반 자동 일정 추천"""
-    try:
-        svc = OpenAIService()
-        parts = [f"사업명: {request.project_name}"]
-        if request.project_description:
-            parts.append(f"사업 설명: {request.project_description}")
-        if request.budget:
-            parts.append(f"예산 규모: {request.budget}")
-        if request.deadline:
-            parts.append(f"완료 목표: {request.deadline}")
-        if request.project_type:
-            parts.append(f"사업 유형: {_tl(request.project_type)}")
-        if request.contract_type:
-            parts.append(f"계약 방식: {_cl(request.contract_type)}")
-
-        now = datetime.now()
-        parts.append(f"현재 시점: {now.year}년 {now.month}월")
-        parts.append("위 사업의 현실적인 추진 일정을 추천해 주세요.")
-
-        result_text = await svc.generate_text(
-            prompt=f"{SUGGEST_PROMPT}\n\n" + "\n".join(parts),
-            max_tokens=2000,
-            temperature=0.7
-        )
-        result = json.loads(_clean_json(result_text))
-
-        valid_cats = {"계획", "계약", "시행", "완료"}
-        validated = []
-        for t in result.get("tasks", []):
-            cat = t.get("category", "시행")
-            if cat not in valid_cats:
-                cat = "시행"
-            validated.append({
-                "name": t.get("name", "미정"),
-                "start_month": max(1, min(12, t.get("start_month", 1))),
-                "end_month": max(1, min(12, t.get("end_month", 1))),
-                "start_year": t.get("start_year", now.year),
-                "end_year": t.get("end_year", now.year),
-                "category": cat,
-                "is_milestone": False,
-            })
-
-        return {
-            "success": True,
-            "tasks": validated,
-            "summary": result.get("summary", ""),
-            "project_name": request.project_name,
-        }
-
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="AI 응답을 파싱할 수 없습니다.")
-    except Exception as e:
-        logger.error(f"일정 추천 실패: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ══════════════════════════════════════════════
-# 세부 업무 생성 (단계별 분기)
-# ══════════════════════════════════════════════
-
-# 계획/계약 단계: 법령 연동 + 구체적 세부업무
-DETAIL_WITH_LAW = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
+_DEFAULT_DETAIL_WITH_LAW = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
 주어진 단계의 세부 업무 목록을 생성하세요.
 
 규칙:
@@ -457,9 +332,7 @@ DETAIL_WITH_LAW = """당신은 한국 지방자치단체의 사업 관리 전문
   ]
 }"""
 
-
-# 시행 단계 1차: 큰 공정 분해
-DETAIL_EXECUTE_PHASE1 = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
+_DEFAULT_DETAIL_EXECUTE_PHASE1 = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
 사업의 시행 단계를 세부 작업 공정으로 분해하세요.
 
 규칙:
@@ -521,9 +394,7 @@ DETAIL_EXECUTE_PHASE1 = """당신은 한국 지방자치단체의 사업 관리 
   ]
 }"""
 
-
-# 완료 단계: 법령 + 사업유형별 마무리
-DETAIL_COMPLETE = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
+_DEFAULT_DETAIL_COMPLETE = """당신은 한국 지방자치단체의 사업 관리 전문가입니다.
 사업 완료 단계의 세부 업무를 생성하세요.
 
 규칙:
@@ -553,6 +424,169 @@ DETAIL_COMPLETE = """당신은 한국 지방자치단체의 사업 관리 전문
 }"""
 
 
+# ══════════════════════════════════════════════
+# 법령 챗봇 연동
+# ══════════════════════════════════════════════
+
+async def _ask_law(question: str) -> str:
+    """법령 챗봇 API 내부 호출"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{INTERNAL_BASE_URL}/api/law-chatbot/ask",
+                json={"question": question, "search_scope": "all"}
+            )
+            if resp.status_code == 200:
+                return resp.json().get("answer", "")
+    except Exception as e:
+        logger.warning(f"법령 챗봇 연동 실패: {e}")
+    return ""
+
+
+def _build_law_queries(project_type: str, category: str, budget: str = None) -> list:
+    """사업유형 + 카테고리 + 예산에 따른 구체적 법령 질의 목록 생성"""
+    queries = []
+
+    type_queries = LAW_QUERIES_BY_TYPE.get(project_type, {}).get(category, [])
+    queries.extend(type_queries)
+
+    common = COMMON_LAW_QUERIES.get(category, [])
+    queries.extend(common)
+
+    if budget and category == "계획":
+        for bq in BUDGET_LAW_QUERIES:
+            queries.append(bq["query"])
+
+    if not type_queries:
+        general_queries = {
+            "계획": ["지방자치단체 사업 사전 행정절차 심의 검토 협의 기준"],
+            "계약": ["지방계약법 계약 체결 절차"],
+            "완료": ["지방계약법 사업 완료 검수 정산 절차"],
+        }
+        queries.extend(general_queries.get(category, []))
+
+    return queries
+
+
+async def _get_law_context(project_type: str, category: str, budget: str = None) -> str:
+    """법령 질의를 실행하고 결과를 컨텍스트 문자열로 반환"""
+    queries = _build_law_queries(project_type, category, budget)
+    results = []
+
+    for q in queries:
+        answer = await _ask_law(q)
+        if answer and len(answer) > 20:
+            results.append(f"[질의: {q}]\n{answer}")
+
+    if results:
+        return "\n\n---\n\n".join(results)
+    return ""
+
+
+# ══════════════════════════════════════════════
+# 프롬프트 헬퍼
+# ══════════════════════════════════════════════
+
+def _get_suggest_prompt() -> str:
+    return prompt_service.get(
+        "timeline_planner",
+        "suggest_prompt",
+        default=_DEFAULT_SUGGEST_PROMPT,
+    )
+
+
+def _get_detail_with_law_prompt() -> str:
+    return prompt_service.get(
+        "timeline_planner",
+        "detail_with_law",
+        default=_DEFAULT_DETAIL_WITH_LAW,
+    )
+
+
+def _get_detail_execute_phase1_prompt() -> str:
+    return prompt_service.get(
+        "timeline_planner",
+        "detail_execute_phase1",
+        default=_DEFAULT_DETAIL_EXECUTE_PHASE1,
+    )
+
+
+def _get_detail_complete_prompt() -> str:
+    return prompt_service.get(
+        "timeline_planner",
+        "detail_complete",
+        default=_DEFAULT_DETAIL_COMPLETE,
+    )
+
+
+# ══════════════════════════════════════════════
+# 일정 추천
+# ══════════════════════════════════════════════
+
+@router.post("/suggest")
+async def suggest_timeline(request: AutoSuggestRequest):
+    """GPT 기반 자동 일정 추천"""
+    try:
+        svc = OpenAIService()
+        parts = [f"사업명: {request.project_name}"]
+        if request.project_description:
+            parts.append(f"사업 설명: {request.project_description}")
+        if request.budget:
+            parts.append(f"예산 규모: {request.budget}")
+        if request.deadline:
+            parts.append(f"완료 목표: {request.deadline}")
+        if request.project_type:
+            parts.append(f"사업 유형: {_tl(request.project_type)}")
+        if request.contract_type:
+            parts.append(f"계약 방식: {_cl(request.contract_type)}")
+
+        now = datetime.now()
+        parts.append(f"현재 시점: {now.year}년 {now.month}월")
+        parts.append("위 사업의 현실적인 추진 일정을 추천해 주세요.")
+
+        suggest_prompt = _get_suggest_prompt()
+
+        result_text = await svc.generate_text(
+            prompt=f"{suggest_prompt}\n\n" + "\n".join(parts),
+            max_tokens=2000,
+            temperature=0.7
+        )
+        result = json.loads(_clean_json(result_text))
+
+        valid_cats = {"계획", "계약", "시행", "완료"}
+        validated = []
+        for t in result.get("tasks", []):
+            cat = t.get("category", "시행")
+            if cat not in valid_cats:
+                cat = "시행"
+            validated.append({
+                "name": t.get("name", "미정"),
+                "start_month": max(1, min(12, t.get("start_month", 1))),
+                "end_month": max(1, min(12, t.get("end_month", 1))),
+                "start_year": t.get("start_year", now.year),
+                "end_year": t.get("end_year", now.year),
+                "category": cat,
+                "is_milestone": False,
+            })
+
+        return {
+            "success": True,
+            "tasks": validated,
+            "summary": result.get("summary", ""),
+            "project_name": request.project_name,
+        }
+
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="AI 응답을 파싱할 수 없습니다.")
+    except Exception as e:
+        logger.error(f"일정 추천 실패: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════
+# 세부 업무 생성 (단계별 분기)
+# ══════════════════════════════════════════════
+
 @router.post("/detail-tasks")
 async def generate_detail_tasks(request: DetailTasksRequest):
     """단계별 세부 업무 자동 생성"""
@@ -563,35 +597,30 @@ async def generate_detail_tasks(request: DetailTasksRequest):
         cat = request.task_category
         law_ctx = ""
 
-        # ── 계획 단계: 법령 핀포인트 질의 ──
         if cat == "계획":
             law_ctx = await _get_law_context(
                 request.project_type or "", cat, request.budget
             )
-            base_prompt = DETAIL_WITH_LAW
+            base_prompt = _get_detail_with_law_prompt()
 
-        # ── 계약 단계: 법령 핀포인트 질의 ──
         elif cat == "계약":
             law_ctx = await _get_law_context(
                 request.project_type or "", cat, request.budget
             )
-            base_prompt = DETAIL_WITH_LAW
+            base_prompt = _get_detail_with_law_prompt()
 
-        # ── 시행 단계: GPT 2회 호출 (세부 분해) ──
         elif cat == "시행":
-            base_prompt = DETAIL_EXECUTE_PHASE1
+            base_prompt = _get_detail_execute_phase1_prompt()
 
-        # ── 완료 단계: 법령 + GPT 혼합 ──
         elif cat == "완료":
             law_ctx = await _get_law_context(
                 request.project_type or "", cat, request.budget
             )
-            base_prompt = DETAIL_COMPLETE
+            base_prompt = _get_detail_complete_prompt()
 
         else:
-            base_prompt = DETAIL_WITH_LAW
+            base_prompt = _get_detail_with_law_prompt()
 
-        # 사용자 정보 구성
         user_parts = [
             f"사업명: {request.project_name}",
             f"현재 단계: {request.task_name} ({cat})",
@@ -606,13 +635,11 @@ async def generate_detail_tasks(request: DetailTasksRequest):
             user_parts.append(f"사업 설명: {request.project_description}")
         user_parts.append("\n위 단계의 세부 업무와 각 업무별 예상 소요기간을 생성해 주세요.")
 
-        # 프롬프트 조합
         if law_ctx:
             full_prompt = f"{base_prompt}\n\n[법령 검색 결과]\n{law_ctx}\n\n" + "\n".join(user_parts)
         else:
             full_prompt = f"{base_prompt}\n\n" + "\n".join(user_parts)
 
-        # GPT 호출
         result_text = await svc.generate_text(
             prompt=full_prompt,
             max_tokens=3000,
@@ -621,7 +648,6 @@ async def generate_detail_tasks(request: DetailTasksRequest):
         result = json.loads(_clean_json(result_text))
         detail_tasks = result.get("detail_tasks", [])
 
-        # 시행 단계: 항목이 5개 이하면 2차 세부 분해 시도
         if cat == "시행" and len(detail_tasks) <= 5 and request.project_description:
             task_names = [dt.get("task", "") for dt in detail_tasks]
             refine_prompt = f"""아래는 "{request.project_name}" 사업의 시행 단계 1차 분해 결과입니다.
@@ -850,7 +876,6 @@ def _generate_xlsx(timeline: TimelineData, detail_groups=None) -> bytes:
     }
     default_fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
 
-    # 시트1: 간트차트
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3 + len(all_months))
     title_cell = ws.cell(row=1, column=1, value=timeline.title)
     title_cell.font = header_font
@@ -899,7 +924,6 @@ def _generate_xlsx(timeline: TimelineData, detail_groups=None) -> bytes:
                 cell.alignment = Alignment(horizontal="center")
                 cell.font = Font(size=10, color="666666")
 
-    # 시트2: 세부 업무 (TODO + 소요기간)
     if detail_groups:
         ws2 = wb.create_sheet("세부업무(TODO)")
         ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=9)
@@ -984,7 +1008,6 @@ def _generate_pptx(timeline: TimelineData) -> bytes:
     prs.slide_height = Inches(7.5)
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-    # 타이틀
     title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.7))
     title_p = title_box.text_frame.paragraphs[0]
     title_p.text = timeline.title
@@ -999,7 +1022,6 @@ def _generate_pptx(timeline: TimelineData) -> bytes:
     subtitle_p.font.size = Pt(14)
     subtitle_p.font.color.rgb = RGBColor(0x71, 0x71, 0x71)
 
-    # 월 범위 계산
     all_months = []
     for t in timeline.tasks:
         for y in range(t.start_year, t.end_year + 1):
@@ -1025,7 +1047,6 @@ def _generate_pptx(timeline: TimelineData) -> bytes:
         "완료": RGBColor(0xD8, 0x5A, 0x30),
     }
 
-    # 월 헤더
     for i, (year, month) in enumerate(all_months):
         x = LEFT + LABEL_W + int(MONTH_W * i)
         label = f"'{str(year)[2:]}.{month}월" if (month == 1 or i == 0) else f"{month}월"
@@ -1036,7 +1057,6 @@ def _generate_pptx(timeline: TimelineData) -> bytes:
         header_p.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
         header_p.alignment = PP_ALIGN.CENTER
 
-    # 행
     for idx, task in enumerate(timeline.tasks):
         y = TOP + int(ROW_H * idx)
 
@@ -1117,7 +1137,7 @@ async def export_timeline(request: ExportRequest):
 async def timeline_status():
     return {
         "status": "ok",
-        "version": "v5",
+        "version": "v5.1.0",
         "features": {
             "auto_suggest": True,
             "detail_tasks_with_duration": True,
@@ -1126,6 +1146,7 @@ async def timeline_status():
             "export_png": True,
             "export_xlsx_with_todo": True,
             "export_pptx": True,
+            "db_prompt_fallback": True,
         },
         "project_types": len(PROJECT_TYPES),
         "contract_types": len(CONTRACT_TYPES),
