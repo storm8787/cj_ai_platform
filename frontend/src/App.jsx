@@ -202,7 +202,7 @@ function AppRoutes() {
         } 
       />
       
-      {/* 출장보고 생성기 - 신규 추가 */}
+      {/* 출장보고 생성기 */}
       <Route 
         path="/trip-report" 
         element={
@@ -224,12 +224,16 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Layout><TimelinePlanner /></Layout>
-            </ProtectedRoute>
+          </ProtectedRoute>
         } 
       />
-      <Route path="/prompt-manager" 
+      
+      {/* 프롬프트 관리 (관리자 전용) */}
+      <Route 
+        path="/prompt-manager" 
         element={
-          <ProtectedRoute><PromptManager />
+          <ProtectedRoute>
+            <Layout><PromptManager /></Layout>
           </ProtectedRoute>
         } 
       />
