@@ -30,6 +30,8 @@ from io import BytesIO
 from lxml import etree
 from openai import OpenAI
 
+from services.prompt_service import prompt_service
+
 router = APIRouter()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -107,6 +109,95 @@ REPORT_TYPES = {
 
 
 # ========================================
+# 프롬프트 기본값 (DB에 없을 때 사용)
+# ========================================
+_DEFAULT_CLASSIFICATION_PROMPT = """당신은 지방자치단체 공무원 출장보고 분류 AI임.
+사진(필수)과 기본자료(선택)를 보고 아래 8개 유형 중 하나로 분류하라.
+{force_line}{hwpx_section}
+[유형]
+- 회의참석: 회의/협의/간담회 (회의실·좌석 배치·명패·화이트보드·회의 자료 등)
+- 벤치마킹: 타 기관 방문/우수사례 견학 (기관 로고·시설 투어·담당자 면담·출입증 등)
+- 교육연수: 교육/연수/강의/워크숍 (강의실·PPT·강사·교재·수강 좌석 등)
+- 설명회참석: 설명회/박람회/포럼/행사/세미나 (현수막·배너·발표·무대·전시 부스 등)
+- 조사연구: 현지 조사/연구/실태 파악 (조사 장비·측정·인터뷰·현장 기록 등)
+- 시설점검: 도로/건물/시설물 안전점검 (파손·균열·공사현장·안전점검표 등)
+- 민원현장: 민원 확인/현장 조치 (불법행위·쓰레기·정비·단속·민원처리 등)
+- 환경점검: 환경 관련 측정/점검 (하천·대기·소음·측정장비·오염 현장 등)
+
+출력은 반드시 JSON 단독으로만 반환하라.
+키: report_type, confidence(0~1), rationale
+"""
+
+_DEFAULT_EXTRACTION_PROMPT = """당신은 공무원 현장 보고서 작성 보조 AI임.
+사진과 기본자료를 근거로 '{report_type}' 유형의 보고서에 필요한 정보를 추출하라.
+{force_line}{hwpx_section}
+[유형 필드 - 반드시 extracted_info에 포함]
+{field_lines}
+
+[출력 형식]
+- 반드시 JSON 단독 출력
+- main_content는 "배열"이어야 함 (문자열 금지)
+  예: ["절차 1: ...", "절차 2: ..."]
+- photos_analysis는 사진 개수만큼 배열, photo_index는 1부터 시작
+
+[추출 규칙]
+1) 기본자료에 행사명/일시/장소/기관명이 있으면 최우선으로 extracted_info에 매핑
+2) 현수막/배너/PPT/표/간판의 텍스트 → detected_text에 그대로 기재
+3) 표/절차/단계가 보이면 main_content에 단계별로 요약(한 줄 1개)
+4) 숫자/기간/장소명은 구체적으로, 안 보이면 "확인 필요" (억지로 만들지 말 것)
+"""
+
+_DEFAULT_REPORT_SYSTEM_PROMPT = "공문서 문체(단어형 종결, 개조식) 준수. 경어체 절대 금지. ~임/~함/~됨 금지. '논의 예정', '검토 완료'처럼 명사·동사원형으로 종결. 1~4 구조 유지."
+
+_DEFAULT_REPORT_PROMPT_TEMPLATE = """당신은 대한민국 지방자치단체 공문서 작성 전문가임.
+아래 입력을 근거로 '{template_name}'를 작성하라.
+
+[유형별 가이드]
+{type_guide}
+4번 항목({closing_section}): {closing_guide}
+
+[입력 정보]
+{info_text}
+
+[주요 내용]
+{content_text}
+
+[사진 분석 근거]
+{photos_text}{hwpx_section}
+[보고자 정보]
+  - 보고자: {reporter_dept} {reporter_name}
+  - 보고일: {report_date}
+
+[추가 요청사항]
+{additional_notes}
+
+[필수 규칙]
+- 경어체(~합니다/~입니다) 절대 금지
+- 명사형 종결 사용: ~임/~함/~됨 금지, 반드시 단어로 종결
+  예시(나쁨): '논의할 예정임', '검토됨', '추진함'
+  예시(좋음): '논의 예정', '검토 완료', '추진 계획'
+- 개조식 문체, 간결하게 작성
+- 보고서 구조 반드시 유지:
+  1. 출장 개요
+  2. 주요 내용
+  3. 사진 및 참고
+  4. {closing_section}
+"""
+
+_DEFAULT_REWRITE_SYSTEM_PROMPT = "공문서 문체 교정 전용. 내용 변경 금지. ~임/~함/~됨 → 단어형 종결 변환. 구조(1~4) 유지."
+
+_DEFAULT_REWRITE_PROMPT_TEMPLATE = """아래 [원문]을 공문서 문체로 교정하라.
+규칙:
+- 경어체(합니다/입니다 등) → 단어형 종결로 변환
+- ~임/~함/~됨 → 명사/동사원형으로 변환 (예: 논의할 예정임 → 논의 예정, 검토됨 → 검토 완료)
+- 1~4 구조 유지
+- 내용·수치·고유명사 변경 금지, 새로운 사실 추가 금지
+
+[원문]
+{text}"""
+
+
+# ========================================
 # Pydantic 모델
 # ========================================
 class PhotoAnalysisItem(BaseModel):
@@ -178,7 +269,6 @@ def _extract_hwpx_text(file_bytes: bytes) -> str:
                 tree = etree.fromstring(raw, parser)
                 t_elements = tree.xpath(".//*[local-name()='t']")
                 for t_elem in t_elements:
-                    # 번역기의 extract_full_text 로직 그대로
                     parts = []
                     if t_elem.text:
                         parts.append(t_elem.text)
@@ -195,7 +285,6 @@ def _extract_hwpx_text(file_bytes: bytes) -> str:
                 continue
 
         full_text = "\n".join(texts)
-        # 토큰 과부하 방지: 앞부분 우선 잘라내기
         if len(full_text) > MAX_HWPX_TEXT_CHARS:
             full_text = full_text[:MAX_HWPX_TEXT_CHARS] + "\n...(이하 생략)"
 
@@ -234,7 +323,6 @@ def _get_image_media_type(upload: UploadFile) -> str:
 
 
 def _safe_json_extract(text: str) -> dict:
-    """JSON 파싱 실패 시 코드블록 제거 후 재시도"""
     if not text:
         raise ValueError("empty response")
     t = text.strip()
@@ -300,7 +388,6 @@ def _contains_forbidden_polite(text: str) -> bool:
 
 
 def _has_required_structure(text: str) -> bool:
-    """1~4번 구조 존재 여부 확인 - 다양한 표기 허용"""
     if not text or len(text.strip()) < 50:
         return False
     patterns = [r"1[.\)]", r"2[.\)]", r"3[.\)]", r"4[.\)]"]
@@ -321,7 +408,6 @@ def _chat_create_compat(
     temperature: Optional[float] = None,
     response_format: Optional[dict] = None,
 ) -> str:
-    """모델별 파라미터 지원 차이 자동 흡수"""
     base_kwargs: dict = {
         "model": model,
         "messages": messages,
@@ -358,9 +444,6 @@ def _chat_create_compat(
         raise
 
 
-# ========================================
-# Structured Output 스키마
-# ========================================
 CLASSIFY_SCHEMA = {
     "type": "json_schema",
     "json_schema": {
@@ -413,9 +496,6 @@ EXTRACT_SCHEMA = {
 }
 
 
-# ========================================
-# 프롬프트
-# ========================================
 def _classification_prompt(force_report_type: str = "", hwpx_text: str = "") -> str:
     force_line = ""
     if force_report_type and force_report_type in REPORT_TYPES:
@@ -425,25 +505,14 @@ def _classification_prompt(force_report_type: str = "", hwpx_text: str = "") -> 
     if hwpx_text:
         hwpx_section = f"\n[기본자료 텍스트 - 유형 분류 참고]\n{hwpx_text[:1000]}\n"
 
-    return (
-        "당신은 지방자치단체 공무원 출장보고 분류 AI임.\n"
-        "사진(필수)과 기본자료(선택)를 보고 아래 8개 유형 중 하나로 분류하라.\n"
-        + force_line
-        + hwpx_section
-        + """
-[유형]
-- 회의참석: 회의/협의/간담회 (회의실·좌석 배치·명패·화이트보드·회의 자료 등)
-- 벤치마킹: 타 기관 방문/우수사례 견학 (기관 로고·시설 투어·담당자 면담·출입증 등)
-- 교육연수: 교육/연수/강의/워크숍 (강의실·PPT·강사·교재·수강 좌석 등)
-- 설명회참석: 설명회/박람회/포럼/행사/세미나 (현수막·배너·발표·무대·전시 부스 등)
-- 조사연구: 현지 조사/연구/실태 파악 (조사 장비·측정·인터뷰·현장 기록 등)
-- 시설점검: 도로/건물/시설물 안전점검 (파손·균열·공사현장·안전점검표 등)
-- 민원현장: 민원 확인/현장 조치 (불법행위·쓰레기·정비·단속·민원처리 등)
-- 환경점검: 환경 관련 측정/점검 (하천·대기·소음·측정장비·오염 현장 등)
-
-출력은 반드시 JSON 단독으로만 반환하라.
-키: report_type, confidence(0~1), rationale
-"""
+    template = prompt_service.get(
+        "trip_report",
+        "classification_prompt",
+        default=_DEFAULT_CLASSIFICATION_PROMPT,
+    )
+    return template.format(
+        force_line=force_line,
+        hwpx_section=hwpx_section,
     )
 
 
@@ -463,33 +532,19 @@ def _extraction_prompt(report_type: str, force_report_type: str = "", hwpx_text:
             f"{hwpx_text}\n"
         )
 
-    return (
-        f"당신은 공무원 현장 보고서 작성 보조 AI임.\n"
-        f"사진과 기본자료를 근거로 '{report_type}' 유형의 보고서에 필요한 정보를 추출하라.\n"
-        + force_line
-        + hwpx_section
-        + f"""
-[유형 필드 - 반드시 extracted_info에 포함]
-{field_lines}
-
-[출력 형식]
-- 반드시 JSON 단독 출력
-- main_content는 "배열"이어야 함 (문자열 금지)
-  예: ["절차 1: ...", "절차 2: ..."]
-- photos_analysis는 사진 개수만큼 배열, photo_index는 1부터 시작
-
-[추출 규칙]
-1) 기본자료에 행사명/일시/장소/기관명이 있으면 최우선으로 extracted_info에 매핑
-2) 현수막/배너/PPT/표/간판의 텍스트 → detected_text에 그대로 기재
-3) 표/절차/단계가 보이면 main_content에 단계별로 요약(한 줄 1개)
-4) 숫자/기간/장소명은 구체적으로, 안 보이면 "확인 필요" (억지로 만들지 말 것)
-"""
+    template = prompt_service.get(
+        "trip_report",
+        "extraction_prompt",
+        default=_DEFAULT_EXTRACTION_PROMPT,
+    )
+    return template.format(
+        report_type=report_type,
+        force_line=force_line,
+        hwpx_section=hwpx_section,
+        field_lines=field_lines,
     )
 
 
-# ========================================
-# API: 이미지 + HWPX 분석
-# ========================================
 @router.post("/analyze-images")
 async def analyze_images(
     images: List[UploadFile] = File(...),
@@ -500,7 +555,6 @@ async def analyze_images(
 ):
     start_time = time.time()
 
-    # ── 사진 검증 ──
     if not images:
         raise HTTPException(status_code=400, detail="현장 사진을 업로드해주세요.")
     if len(images) > MAX_IMAGES:
@@ -519,7 +573,6 @@ async def analyze_images(
         data_url = f"data:{media_type};base64,{_encode_image_to_base64(b)}"
         images_data.append({"index": idx, "data_url": data_url})
 
-    # ── HWPX 텍스트 추출 (선택) ──
     hwpx_text = ""
     hwpx_attached = False
     if hwpx_file and hwpx_file.filename:
@@ -538,7 +591,6 @@ async def analyze_images(
     try:
         analysis_temperature = None
 
-        # ── 1단계: 유형 분류 ──
         classify_messages = [{
             "role": "user",
             "content": [
@@ -573,7 +625,6 @@ async def analyze_images(
         if force_report_type and force_report_type in REPORT_TYPES:
             classified_type = force_report_type
 
-        # ── 2단계: 상세 추출 ──
         extract_messages = [{
             "role": "user",
             "content": [
@@ -648,7 +699,6 @@ async def analyze_images(
         )
 
         result = validated.model_dump()
-        # hwpx_text는 보고서 생성 단계에서 재사용 — 프론트로 전달
         result["hwpx_text"] = hwpx_text
 
         return {
@@ -665,9 +715,6 @@ async def analyze_images(
         raise HTTPException(status_code=500, detail=f"이미지 분석 실패: {str(e)}")
 
 
-# ========================================
-# API: 보고서 생성
-# ========================================
 @router.post("/generate-report")
 async def generate_report(request: ReportGenerateRequest):
     start_time = time.time()
@@ -705,7 +752,6 @@ async def generate_report(request: ReportGenerateRequest):
                 photo_lines.append(line)
         photos_text = "\n".join(photo_lines) if photo_lines else "  - (사진 분석 정보 없음)"
 
-        # HWPX 기본자료 섹션 (있을 때만 포함)
         hwpx_section = ""
         if request.hwpx_text and request.hwpx_text.strip():
             hwpx_section = (
@@ -715,41 +761,40 @@ async def generate_report(request: ReportGenerateRequest):
             )
 
         type_guides = {
-            "회의참석":  "회의 안건, 토의 내용, 결정사항 정리.",
-            "벤치마킹":  "방문 목적, 우수사례 내용, 시사점 정리.",
-            "교육연수":  "교육 과정, 주요 내용, 실습 결과 정리.",
+            "회의참석": "회의 안건, 토의 내용, 결정사항 정리.",
+            "벤치마킹": "방문 목적, 우수사례 내용, 시사점 정리.",
+            "교육연수": "교육 과정, 주요 내용, 실습 결과 정리.",
             "설명회참석": "발표 내용, 배포 자료 핵심, 질의응답 정리.",
-            "조사연구":  "조사 방법, 결과 수치, 분석 내용 정리.",
-            "시설점검":  "점검 위치, 발견사항, 위험도 명확화.",
-            "민원현장":  "민원 내용, 현장 상황, 조치 결과 명확화.",
-            "환경점검":  "점검 항목, 측정 결과, 적합 여부 명확화.",
+            "조사연구": "조사 방법, 결과 수치, 분석 내용 정리.",
+            "시설점검": "점검 위치, 발견사항, 위험도 명확화.",
+            "민원현장": "민원 내용, 현장 상황, 조치 결과 명확화.",
+            "환경점검": "점검 항목, 측정 결과, 적합 여부 명확화.",
         }
 
-        report_prompt = (
-            f"당신은 대한민국 지방자치단체 공문서 작성 전문가임.\n"
-            f"아래 입력을 근거로 '{type_info['template']}'를 작성하라.\n\n"
-            f"[유형별 가이드]\n"
-            f"{type_guides.get(report_type, '')}\n"
-            f"4번 항목({closing_section}): {closing_guide}\n\n"
-            f"[입력 정보]\n{info_text}\n\n"
-            f"[주요 내용]\n{content_text if content_text else '  - (주요 내용 없음)'}\n\n"
-            f"[사진 분석 근거]\n{photos_text}\n"
-            + hwpx_section
-            + f"\n[보고자 정보]\n"
-            f"  - 보고자: {request.reporter_dept} {request.reporter_name}\n"
-            f"  - 보고일: {datetime.datetime.now().strftime('%Y. %m. %d.')}\n\n"
-            f"[추가 요청사항]\n{request.additional_notes if request.additional_notes else '없음'}\n\n"
-            f"[필수 규칙]\n"
-            f"- 경어체(~합니다/~입니다) 절대 금지\n"
-            f"- 명사형 종결 사용: ~임/~함/~됨 금지, 반드시 단어로 종결\n"
-            f"  예시(나쁨): '논의할 예정임', '검토됨', '추진함'\n"
-            f"  예시(좋음): '논의 예정', '검토 완료', '추진 계획'\n"
-            f"- 개조식 문체, 간결하게 작성\n"
-            f"- 보고서 구조 반드시 유지:\n"
-            f"  1. 출장 개요\n"
-            f"  2. 주요 내용\n"
-            f"  3. 사진 및 참고\n"
-            f"  4. {closing_section}\n"
+        report_system_prompt = prompt_service.get(
+            "trip_report",
+            "report_system_prompt",
+            default=_DEFAULT_REPORT_SYSTEM_PROMPT,
+        )
+        report_prompt_template = prompt_service.get(
+            "trip_report",
+            "report_prompt_template",
+            default=_DEFAULT_REPORT_PROMPT_TEMPLATE,
+        )
+
+        report_prompt = report_prompt_template.format(
+            template_name=type_info["template"],
+            type_guide=type_guides.get(report_type, ""),
+            closing_section=closing_section,
+            closing_guide=closing_guide,
+            info_text=info_text,
+            content_text=content_text if content_text else "  - (주요 내용 없음)",
+            photos_text=f"{photos_text}\n",
+            hwpx_section=hwpx_section,
+            reporter_dept=request.reporter_dept,
+            reporter_name=request.reporter_name,
+            report_date=datetime.datetime.now().strftime("%Y. %m. %d."),
+            additional_notes=request.additional_notes if request.additional_notes else "없음",
         )
 
         def _chat(model, messages, max_completion_tokens, temperature):
@@ -764,43 +809,43 @@ async def generate_report(request: ReportGenerateRequest):
         text = _chat(
             model=REPORT_MODEL,
             messages=[
-                {"role": "system", "content": "공문서 문체(단어형 종결, 개조식) 준수. 경어체 절대 금지. ~임/~함/~됨 금지. '논의 예정', '검토 완료'처럼 명사·동사원형으로 종결. 1~4 구조 유지."},
+                {"role": "system", "content": report_system_prompt},
                 {"role": "user",   "content": report_prompt},
             ],
             max_completion_tokens=3000,
             temperature=1.0,
         )
 
-        # 1차 생성 빈값 방어
         if not text or not text.strip():
             text = _chat(
                 model=REPORT_MODEL,
                 messages=[
-                    {"role": "system", "content": "공문서 문체(단어형 종결, 개조식) 준수. 경어체 절대 금지. 1~4 구조 유지."},
+                    {"role": "system", "content": report_system_prompt},
                     {"role": "user",   "content": report_prompt},
                 ],
                 max_completion_tokens=3000,
                 temperature=1.0,
             )
 
-        # 문체/구조 검증 → 필요 시 교정
         needs_rewrite = text and text.strip() and (
             _contains_forbidden_polite(text) or not _has_required_structure(text)
         )
         if needs_rewrite:
-            rewrite_prompt = (
-                "아래 [원문]을 공문서 문체로 교정하라.\n"
-                "규칙:\n"
-                "- 경어체(합니다/입니다 등) → 단어형 종결로 변환\n"
-                "- ~임/~함/~됨 → 명사/동사원형으로 변환 (예: 논의할 예정임 → 논의 예정, 검토됨 → 검토 완료)\n"
-                "- 1~4 구조 유지\n"
-                "- 내용·수치·고유명사 변경 금지, 새로운 사실 추가 금지\n\n"
-                f"[원문]\n{text}"
+            rewrite_system_prompt = prompt_service.get(
+                "trip_report",
+                "rewrite_system_prompt",
+                default=_DEFAULT_REWRITE_SYSTEM_PROMPT,
             )
+            rewrite_prompt_template = prompt_service.get(
+                "trip_report",
+                "rewrite_prompt_template",
+                default=_DEFAULT_REWRITE_PROMPT_TEMPLATE,
+            )
+            rewrite_prompt = rewrite_prompt_template.format(text=text)
             text = _chat(
                 model=REPORT_MODEL,
                 messages=[
-                    {"role": "system", "content": "공문서 문체 교정 전용. 내용 변경 금지. ~임/~함/~됨 → 단어형 종결 변환. 구조(1~4) 유지."},
+                    {"role": "system", "content": rewrite_system_prompt},
                     {"role": "user",   "content": rewrite_prompt},
                 ],
                 max_completion_tokens=3000,
