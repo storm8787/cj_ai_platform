@@ -7,6 +7,7 @@ from typing import Optional
 from openai import OpenAI
 
 from config import settings
+from services.prompt_service import prompt_service
 
 router = APIRouter()
 
@@ -14,8 +15,8 @@ router = APIRouter()
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 
-# ===== 프롬프트 템플릿 =====
-PROMPT_TEMPLATES = {
+# ===== 프롬프트 기본값 (DB에 없을 때 사용) =====
+_DEFAULT_TEMPLATES = {
     "시정홍보": """당신은 충주시청 홍보 담당자입니다.
 아래 내용을 바탕으로 카카오톡 채널용 홍보 메시지를 작성해주세요.
 
@@ -140,6 +141,14 @@ PROMPT_TEMPLATES = {
 }
 
 
+def _get_promo_template(category: str) -> str:
+    """카테고리별 프롬프트 가져오기 (DB 우선, 없으면 기본값)"""
+    return prompt_service.get(
+        "kakao_promo", category,
+        default=_DEFAULT_TEMPLATES.get(category, _DEFAULT_TEMPLATES["기타"])
+    )
+
+
 class PromoRequest(BaseModel):
     category: str
     content: str
@@ -172,20 +181,11 @@ async def generate_promo(request: PromoRequest):
     if not request.content.strip():
         raise HTTPException(status_code=400, detail="내용을 입력해주세요.")
     
-    if request.category not in PROMPT_TEMPLATES:
+    if request.category not in _DEFAULT_TEMPLATES:
         raise HTTPException(status_code=400, detail="잘못된 카테고리입니다.")
     
     try:
-        #prompt = PROMPT_TEMPLATES[request.category].format(content=request.content)
-        # 변경 후
-        from services.prompt_service import prompt_service
-
-        # DB에 있으면 DB 프롬프트 사용, 없으면 기존 PROMPT_TEMPLATES 사용
-        prompt_template = prompt_service.get(
-            "kakao_promo", 
-            request.category, 
-            default=PROMPT_TEMPLATES[request.category]
-        )
+        prompt_template = _get_promo_template(request.category)
         prompt = prompt_template.format(content=request.content)
         
         completion = client.chat.completions.create(
@@ -259,7 +259,8 @@ async def generate_promo_with_image(
     
     # 홍보문구 생성
     try:
-        prompt = PROMPT_TEMPLATES.get(category, PROMPT_TEMPLATES["기타"]).format(content=final_content)
+        prompt_template = _get_promo_template(category)
+        prompt = prompt_template.format(content=final_content)
         
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
