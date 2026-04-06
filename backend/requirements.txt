@@ -12,11 +12,11 @@ numpy==1.26.4
 pandas>=2.0.0
 
 # Database
-supabase>=2.4.0,<3.0.0
+supabase==2.3.4
 
 # Utilities
 python-dotenv==1.0.1
-httpx>=0.26.0,<0.28.0
+httpx==0.25.2
 pydantic==2.6.1
 pydantic-settings==2.1.0
 
