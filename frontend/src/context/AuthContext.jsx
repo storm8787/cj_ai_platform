@@ -8,6 +8,10 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
+  // 관리자 여부 계산
+  // user.role === 'admin' 이면 관리자로 판단
+  const isAdmin = user?.role === 'admin';
+
   // 페이지 로드 시 토큰 검증
   useEffect(() => {
     checkAuth();
@@ -141,6 +145,7 @@ export function AuthProvider({ children }) {
     user,
     loading,
     isAuthenticated,
+    isAdmin,
     login,
     signup,
     logout,
