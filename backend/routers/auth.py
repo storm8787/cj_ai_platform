@@ -61,6 +61,43 @@ HEADERS = {
 }
 
 
+async def _fetch_user_profile(client: httpx.AsyncClient, user_id: str, token: str) -> dict:
+    """user_profiles 테이블에서 role/name/department 조회"""
+    try:
+        profile_response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user_id}&select=role,name,department",
+            headers={**HEADERS, "Authorization": f"Bearer {token}"}
+        )
+        if profile_response.status_code == 200:
+            profile = profile_response.json()
+            if profile and len(profile) > 0:
+                return {
+                    "role": profile[0].get("role", "user"),
+                    "name": profile[0].get("name"),
+                    "department": profile[0].get("department"),
+                }
+    except Exception as e:
+        print(f"[auth] ⚠️ user_profiles 조회 실패: {e}")
+    return {"role": "user", "name": None, "department": None}
+
+
+async def _enrich_user_with_role(user: dict, token: str) -> dict:
+    """Supabase auth user 객체에 role/name/department/isAdmin 추가"""
+    if not user or not user.get("id"):
+        return user
+    async with httpx.AsyncClient() as client:
+        profile = await _fetch_user_profile(client, user["id"], token)
+    return {
+        "id": user.get("id"),
+        "email": user.get("email"),
+        "created_at": user.get("created_at"),
+        "name": profile["name"],
+        "department": profile["department"],
+        "role": profile["role"],
+        "isAdmin": profile["role"] == "admin",
+    }
+
+
 # ===========================================
 # 🌐 API 엔드포인트
 # ===========================================
@@ -139,12 +176,16 @@ async def verify_otp(request: VerifyOTPRequest):
             data = response.json()
             
             if response.status_code == 200 and data.get("access_token"):
+                access_token = data.get("access_token")
+                user = data.get("user") or {}
+                enriched_user = await _enrich_user_with_role(user, access_token)
+                
                 return AuthResponse(
                     success=True,
                     message="이메일 인증이 완료되었습니다!",
-                    access_token=data.get("access_token"),
+                    access_token=access_token,
                     refresh_token=data.get("refresh_token"),
-                    user=data.get("user")
+                    user=enriched_user
                 )
             else:
                 error_msg = data.get("error_description") or data.get("msg") or "인증 실패"
@@ -204,12 +245,16 @@ async def login(request: LoginRequest):
             data = response.json()
             
             if response.status_code == 200:
+                access_token = data.get("access_token")
+                user = data.get("user") or {}
+                enriched_user = await _enrich_user_with_role(user, access_token)
+                
                 return AuthResponse(
                     success=True,
                     message="로그인 성공!",
-                    access_token=data.get("access_token"),
+                    access_token=access_token,
                     refresh_token=data.get("refresh_token"),
-                    user=data.get("user")
+                    user=enriched_user
                 )
             else:
                 error_msg = data.get("error_description") or data.get("msg") or "로그인 실패"
@@ -251,7 +296,7 @@ async def logout(authorization: Optional[str] = Header(None)):
 
 @router.get("/verify", response_model=TokenVerifyResponse)
 async def verify_token(authorization: Optional[str] = Header(None)):
-    """토큰 검증"""
+    """토큰 검증 - role/isAdmin 포함"""
     try:
         if not authorization:
             return TokenVerifyResponse(valid=False)
@@ -269,12 +314,19 @@ async def verify_token(authorization: Optional[str] = Header(None)):
             
             if response.status_code == 200:
                 user = response.json()
+                # user_profiles에서 role 조회
+                profile = await _fetch_user_profile(client, user.get("id"), token)
+                
                 return TokenVerifyResponse(
                     valid=True,
                     user={
                         "id": user.get("id"),
                         "email": user.get("email"),
-                        "created_at": user.get("created_at")
+                        "created_at": user.get("created_at"),
+                        "name": profile["name"],
+                        "department": profile["department"],
+                        "role": profile["role"],
+                        "isAdmin": profile["role"] == "admin",
                     }
                 )
             else:
@@ -298,12 +350,16 @@ async def refresh_token(refresh_token: str):
             data = response.json()
             
             if response.status_code == 200:
+                access_token = data.get("access_token")
+                user = data.get("user") or {}
+                enriched_user = await _enrich_user_with_role(user, access_token)
+                
                 return AuthResponse(
                     success=True,
                     message="토큰 갱신 성공",
-                    access_token=data.get("access_token"),
+                    access_token=access_token,
                     refresh_token=data.get("refresh_token"),
-                    user=data.get("user")
+                    user=enriched_user
                 )
             else:
                 return AuthResponse(success=False, message="토큰 갱신 실패")
@@ -331,31 +387,15 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
             raise HTTPException(status_code=401, detail="유효하지 않은 토큰")
         
         user = user_response.json()
-        
-        # 2. 프로필(권한, 이름, 부서) 가져오기
-        profile_response = await client.get(
-            f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user['id']}&select=role,name,department",
-            headers={**HEADERS, "Authorization": f"Bearer {token}"}
-        )
-        
-        role = 'user'
-        name = None
-        department = None
-        
-        if profile_response.status_code == 200:
-            profile = profile_response.json()
-            if profile and len(profile) > 0:
-                role = profile[0].get('role', 'user')
-                name = profile[0].get('name')
-                department = profile[0].get('department')
+        profile = await _fetch_user_profile(client, user["id"], token)
         
         return {
             "id": user['id'],
             "email": user['email'],
-            "name": name,
-            "department": department,
-            "role": role,
-            "isAdmin": role == 'admin'
+            "name": profile["name"],
+            "department": profile["department"],
+            "role": profile["role"],
+            "isAdmin": profile["role"] == 'admin'
         }
 
 
