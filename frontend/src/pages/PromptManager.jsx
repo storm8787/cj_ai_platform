@@ -4,12 +4,16 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 
 function getToken() {
   try {
-    const raw = localStorage.getItem("auth_token");
+    const raw = localStorage.getItem("access_token");
     if (!raw) return "";
-    const parsed = JSON.parse(raw);
-    return parsed?.access_token || raw;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed?.access_token || raw;
+    } catch {
+      return raw;
+    }
   } catch {
-    return localStorage.getItem("auth_token") || "";
+    return localStorage.getItem("access_token") || "";
   }
 }
 
@@ -49,7 +53,6 @@ export default function PromptManager() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // 데이터 로드
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -68,7 +71,6 @@ export default function PromptManager() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // 필터링된 프롬프트
   const filteredPrompts = prompts.filter((p) => {
     const matchFeature = !selectedFeature || p.feature === selectedFeature;
     const matchSearch = !searchQuery || 
@@ -78,14 +80,12 @@ export default function PromptManager() {
     return matchFeature && matchSearch;
   });
 
-  // 기능별 그룹핑
   const grouped = {};
   filteredPrompts.forEach((p) => {
     if (!grouped[p.feature]) grouped[p.feature] = [];
     grouped[p.feature].push(p);
   });
 
-  // 편집 시작
   const startEdit = (prompt) => {
     setEditingPrompt(prompt);
     setEditContent(prompt.content);
@@ -93,7 +93,6 @@ export default function PromptManager() {
     setHistory([]);
   };
 
-  // 저장
   const savePrompt = async () => {
     if (!editingPrompt) return;
     setSaving(true);
@@ -116,7 +115,6 @@ export default function PromptManager() {
     }
   };
 
-  // 이력 조회
   const loadHistory = async () => {
     if (!editingPrompt) return;
     try {
@@ -135,7 +133,6 @@ export default function PromptManager() {
     }
   };
 
-  // 캐시 갱신
   const refreshCache = async () => {
     try {
       await api("/api/prompts/refresh-cache", { method: "POST" });
@@ -156,7 +153,6 @@ export default function PromptManager() {
 
   return (
     <div style={styles.container}>
-      {/* 토스트 */}
       {toast && (
         <div style={{
           ...styles.toast,
@@ -166,7 +162,6 @@ export default function PromptManager() {
         </div>
       )}
 
-      {/* 헤더 */}
       <div style={styles.header}>
         <div>
           <h1 style={styles.title}>프롬프트 관리</h1>
@@ -179,7 +174,6 @@ export default function PromptManager() {
         </button>
       </div>
 
-      {/* 검색 + 필터 */}
       <div style={styles.filterBar}>
         <input
           type="text"
@@ -207,9 +201,7 @@ export default function PromptManager() {
         </div>
       </div>
 
-      {/* 메인 영역 */}
       <div style={styles.mainArea}>
-        {/* 왼쪽: 프롬프트 목록 */}
         <div style={styles.listPanel}>
           {Object.entries(grouped).map(([feature, items]) => {
             const meta = features.find((f) => f.id === feature) || {};
@@ -245,7 +237,6 @@ export default function PromptManager() {
           )}
         </div>
 
-        {/* 오른쪽: 편집 패널 */}
         <div style={styles.editPanel}>
           {editingPrompt ? (
             <>
@@ -290,7 +281,6 @@ export default function PromptManager() {
                 spellCheck={false}
               />
 
-              {/* 변경 이력 */}
               {showHistory && history.length > 0 && (
                 <div style={styles.historyPanel}>
                   <h3 style={styles.historyTitle}>변경 이력</h3>
@@ -328,62 +318,57 @@ export default function PromptManager() {
   );
 }
 
-// ─── 스타일 ───
+// ─── 스타일 (다크모드 - 플랫폼 테마) ───
 const styles = {
-  container: {
-    maxWidth: 1400,
-    margin: "0 auto",
-    padding: "24px",
-    fontFamily: "'Pretendard', -apple-system, sans-serif",
-  },
+  container: { maxWidth: 1400, margin: "0 auto", padding: "24px", fontFamily: "'Pretendard', -apple-system, sans-serif" },
   loadingWrap: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh" },
-  spinner: { width: 40, height: 40, border: "3px solid #e5e7eb", borderTop: "3px solid #3b82f6", borderRadius: "50%", animation: "spin 0.8s linear infinite" },
-  loadingText: { marginTop: 16, color: "#6b7280" },
-  toast: { position: "fixed", top: 24, right: 24, padding: "12px 24px", borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 500, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.15)" },
+  spinner: { width: 40, height: 40, border: "3px solid #334155", borderTop: "3px solid #06b6d4", borderRadius: "50%", animation: "spin 0.8s linear infinite" },
+  loadingText: { marginTop: 16, color: "#94a3b8" },
+  toast: { position: "fixed", top: 24, right: 24, padding: "12px 24px", borderRadius: 8, color: "#fff", fontSize: 14, fontWeight: 500, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" },
 
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 },
-  title: { fontSize: 24, fontWeight: 700, color: "#111827", margin: 0 },
-  subtitle: { fontSize: 14, color: "#6b7280", marginTop: 4 },
-  refreshBtn: { padding: "8px 16px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 500 },
+  title: { fontSize: 24, fontWeight: 700, color: "#f1f5f9", margin: 0 },
+  subtitle: { fontSize: 14, color: "#94a3b8", marginTop: 4 },
+  refreshBtn: { padding: "8px 16px", background: "#1e293b", border: "1px solid #334155", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 500, color: "#e2e8f0" },
 
   filterBar: { marginBottom: 20 },
-  searchInput: { width: "100%", padding: "10px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none" },
+  searchInput: { width: "100%", padding: "10px 14px", border: "1px solid #334155", borderRadius: 8, fontSize: 14, marginBottom: 12, boxSizing: "border-box", outline: "none", background: "#0f172a", color: "#e2e8f0" },
   featureTabs: { display: "flex", gap: 6, flexWrap: "wrap" },
-  tab: { padding: "6px 12px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, color: "#374151" },
-  tabActive: { padding: "6px 12px", background: "#3b82f6", border: "1px solid #3b82f6", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#fff" },
+  tab: { padding: "6px 12px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, color: "#94a3b8" },
+  tabActive: { padding: "6px 12px", background: "#06b6d4", border: "1px solid #06b6d4", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#fff" },
 
   mainArea: { display: "flex", gap: 20, minHeight: "65vh" },
 
-  listPanel: { width: 360, minWidth: 360, overflowY: "auto", maxHeight: "70vh", paddingRight: 8 },
+  listPanel: { width: 360, minWidth: 360, overflowY: "auto", maxHeight: "70vh", background: "#1e293b", borderRadius: 12, padding: 12 },
   featureGroup: { marginBottom: 20 },
-  groupTitle: { fontSize: 14, fontWeight: 600, color: "#374151", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 },
-  badge: { background: "#e5e7eb", color: "#6b7280", fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 10 },
-  promptCard: { padding: "10px 12px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 6, cursor: "pointer", transition: "all 0.15s" },
-  promptCardActive: { borderColor: "#3b82f6", background: "#eff6ff", boxShadow: "0 0 0 2px rgba(59,130,246,0.15)" },
-  promptKey: { fontSize: 13, fontWeight: 600, color: "#111827", marginBottom: 4 },
-  promptPreview: { fontSize: 12, color: "#6b7280", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  promptMeta: { fontSize: 11, color: "#9ca3af", marginTop: 4 },
+  groupTitle: { fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 },
+  badge: { background: "#334155", color: "#94a3b8", fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 10 },
+  promptCard: { padding: "10px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, marginBottom: 6, cursor: "pointer", transition: "all 0.15s" },
+  promptCardActive: { borderColor: "#06b6d4", background: "#164e63", boxShadow: "0 0 0 2px rgba(6,182,212,0.3)" },
+  promptKey: { fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 },
+  promptPreview: { fontSize: 12, color: "#94a3b8", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  promptMeta: { fontSize: 11, color: "#64748b", marginTop: 4 },
 
-  editPanel: { flex: 1, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" },
+  editPanel: { flex: 1, background: "#1e293b", border: "1px solid #334155", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" },
   editHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
-  editFeature: { fontSize: 12, color: "#6b7280", fontWeight: 500 },
-  editTitle: { fontSize: 18, fontWeight: 700, color: "#111827", margin: "4px 0 0" },
+  editFeature: { fontSize: 12, color: "#94a3b8", fontWeight: 500 },
+  editTitle: { fontSize: 18, fontWeight: 700, color: "#f1f5f9", margin: "4px 0 0" },
   editActions: { display: "flex", gap: 8 },
-  historyBtn: { padding: "6px 14px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 },
-  cancelBtn: { padding: "6px 14px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500 },
-  saveBtn: { padding: "6px 14px", background: "#3b82f6", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#fff" },
+  historyBtn: { padding: "6px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, color: "#e2e8f0" },
+  cancelBtn: { padding: "6px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, color: "#e2e8f0" },
+  saveBtn: { padding: "6px 14px", background: "#06b6d4", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#fff" },
 
-  editorInfo: { display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#9ca3af", marginBottom: 8 },
-  changedBadge: { background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 },
-  textarea: { flex: 1, minHeight: 400, padding: 14, border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 13, fontFamily: "'JetBrains Mono', 'D2Coding', monospace", lineHeight: 1.6, resize: "vertical", outline: "none", whiteSpace: "pre-wrap", boxSizing: "border-box" },
+  editorInfo: { display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#64748b", marginBottom: 8 },
+  changedBadge: { background: "#854d0e", color: "#fef3c7", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 },
+  textarea: { flex: 1, minHeight: 400, padding: 14, border: "1px solid #334155", borderRadius: 8, fontSize: 13, fontFamily: "'JetBrains Mono', 'D2Coding', monospace", lineHeight: 1.6, resize: "vertical", outline: "none", whiteSpace: "pre-wrap", boxSizing: "border-box", color: "#e2e8f0", background: "#0f172a" },
 
-  historyPanel: { marginTop: 16, padding: 12, background: "#f9fafb", borderRadius: 8, maxHeight: 200, overflowY: "auto" },
-  historyTitle: { fontSize: 13, fontWeight: 600, margin: "0 0 8px", color: "#374151" },
-  historyItem: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #e5e7eb" },
-  historyMeta: { fontSize: 12, color: "#6b7280" },
-  restoreBtn: { padding: "4px 10px", background: "#fff", border: "1px solid #d1d5db", borderRadius: 4, cursor: "pointer", fontSize: 11, fontWeight: 500 },
+  historyPanel: { marginTop: 16, padding: 12, background: "#0f172a", borderRadius: 8, maxHeight: 200, overflowY: "auto", border: "1px solid #334155" },
+  historyTitle: { fontSize: 13, fontWeight: 600, margin: "0 0 8px", color: "#e2e8f0" },
+  historyItem: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #334155" },
+  historyMeta: { fontSize: 12, color: "#94a3b8" },
+  restoreBtn: { padding: "4px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 4, cursor: "pointer", fontSize: 11, fontWeight: 500, color: "#e2e8f0" },
 
   emptyEdit: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
-  emptyEditText: { color: "#9ca3af", fontSize: 15, marginTop: 8 },
-  emptyText: { color: "#9ca3af", fontSize: 13, textAlign: "center", padding: 20 },
+  emptyEditText: { color: "#64748b", fontSize: 15, marginTop: 8 },
+  emptyText: { color: "#64748b", fontSize: 13, textAlign: "center", padding: 20 },
 };
