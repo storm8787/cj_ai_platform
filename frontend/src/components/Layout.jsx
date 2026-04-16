@@ -323,7 +323,7 @@ export default function Layout({ children }) {
       <footer className="bg-slate-950 text-slate-400 border-t border-slate-800 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="text-center text-sm">
-            <p>© 2026 충주시 AI 플랫폼 · All rights reserved</p>
+            <p>© 2026 충주시 AI 플랫폼 · All rights reserved.</p>
             <p className="mt-1">AI 기반 스마트 업무도구로 더 나은 행정서비스를 만들어갑니다</p>
           </div>
         </div>
