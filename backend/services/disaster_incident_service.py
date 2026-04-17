@@ -1,30 +1,35 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 
-def make_incident_key(msg: Dict[str, Any]) -> Tuple[str, str, str]:
-    emd = msg.get("emd") or ""
-    location = msg.get("location_raw") or ""
-    incident_type = msg.get("incident_type") or "inspection"
-    key_loc = location[:40] if location else emd
-    return (emd.strip(), key_loc.strip(), incident_type)
+def make_incident_key(msg: Dict) -> Tuple[str, str, str]:
+    emd = (msg.get("emd") or "").strip()
+    location = (msg.get("location_raw") or "").strip()
+    incident_type = (msg.get("incident_type") or "inspection").strip()
+
+    key_loc = location[:50] if location else emd
+    return (emd, key_loc, incident_type)
 
 
-def should_include_as_incident(msg: Dict[str, Any]) -> bool:
-    if msg["message_type"] in ["system_invite", "deleted", "video"]:
+def should_include_as_incident(msg: Dict) -> bool:
+    message_type = msg.get("message_type")
+
+    if message_type in ["system_invite", "deleted", "video"]:
         return False
-    if msg["message_type"] == "photo":
+
+    if message_type == "photo":
         return False
+
     text = (msg.get("raw_text") or "").strip()
-    if text in ["네", "네, 감사합니다", "감사합니다"]:
+    if text in ["네", "감사합니다", "네, 감사합니다", "고맙습니다", "확인"]:
         return False
+
     return True
 
 
-def build_incidents(parsed_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    groups: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
-    photo_buffer: List[Dict[str, Any]] = []
+def build_incidents(parsed_messages: List[Dict]) -> List[Dict]:
+    groups = defaultdict(list)
+    photo_buffer: List[Dict] = []
 
     for msg in parsed_messages:
         if msg["message_type"] == "photo":
@@ -37,35 +42,53 @@ def build_incidents(parsed_messages: List[Dict[str, Any]]) -> List[Dict[str, Any
         key = make_incident_key(msg)
         groups[key].append(msg)
 
-        # 바로 직전 사진을 같은 사건으로 귀속
+        # 직전 사진들을 이 사건에 붙임
         if photo_buffer:
             for p in photo_buffer:
                 p["_attach_to_key"] = key
             groups[key].extend(photo_buffer)
             photo_buffer = []
 
-    incidents: List[Dict[str, Any]] = []
+    incidents: List[Dict] = []
+
     for _, items in groups.items():
         items_sorted = sorted(items, key=lambda x: x["message_time"])
         first = items_sorted[0]
         last = items_sorted[-1]
+
         photo_count = sum(i.get("photo_count", 0) for i in items_sorted if i["message_type"] == "photo")
-        summary_source = next((i for i in items_sorted if i["message_type"] == "normal"), first)
 
-        status = last.get("status") or first.get("status") or "reported"
-        if any(i.get("status") == "closed" for i in items_sorted):
-            status = "closed"
-        elif any(i.get("status") == "completed" for i in items_sorted):
-            status = "completed"
-        elif any(i.get("status") == "in_progress" for i in items_sorted):
-            status = "in_progress"
-        elif any(i.get("status") == "monitoring" for i in items_sorted):
-            status = "monitoring"
+        normal_msgs = [i for i in items_sorted if i["message_type"] == "normal"]
+        summary_source = normal_msgs[0] if normal_msgs else first
 
-        action_texts = []
+        # 상태 우선순위
+        statuses = [i.get("status") for i in items_sorted if i.get("status")]
+        final_status = "reported"
+        if "closed" in statuses:
+            final_status = "closed"
+        elif "completed" in statuses:
+            final_status = "completed"
+        elif "in_progress" in statuses:
+            final_status = "in_progress"
+        elif "monitoring" in statuses:
+            final_status = "monitoring"
+        elif "no_issue" in statuses:
+            final_status = "no_issue"
+
+        # 기관 목록
+        agencies = []
         for i in items_sorted:
-            if i["message_type"] == "normal":
-                action_texts.append((i.get("raw_text") or "").strip())
+            ag = (i.get("related_agency") or "").strip()
+            if ag:
+                agencies.extend([a.strip() for a in ag.split(",") if a.strip()])
+        agencies = sorted(set(agencies))
+
+        # action text
+        action_texts = []
+        for i in normal_msgs[:8]:
+            raw = (i.get("raw_text") or "").strip()
+            if raw:
+                action_texts.append(" ".join(raw.split()))
 
         incidents.append(
             {
@@ -77,11 +100,11 @@ def build_incidents(parsed_messages: List[Dict[str, Any]]) -> List[Dict[str, Any
                 "location_normalized": first.get("location_raw"),
                 "incident_type": first.get("incident_type") or "inspection",
                 "severity": "medium",
-                "status": status,
+                "status": final_status,
                 "summary": summary_source.get("summary"),
                 "damage_text": summary_source.get("summary"),
-                "action_text": " | ".join(action_texts[:5])[:1000],
-                "related_agency": ", ".join(sorted(set(filter(None, [i.get("related_agency") for i in items_sorted])))),
+                "action_text": " | ".join(action_texts)[:1500],
+                "related_agency": ", ".join(agencies),
                 "reporter_name": first.get("sender_name"),
                 "photo_count": photo_count,
                 "message_count": len(items_sorted),
