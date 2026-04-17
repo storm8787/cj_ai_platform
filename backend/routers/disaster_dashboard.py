@@ -275,3 +275,14 @@ def get_reports(upload_id: str = None):
         query = query.eq("upload_id", upload_id)
     res = query.execute()
     return {"items": res.data or []}
+
+@router.get("/uploads")
+def get_disaster_uploads(limit: int = 20):
+    res = (
+        supabase.table("disaster_uploads")
+        .select("*")
+        .order("uploaded_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return {"items": res.data or []}
