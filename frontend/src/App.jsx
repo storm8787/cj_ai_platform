@@ -30,6 +30,7 @@ import TripReport from './pages/TripReport';
 import LawChatbot from './pages/LawChatbot';
 import TimelinePlanner from "./pages/TimelinePlanner";
 import PromptManager from './pages/PromptManager';
+import HwpxConverter from './pages/HwpxConverter';
 
 
 // 보호된 라우트 컴포넌트
@@ -236,6 +237,14 @@ function AppRoutes() {
             <Layout><PromptManager /></Layout>
           </ProtectedRoute>
         } 
+      />
+      <Route
+        path="/hwpx-converter"
+        element={
+          <ProtectedRoute>
+            <Layout><HwpxConverter /></Layout>
+          </ProtectedRoute>
+        }
       />
 
       {/* 게시판 라우트 */}

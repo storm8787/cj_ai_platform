@@ -119,12 +119,19 @@ const services = [
     description: "AI 일정 추천 + 간트차트 시각화",
     path: "/timeline",
     category: 'data',
+  },
+  {
+    icon: '📃',
+    title: "MD 파일 변환기",
+    description: "한글문서를 md파일로 변환",
+    path: "/hwpx-converter",
+    category: 'document',
   }
 ];
 
 // 카테고리별 순서 정의 (각 카테고리 클릭 시 이 순서로 표시)
 const categoryOrder = {
-  document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report'],  // trip-report 추가
+  document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report', 'hwpx-converter'],  // trip-report 추가
   data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger', '/timeline'],
   translate: ['/news', '/translator', '/meeting-summary'],
   chatbot: ['/election-law', '/law-chatbot'],
