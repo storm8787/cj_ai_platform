@@ -14,70 +14,168 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/hwpx-converter", tags=["HWPX Converter"])
 
-HWPX_NS = {
-    "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
-    "hp6": "http://www.hancom.co.kr/hwpml/2011/paragraph6",
-    "hs": "http://www.hancom.co.kr/hwpml/2011/section",
-    "hr": "http://www.hancom.co.kr/hwpml/2011/run",
-    "hc": "http://www.hancom.co.kr/hwpml/2011/core",
-    "hh": "http://www.hancom.co.kr/hwpml/2011/head",
-    "ha": "http://www.hancom.co.kr/hwpml/2011/app",
-    "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
-}
-
-OUTLINE_LEVEL_MAP = {
-    "0": "#",
-    "1": "##",
-    "2": "###",
-    "3": "####",
-    "4": "#####",
-    "5": "######",
-}
+HP_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
+HH_NS = "http://www.hancom.co.kr/hwpml/2011/head"
+HS_NS = "http://www.hancom.co.kr/hwpml/2011/section"
 
 
-def _extract_text_from_run(run_elem, ns):
-    texts = []
-    for t in run_elem.iter():
-        tag = etree.QName(t.tag).localname if isinstance(t.tag, str) else ""
-        if tag == "t" and t.text:
-            texts.append(t.text)
-        elif tag == "fwSpace":
-            count = t.get("count", "1")
-            try:
-                texts.append(" " * int(count))
-            except ValueError:
-                texts.append(" ")
-        elif tag == "tab":
-            texts.append("\t")
-        elif tag == "lineBreak" or tag == "linesegarray":
-            texts.append("\n")
-    return "".join(texts)
+def _tag(ns, name):
+    return "{%s}%s" % (ns, name)
 
 
-def _get_outline_level(para_elem, ns):
-    for attr_name in ["outlineLevel", "outlineLvl"]:
-        val = para_elem.get(attr_name)
-        if val and val != "none":
-            return val
+# -----------------------------------------
+# Header parsing (font size / bold info)
+# -----------------------------------------
+
+def _parse_char_properties(zf):
+    """Parse header.xml to build charPrIDRef -> {height, bold} map"""
+    char_map = {}
+    try:
+        hdr_data = zf.read("Contents/header.xml")
+        hdr_root = etree.fromstring(hdr_data)
+        char_props = hdr_root.find(".//" + _tag(HH_NS, "charProperties"))
+        if char_props is not None:
+            for cp in char_props.findall(_tag(HH_NS, "charPr")):
+                cp_id = cp.get("id")
+                if cp_id is None:
+                    continue
+                height = int(cp.get("height", "0"))
+                has_bold = cp.find(".//" + _tag(HH_NS, "bold")) is not None
+                char_map[cp_id] = {"height": height, "bold": has_bold}
+    except Exception as e:
+        logger.warning("[hwpx-converter] header parse failed: %s", e)
+    return char_map
+
+
+# -----------------------------------------
+# Text extraction from a single <p> element
+# -----------------------------------------
+
+def _extract_paragraph_text(p_elem):
+    """Extract text from <hp:p>, handling <hp:t>, fwSpace, tab, lineBreak.
+    Only collects text from <hp:run> children, NOT from nested tables."""
+    parts = []
+    for run in p_elem.findall(_tag(HP_NS, "run")):
+        # Skip runs that contain tables
+        if run.find(".//" + _tag(HP_NS, "tbl")) is not None:
+            continue
+        for child in run:
+            localname = etree.QName(child.tag).localname if isinstance(child.tag, str) else ""
+            if localname == "t" and child.text:
+                parts.append(child.text)
+            elif localname == "fwSpace":
+                count = child.get("count", "1")
+                try:
+                    parts.append(" " * int(count))
+                except ValueError:
+                    parts.append(" ")
+            elif localname == "tab":
+                parts.append("\t")
+            elif localname in ("lineBreak", "linesegarray"):
+                pass  # ignore line segments
+    return "".join(parts).strip()
+
+
+def _get_char_pr_id(p_elem):
+    """Get the charPrIDRef of the first text-bearing run"""
+    for run in p_elem.findall(_tag(HP_NS, "run")):
+        if run.find(".//" + _tag(HP_NS, "tbl")) is not None:
+            continue
+        if run.find(_tag(HP_NS, "t")) is not None:
+            return run.get("charPrIDRef")
     return None
 
 
-def _detect_bold(run_elem, ns):
-    for child in run_elem.iter():
-        tag = etree.QName(child.tag).localname if isinstance(child.tag, str) else ""
-        if tag == "charPr" or tag == "rPr":
-            bold = child.get("bold")
-            if bold and bold.lower() in ("true", "1"):
-                return True
-    return False
+# -----------------------------------------
+# Table parsing
+# -----------------------------------------
 
+def _parse_table_to_md(tbl_elem, char_map, depth=0):
+    """Convert <hp:tbl> to Markdown table string.
+    Handles nested tables by recursively converting them inline."""
+    rows_data = []
+    max_cols = 0
+
+    for tr in tbl_elem.findall(_tag(HP_NS, "tr")):
+        cells = []
+        for tc in tr.findall(_tag(HP_NS, "tc")):
+            # Check for nested tables inside this cell
+            nested_tbls = tc.findall(".//" + _tag(HP_NS, "tbl"))
+
+            cell_parts = []
+            # Collect direct text from subList > p (not inside nested tables)
+            for sl in tc.findall(_tag(HP_NS, "subList")):
+                for p in sl.findall(_tag(HP_NS, "p")):
+                    # Check if this p is inside a nested tbl
+                    in_nested = False
+                    ancestor = p.getparent()
+                    while ancestor is not None and ancestor is not tc:
+                        if etree.QName(ancestor.tag).localname == "tbl":
+                            in_nested = True
+                            break
+                        ancestor = ancestor.getparent()
+                    if in_nested:
+                        continue
+                    text = _extract_paragraph_text(p)
+                    if text:
+                        cell_parts.append(text)
+
+            # If cell has nested tables, convert them and append
+            if nested_tbls and depth < 2:
+                for nt in nested_tbls:
+                    nested_md = _parse_table_to_md(nt, char_map, depth + 1)
+                    if nested_md:
+                        cell_parts.append(nested_md)
+
+            cell_text = " ".join(cell_parts)
+            cell_text = cell_text.replace("\n", " ").replace("\r", "")
+            cell_text = cell_text.replace("|", "\\|")
+            cells.append(cell_text if cell_text else " ")
+
+        if cells:
+            rows_data.append(cells)
+            max_cols = max(max_cols, len(cells))
+
+    if not rows_data or max_cols == 0:
+        return ""
+
+    # Pad rows to same column count
+    for row in rows_data:
+        while len(row) < max_cols:
+            row.append(" ")
+
+    # Remove completely empty rows
+    filtered_rows = []
+    for row in rows_data:
+        if any(c.strip() for c in row):
+            filtered_rows.append(row)
+    if not filtered_rows:
+        return ""
+    rows_data = filtered_rows
+
+    # Build markdown table
+    md_lines = []
+    header = rows_data[0]
+    md_lines.append("| " + " | ".join(header) + " |")
+    md_lines.append("| " + " | ".join(["---"] * max_cols) + " |")
+    for row in rows_data[1:]:
+        md_lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(md_lines)
+
+
+# -----------------------------------------
+# Image extraction
+# -----------------------------------------
 
 def _extract_images_from_hwpx(zf):
     images = {}
-    img_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".wmf", ".emf"]
+    img_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"]
     for name in zf.namelist():
         lower = name.lower()
-        if ("bindata" in lower or "media" in lower) and any(lower.endswith(ext) for ext in img_extensions):
+        if ("bindata" in lower or "media" in lower or "preview" not in lower) and any(lower.endswith(ext) for ext in img_extensions):
+            if "preview" in lower:
+                continue
             try:
                 data = zf.read(name)
                 b64 = base64.b64encode(data).decode("utf-8")
@@ -87,8 +185,6 @@ def _extract_images_from_hwpx(zf):
                     mime = "image/jpeg"
                 elif lower.endswith(".gif"):
                     mime = "image/gif"
-                elif lower.endswith(".bmp"):
-                    mime = "image/bmp"
                 else:
                     mime = "image/png"
                 basename = os.path.basename(name)
@@ -96,158 +192,157 @@ def _extract_images_from_hwpx(zf):
                 images[key] = (mime, b64)
                 images[name] = (mime, b64)
                 images[basename] = (mime, b64)
-                logger.info("[hwpx-converter] image extracted: %s (%d bytes)", name, len(data))
             except Exception as e:
                 logger.warning("[hwpx-converter] image extract failed: %s - %s", name, e)
     return images
 
 
-def _find_image_ref(para_elem, ns):
-    for child in para_elem.iter():
-        tag = etree.QName(child.tag).localname if isinstance(child.tag, str) else ""
-        if tag in ("img", "picture", "drawText", "shapeObject", "pic"):
+def _find_image_ref(p_elem):
+    """Find image reference in paragraph"""
+    for child in p_elem.iter():
+        localname = etree.QName(child.tag).localname if isinstance(child.tag, str) else ""
+        if localname in ("img", "picture", "pic", "shapeObject"):
             bin_id = child.get("binDataId") or child.get("binaryItemId")
             if bin_id:
                 return bin_id
-        if tag == "binDataId" and child.text:
+        if localname == "binDataId" and child.text:
             return child.text
-        if tag in ("imgData", "binItem", "image"):
+        if localname in ("imgData", "binItem", "image"):
             href = child.get("href") or child.get("src") or child.get("binDataId")
             if href:
                 return href
     return None
 
 
-def _parse_table(tbl_elem, ns):
-    rows_data = []
-    max_cols = 0
-    for row in tbl_elem.iter():
-        tag = etree.QName(row.tag).localname if isinstance(row.tag, str) else ""
-        if tag != "tr":
-            continue
-        cells = []
-        for cell in row.iter():
-            cell_tag = etree.QName(cell.tag).localname if isinstance(cell.tag, str) else ""
-            if cell_tag != "tc":
-                continue
-            cell_texts = []
-            for t_elem in cell.iter():
-                t_tag = etree.QName(t_elem.tag).localname if isinstance(t_elem.tag, str) else ""
-                if t_tag == "t" and t_elem.text:
-                    cell_texts.append(t_elem.text.strip())
-                elif t_tag == "fwSpace":
-                    cell_texts.append(" ")
-            cell_text = " ".join(cell_texts).strip()
-            cell_text = cell_text.replace("\n", " ").replace("\r", "")
-            cell_text = cell_text.replace("|", "\\|")
-            cells.append(cell_text if cell_text else " ")
-        if cells:
-            rows_data.append(cells)
-            max_cols = max(max_cols, len(cells))
-    if not rows_data or max_cols == 0:
-        return ""
-    for row in rows_data:
-        while len(row) < max_cols:
-            row.append(" ")
-    md_lines = []
-    header = rows_data[0]
-    md_lines.append("| " + " | ".join(header) + " |")
-    md_lines.append("| " + " | ".join(["---"] * max_cols) + " |")
-    for row in rows_data[1:]:
-        md_lines.append("| " + " | ".join(row) + " |")
-    return "\n".join(md_lines)
-
+# -----------------------------------------
+# Section conversion
+# -----------------------------------------
 
 def _find_section_files(zf):
     section_files = []
     for name in zf.namelist():
         lower = name.lower()
-        if ("section" in lower or "content" in lower) and lower.endswith(".xml"):
+        if "section" in lower and lower.endswith(".xml"):
             section_files.append(name)
+    if not section_files:
+        # Fallback: look for content XML files
+        for name in zf.namelist():
+            lower = name.lower()
+            if lower.startswith("contents/") and lower.endswith(".xml") and "header" not in lower and "settings" not in lower:
+                try:
+                    content = zf.read(name)
+                    if b"<hp:" in content or b"<hs:" in content:
+                        section_files.append(name)
+                except Exception:
+                    pass
     section_files.sort()
     return section_files
 
 
-def _convert_section_to_markdown(section_xml, images, image_mode, image_counter):
+def _convert_section(section_xml, char_map, images, image_mode, image_counter):
+    """Convert one section XML to markdown lines"""
     try:
         root = etree.fromstring(section_xml)
     except etree.XMLSyntaxError as e:
         logger.warning("[hwpx-converter] XML parse error: %s", e)
-        return ""
-    md_parts = []
-    for elem in root.iter():
-        tag = etree.QName(elem.tag).localname if isinstance(elem.tag, str) else ""
-        if tag == "tbl":
-            table_md = _parse_table(elem, HWPX_NS)
-            if table_md:
-                md_parts.append("")
-                md_parts.append(table_md)
-                md_parts.append("")
-            continue
-        if tag not in ("p", "para", "paragraph"):
-            continue
-        parent = elem.getparent()
-        if parent is not None:
-            parent_tag = etree.QName(parent.tag).localname if isinstance(parent.tag, str) else ""
-            if parent_tag in ("tc", "cell", "tableCell"):
-                continue
-            grandparent = parent.getparent()
-            if grandparent is not None:
-                gp_tag = etree.QName(grandparent.tag).localname if isinstance(grandparent.tag, str) else ""
-                if gp_tag in ("tc", "cell", "tableCell"):
-                    continue
-        img_ref = _find_image_ref(elem, HWPX_NS)
-        if img_ref and images:
-            image_counter[0] += 1
-            img_num = image_counter[0]
-            img_data = None
-            for key_candidate in [img_ref, "image" + img_ref, "IMG" + img_ref]:
-                if key_candidate in images:
-                    img_data = images[key_candidate]
-                    break
-            if not img_data:
-                for img_key, img_val in images.items():
-                    if img_ref in img_key or img_key in img_ref:
-                        img_data = img_val
-                        break
-            if img_data:
-                mime, b64 = img_data
-                if image_mode == "inline":
-                    md_parts.append("")
-                    md_parts.append("![image " + str(img_num) + "](data:" + mime + ";base64," + b64 + ")")
-                    md_parts.append("")
-                else:
-                    ext = mime.split("/")[-1]
-                    md_parts.append("")
-                    md_parts.append("![image " + str(img_num) + "](images/image_" + str(img_num) + "." + ext + ")")
-                    md_parts.append("")
-        para_text = _extract_text_from_run(elem, HWPX_NS)
-        para_text = para_text.strip()
-        if not para_text:
-            if md_parts and md_parts[-1] != "":
-                md_parts.append("")
-            continue
-        outline_level = _get_outline_level(elem, HWPX_NS)
-        if outline_level and outline_level in OUTLINE_LEVEL_MAP:
-            heading_prefix = OUTLINE_LEVEL_MAP[outline_level]
-            md_parts.append("")
-            md_parts.append(heading_prefix + " " + para_text)
-            md_parts.append("")
-        else:
-            is_all_bold = False
-            runs = list(elem.iter())
-            if runs and len(para_text) < 100:
-                bold_count = sum(1 for r in runs if _detect_bold(r, HWPX_NS))
-                if bold_count > 0 and len(para_text) < 50:
-                    is_all_bold = True
-            if is_all_bold:
-                md_parts.append("")
-                md_parts.append("**" + para_text + "**")
-                md_parts.append("")
-            else:
-                md_parts.append(para_text)
-    return "\n".join(md_parts)
+        return []
 
+    md_lines = []
+
+    # Process only top-level <hp:p> elements (direct children of <hs:sec>)
+    for p_elem in root.findall(_tag(HP_NS, "p")):
+
+        # Check if this paragraph contains a table
+        tbl = None
+        for run in p_elem.findall(_tag(HP_NS, "run")):
+            t = run.find(_tag(HP_NS, "tbl"))
+            if t is not None:
+                tbl = t
+                break
+
+        if tbl is not None:
+            # This paragraph holds a table
+            # First output any text before the table (rare but possible)
+            pre_text = _extract_paragraph_text(p_elem)
+            if pre_text:
+                md_lines.append(pre_text)
+                md_lines.append("")
+
+            # Convert the table
+            table_md = _parse_table_to_md(tbl, char_map, depth=0)
+            if table_md:
+                md_lines.append("")
+                md_lines.append(table_md)
+                md_lines.append("")
+        else:
+            # Regular paragraph (no table)
+            # Check for image
+            img_ref = _find_image_ref(p_elem)
+            if img_ref and images:
+                image_counter[0] += 1
+                img_num = image_counter[0]
+                img_data = None
+                for kc in [img_ref, "image" + img_ref, "IMG" + img_ref]:
+                    if kc in images:
+                        img_data = images[kc]
+                        break
+                if not img_data:
+                    for ik, iv in images.items():
+                        if img_ref in ik or ik in img_ref:
+                            img_data = iv
+                            break
+                if img_data:
+                    mime, b64 = img_data
+                    if image_mode == "inline":
+                        md_lines.append("")
+                        md_lines.append("![image " + str(img_num) + "](data:" + mime + ";base64," + b64 + ")")
+                        md_lines.append("")
+                    else:
+                        ext = mime.split("/")[-1]
+                        md_lines.append("")
+                        md_lines.append("![image " + str(img_num) + "](images/image_" + str(img_num) + "." + ext + ")")
+                        md_lines.append("")
+
+            # Extract text
+            text = _extract_paragraph_text(p_elem)
+            if not text:
+                if md_lines and md_lines[-1] != "":
+                    md_lines.append("")
+                continue
+
+            # Determine if this is a heading based on font size
+            char_id = _get_char_pr_id(p_elem)
+            is_title = False
+            if char_id and char_id in char_map:
+                info = char_map[char_id]
+                # height >= 1400 and bold -> heading level 1
+                # height >= 1200 and bold -> heading level 2
+                # height >= 1400 without bold -> heading level 2
+                if info["height"] >= 1400 and info["bold"]:
+                    md_lines.append("")
+                    md_lines.append("## " + text)
+                    md_lines.append("")
+                    is_title = True
+                elif info["height"] >= 1400:
+                    md_lines.append("")
+                    md_lines.append("## " + text)
+                    md_lines.append("")
+                    is_title = True
+                elif info["height"] >= 1200 and info["bold"]:
+                    md_lines.append("")
+                    md_lines.append("### " + text)
+                    md_lines.append("")
+                    is_title = True
+
+            if not is_title:
+                md_lines.append(text)
+
+    return md_lines
+
+
+# -----------------------------------------
+# Post-processing
+# -----------------------------------------
 
 def _clean_markdown(md_text):
     lines = md_text.split("\n")
@@ -260,47 +355,55 @@ def _clean_markdown(md_text):
         cleaned.append(line)
         prev_empty = is_empty
     result = "\n".join(cleaned).strip()
+    # Ensure blank lines around tables
     result = re.sub(r"(\S)\n(\|)", r"\1\n\n\2", result)
     result = re.sub(r"(\|[^\n]*)\n(\S)", r"\1\n\n\2", result)
     return result
 
+
+# -----------------------------------------
+# Main conversion
+# -----------------------------------------
 
 def convert_hwpx_to_markdown(file_bytes, image_mode="inline", filename="document"):
     try:
         zf = zipfile.ZipFile(io.BytesIO(file_bytes), "r")
     except zipfile.BadZipFile:
         raise ValueError("Not a valid HWPX file.")
+
+    # Parse header for char properties
+    char_map = _parse_char_properties(zf)
+
+    # Extract images
     images = _extract_images_from_hwpx(zf)
+
+    # Find section files
     section_files = _find_section_files(zf)
     if not section_files:
-        for name in zf.namelist():
-            if name.lower().endswith(".xml") and "header" not in name.lower() and "settings" not in name.lower():
-                try:
-                    content = zf.read(name)
-                    if b"<hp:" in content or b"<p " in content or b"<para" in content:
-                        section_files.append(name)
-                except Exception:
-                    pass
-        section_files.sort()
-    if not section_files:
         raise ValueError("No content sections found in HWPX file.")
-    all_md_parts = []
+
+    all_md_lines = []
     image_counter = [0]
     table_count = 0
+
     for sf in section_files:
         try:
             section_xml = zf.read(sf)
-            section_md = _convert_section_to_markdown(section_xml, images, image_mode, image_counter)
-            if section_md.strip():
-                all_md_parts.append(section_md)
-                table_count += section_md.count("| ---")
+            lines = _convert_section(section_xml, char_map, images, image_mode, image_counter)
+            if lines:
+                section_text = "\n".join(lines)
+                table_count += section_text.count("| ---")
+                all_md_lines.append(section_text)
         except Exception as e:
-            logger.warning("[hwpx-converter] section convert failed: %s - %s", sf, e)
-    if len(all_md_parts) > 1:
-        full_md = "\n\n---\n\n".join(all_md_parts)
+            logger.warning("[hwpx-converter] section failed: %s - %s", sf, e)
+
+    if len(all_md_lines) > 1:
+        full_md = "\n\n---\n\n".join(all_md_lines)
     else:
-        full_md = "\n".join(all_md_parts)
+        full_md = "\n".join(all_md_lines)
     full_md = _clean_markdown(full_md)
+
+    # Separate mode images
     extracted_images = []
     if image_mode == "separate":
         seen = set()
@@ -313,7 +416,9 @@ def convert_hwpx_to_markdown(file_bytes, image_mode="inline", filename="document
                     "mime": mime,
                     "data": b64,
                 })
+
     zf.close()
+
     return {
         "markdown": full_md,
         "images": extracted_images,
@@ -324,6 +429,10 @@ def convert_hwpx_to_markdown(file_bytes, image_mode="inline", filename="document
         }
     }
 
+
+# -----------------------------------------
+# API Endpoints
+# -----------------------------------------
 
 @router.post("/convert")
 async def convert_hwpx(
