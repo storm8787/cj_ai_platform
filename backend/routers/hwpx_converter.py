@@ -5,10 +5,13 @@ import io
 import re
 import logging
 import os
-from typing import Optional
+from typing import Any, Dict
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from lxml import etree
+
+from services.kordoc_service import convert_hwpx_with_kordoc, KordocError
+from utils.markdown_postprocess import clean_markdown, count_stats
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +27,10 @@ def _tag(ns, name):
 
 
 # -----------------------------------------
-# Header parsing (font size / bold info)
+# 기존 Python fallback 파서
 # -----------------------------------------
 
 def _parse_char_properties(zf):
-    """Parse header.xml to build charPrIDRef -> {height, bold} map"""
     char_map = {}
     try:
         hdr_data = zf.read("Contents/header.xml")
@@ -47,16 +49,9 @@ def _parse_char_properties(zf):
     return char_map
 
 
-# -----------------------------------------
-# Text extraction from a single <p> element
-# -----------------------------------------
-
 def _extract_paragraph_text(p_elem):
-    """Extract text from <hp:p>, handling <hp:t>, fwSpace, tab, lineBreak.
-    Only collects text from <hp:run> children, NOT from nested tables."""
     parts = []
     for run in p_elem.findall(_tag(HP_NS, "run")):
-        # Skip runs that contain tables
         if run.find(".//" + _tag(HP_NS, "tbl")) is not None:
             continue
         for child in run:
@@ -72,12 +67,11 @@ def _extract_paragraph_text(p_elem):
             elif localname == "tab":
                 parts.append("\t")
             elif localname in ("lineBreak", "linesegarray"):
-                pass  # ignore line segments
+                pass
     return "".join(parts).strip()
 
 
 def _get_char_pr_id(p_elem):
-    """Get the charPrIDRef of the first text-bearing run"""
     for run in p_elem.findall(_tag(HP_NS, "run")):
         if run.find(".//" + _tag(HP_NS, "tbl")) is not None:
             continue
@@ -86,27 +80,18 @@ def _get_char_pr_id(p_elem):
     return None
 
 
-# -----------------------------------------
-# Table parsing
-# -----------------------------------------
-
 def _parse_table_to_md(tbl_elem, char_map, depth=0):
-    """Convert <hp:tbl> to Markdown table string.
-    Handles nested tables by recursively converting them inline."""
     rows_data = []
     max_cols = 0
 
     for tr in tbl_elem.findall(_tag(HP_NS, "tr")):
         cells = []
         for tc in tr.findall(_tag(HP_NS, "tc")):
-            # Check for nested tables inside this cell
             nested_tbls = tc.findall(".//" + _tag(HP_NS, "tbl"))
-
             cell_parts = []
-            # Collect direct text from subList > p (not inside nested tables)
+
             for sl in tc.findall(_tag(HP_NS, "subList")):
                 for p in sl.findall(_tag(HP_NS, "p")):
-                    # Check if this p is inside a nested tbl
                     in_nested = False
                     ancestor = p.getparent()
                     while ancestor is not None and ancestor is not tc:
@@ -120,7 +105,6 @@ def _parse_table_to_md(tbl_elem, char_map, depth=0):
                     if text:
                         cell_parts.append(text)
 
-            # If cell has nested tables, convert them and append
             if nested_tbls and depth < 2:
                 for nt in nested_tbls:
                     nested_md = _parse_table_to_md(nt, char_map, depth + 1)
@@ -139,21 +123,18 @@ def _parse_table_to_md(tbl_elem, char_map, depth=0):
     if not rows_data or max_cols == 0:
         return ""
 
-    # Pad rows to same column count
     for row in rows_data:
         while len(row) < max_cols:
             row.append(" ")
 
-    # Remove completely empty rows
     filtered_rows = []
     for row in rows_data:
         if any(c.strip() for c in row):
             filtered_rows.append(row)
     if not filtered_rows:
         return ""
-    rows_data = filtered_rows
 
-    # Build markdown table
+    rows_data = filtered_rows
     md_lines = []
     header = rows_data[0]
     md_lines.append("| " + " | ".join(header) + " |")
@@ -163,10 +144,6 @@ def _parse_table_to_md(tbl_elem, char_map, depth=0):
 
     return "\n".join(md_lines)
 
-
-# -----------------------------------------
-# Image extraction
-# -----------------------------------------
 
 def _extract_images_from_hwpx(zf):
     images = {}
@@ -198,7 +175,6 @@ def _extract_images_from_hwpx(zf):
 
 
 def _find_image_ref(p_elem):
-    """Find image reference in paragraph"""
     for child in p_elem.iter():
         localname = etree.QName(child.tag).localname if isinstance(child.tag, str) else ""
         if localname in ("img", "picture", "pic", "shapeObject"):
@@ -214,10 +190,6 @@ def _find_image_ref(p_elem):
     return None
 
 
-# -----------------------------------------
-# Section conversion
-# -----------------------------------------
-
 def _find_section_files(zf):
     section_files = []
     for name in zf.namelist():
@@ -225,7 +197,6 @@ def _find_section_files(zf):
         if "section" in lower and lower.endswith(".xml"):
             section_files.append(name)
     if not section_files:
-        # Fallback: look for content XML files
         for name in zf.namelist():
             lower = name.lower()
             if lower.startswith("contents/") and lower.endswith(".xml") and "header" not in lower and "settings" not in lower:
@@ -240,7 +211,6 @@ def _find_section_files(zf):
 
 
 def _convert_section(section_xml, char_map, images, image_mode, image_counter):
-    """Convert one section XML to markdown lines"""
     try:
         root = etree.fromstring(section_xml)
     except etree.XMLSyntaxError as e:
@@ -249,10 +219,7 @@ def _convert_section(section_xml, char_map, images, image_mode, image_counter):
 
     md_lines = []
 
-    # Process only top-level <hp:p> elements (direct children of <hs:sec>)
     for p_elem in root.findall(_tag(HP_NS, "p")):
-
-        # Check if this paragraph contains a table
         tbl = None
         for run in p_elem.findall(_tag(HP_NS, "run")):
             t = run.find(_tag(HP_NS, "tbl"))
@@ -261,22 +228,17 @@ def _convert_section(section_xml, char_map, images, image_mode, image_counter):
                 break
 
         if tbl is not None:
-            # This paragraph holds a table
-            # First output any text before the table (rare but possible)
             pre_text = _extract_paragraph_text(p_elem)
             if pre_text:
                 md_lines.append(pre_text)
                 md_lines.append("")
 
-            # Convert the table
             table_md = _parse_table_to_md(tbl, char_map, depth=0)
             if table_md:
                 md_lines.append("")
                 md_lines.append(table_md)
                 md_lines.append("")
         else:
-            # Regular paragraph (no table)
-            # Check for image
             img_ref = _find_image_ref(p_elem)
             if img_ref and images:
                 image_counter[0] += 1
@@ -297,27 +259,17 @@ def _convert_section(section_xml, char_map, images, image_mode, image_counter):
                         md_lines.append("")
                         md_lines.append("![image " + str(img_num) + "](data:" + mime + ";base64," + b64 + ")")
                         md_lines.append("")
-                    else:
-                        ext = mime.split("/")[-1]
-                        md_lines.append("")
-                        md_lines.append("![image " + str(img_num) + "](images/image_" + str(img_num) + "." + ext + ")")
-                        md_lines.append("")
 
-            # Extract text
             text = _extract_paragraph_text(p_elem)
             if not text:
                 if md_lines and md_lines[-1] != "":
                     md_lines.append("")
                 continue
 
-            # Determine if this is a heading based on font size
             char_id = _get_char_pr_id(p_elem)
             is_title = False
             if char_id and char_id in char_map:
                 info = char_map[char_id]
-                # height >= 1400 and bold -> heading level 1
-                # height >= 1200 and bold -> heading level 2
-                # height >= 1400 without bold -> heading level 2
                 if info["height"] >= 1400 and info["bold"]:
                     md_lines.append("")
                     md_lines.append("## " + text)
@@ -340,11 +292,7 @@ def _convert_section(section_xml, char_map, images, image_mode, image_counter):
     return md_lines
 
 
-# -----------------------------------------
-# Post-processing
-# -----------------------------------------
-
-def _clean_markdown(md_text):
+def _clean_markdown_fallback(md_text):
     lines = md_text.split("\n")
     cleaned = []
     prev_empty = False
@@ -355,15 +303,10 @@ def _clean_markdown(md_text):
         cleaned.append(line)
         prev_empty = is_empty
     result = "\n".join(cleaned).strip()
-    # Ensure blank lines around tables
     result = re.sub(r"(\S)\n(\|)", r"\1\n\n\2", result)
     result = re.sub(r"(\|[^\n]*)\n(\S)", r"\1\n\n\2", result)
     return result
 
-
-# -----------------------------------------
-# Main conversion
-# -----------------------------------------
 
 def convert_hwpx_to_markdown(file_bytes, image_mode="inline", filename="document"):
     try:
@@ -371,13 +314,8 @@ def convert_hwpx_to_markdown(file_bytes, image_mode="inline", filename="document
     except zipfile.BadZipFile:
         raise ValueError("Not a valid HWPX file.")
 
-    # Parse header for char properties
     char_map = _parse_char_properties(zf)
-
-    # Extract images
     images = _extract_images_from_hwpx(zf)
-
-    # Find section files
     section_files = _find_section_files(zf)
     if not section_files:
         raise ValueError("No content sections found in HWPX file.")
@@ -401,13 +339,13 @@ def convert_hwpx_to_markdown(file_bytes, image_mode="inline", filename="document
         full_md = "\n\n---\n\n".join(all_md_lines)
     else:
         full_md = "\n".join(all_md_lines)
-    full_md = _clean_markdown(full_md)
 
-    # Separate mode images
+    full_md = _clean_markdown_fallback(full_md)
+
     extracted_images = []
     if image_mode == "separate":
         seen = set()
-        for key, (mime, b64) in images.items():
+        for _, (mime, b64) in images.items():
             if b64 not in seen:
                 seen.add(b64)
                 ext = mime.split("/")[-1]
@@ -430,6 +368,57 @@ def convert_hwpx_to_markdown(file_bytes, image_mode="inline", filename="document
     }
 
 
+def _run_best_effort_conversion(file_bytes: bytes, filename: str, image_mode: str) -> Dict[str, Any]:
+    errors = []
+
+    try:
+        kordoc_result = convert_hwpx_with_kordoc(
+            file_bytes=file_bytes,
+            filename=filename,
+            image_mode=image_mode,
+            timeout_sec=120,
+        )
+        markdown = clean_markdown(kordoc_result["markdown"])
+        stats = count_stats(markdown)
+
+        return {
+            "markdown": markdown,
+            "images": kordoc_result.get("images", []),
+            "stats": stats,
+            "engine": "kordoc",
+            "fallback_used": False,
+            "errors": [],
+        }
+    except KordocError as e:
+        logger.warning("[hwpx-converter] kordoc failed, fallback start: %s", e)
+        errors.append("kordoc: " + str(e))
+    except Exception as e:
+        logger.warning("[hwpx-converter] unexpected kordoc error, fallback start: %s", e)
+        errors.append("kordoc: " + str(e))
+
+    try:
+        fallback_result = convert_hwpx_to_markdown(
+            file_bytes=file_bytes,
+            image_mode=image_mode,
+            filename=filename,
+        )
+        markdown = clean_markdown(fallback_result["markdown"])
+        stats = count_stats(markdown)
+
+        return {
+            "markdown": markdown,
+            "images": fallback_result.get("images", []),
+            "stats": stats,
+            "engine": "python_fallback",
+            "fallback_used": True,
+            "errors": errors,
+        }
+    except Exception as e:
+        logger.error("[hwpx-converter] fallback also failed: %s", e, exc_info=True)
+        errors.append("python_fallback: " + str(e))
+        raise HTTPException(status_code=500, detail=" / ".join(errors))
+
+
 # -----------------------------------------
 # API Endpoints
 # -----------------------------------------
@@ -443,25 +432,29 @@ async def convert_hwpx(
         raise HTTPException(status_code=400, detail="No file provided.")
     if not file.filename.lower().endswith(".hwpx"):
         raise HTTPException(status_code=400, detail="Only .hwpx files are supported.")
+
     try:
         file_bytes = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail="File read error: " + str(e))
+
     if len(file_bytes) > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 50MB limit.")
-    try:
-        result = convert_hwpx_to_markdown(file_bytes=file_bytes, image_mode=image_mode, filename=file.filename)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("[hwpx-converter] convert error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Conversion error: " + str(e))
+
+    if image_mode not in ("inline", "separate"):
+        raise HTTPException(status_code=400, detail="image_mode must be 'inline' or 'separate'.")
+
+    result = _run_best_effort_conversion(file_bytes, file.filename, image_mode)
+
     return JSONResponse({
         "success": True,
         "filename": file.filename,
         "markdown": result["markdown"],
         "images": result["images"] if image_mode == "separate" else [],
         "stats": result["stats"],
+        "engine": result["engine"],
+        "fallback_used": result["fallback_used"],
+        "errors": result["errors"],
     })
 
 
@@ -474,30 +467,36 @@ async def convert_hwpx_download(
         raise HTTPException(status_code=400, detail="No file provided.")
     if not file.filename.lower().endswith(".hwpx"):
         raise HTTPException(status_code=400, detail="Only .hwpx files are supported.")
+
     try:
         file_bytes = await file.read()
     except Exception as e:
         raise HTTPException(status_code=400, detail="File read error: " + str(e))
+
     if len(file_bytes) > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 50MB limit.")
-    try:
-        result = convert_hwpx_to_markdown(file_bytes=file_bytes, image_mode=image_mode, filename=file.filename)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("[hwpx-converter] convert error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Conversion error: " + str(e))
+
+    if image_mode not in ("inline", "separate"):
+        raise HTTPException(status_code=400, detail="image_mode must be 'inline' or 'separate'.")
+
+    result = _run_best_effort_conversion(file_bytes, file.filename, image_mode)
+
     md_filename = os.path.splitext(file.filename)[0] + ".md"
     md_bytes = result["markdown"].encode("utf-8")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{md_filename}"',
+        "X-Stats-Paragraphs": str(result["stats"]["paragraphs"]),
+        "X-Stats-Tables": str(result["stats"]["tables"]),
+        "X-Stats-Images": str(result["stats"]["images"]),
+        "X-Engine": result["engine"],
+        "X-Fallback-Used": str(result["fallback_used"]).lower(),
+    }
+
     return StreamingResponse(
         io.BytesIO(md_bytes),
         media_type="text/markdown; charset=utf-8",
-        headers={
-            "Content-Disposition": "attachment; filename=" + md_filename,
-            "X-Stats-Paragraphs": str(result["stats"]["paragraphs"]),
-            "X-Stats-Tables": str(result["stats"]["tables"]),
-            "X-Stats-Images": str(result["stats"]["images"]),
-        }
+        headers=headers,
     )
 
 
@@ -510,4 +509,5 @@ async def get_status():
         "output_format": "markdown",
         "image_modes": ["inline", "separate"],
         "max_file_size_mb": 50,
+        "engines": ["kordoc", "python_fallback"],
     }
