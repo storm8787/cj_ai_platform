@@ -15,7 +15,6 @@ const aiServiceCategories = [
       { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
       { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
       { icon: '📋', title: '출장보고 생성기', path: '/trip-report' }
-      //{ icon: '📃', title: 'MD 파일 변환기', path:'/hwpx-converter'}
     ]
   },
   {
@@ -27,7 +26,8 @@ const aiServiceCategories = [
       { icon: '✅', title: '공공데이터 검증기', path: '/data-validator' },
       { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
       { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },
-      { icon: '📅', title: "사업 타임라인", path: "/timeline" }
+      { icon: '📅', title: '사업 타임라인', path: '/timeline' },
+      { icon: '🚨', title: '재난상황 대시보드', path: '/disaster-dashboard' }
     ]
   },
   {
@@ -37,7 +37,7 @@ const aiServiceCategories = [
     services: [
       { icon: '📰', title: '충주시 뉴스', path: '/news' },
       { icon: '🌐', title: '다국어 번역기', path: '/translator' },
-      { icon: '🎙️', title: '회의 요약기', path: '/meeting-summary' },      
+      { icon: '🎙️', title: '회의 요약기', path: '/meeting-summary' },
     ]
   },
   {
@@ -51,7 +51,7 @@ const aiServiceCategories = [
   },
 ];
 
-// 모든 AI 서비스 경로 (active 체크용)
+// 모든 AI 서비스 경로
 const allAiServicePaths = aiServiceCategories.flatMap(cat => cat.services.map(s => s.path));
 
 // 소통공간 메뉴
@@ -61,7 +61,7 @@ const communityMenus = [
   { icon: '📁', title: '자료실', path: '/board/archive' },
 ];
 
-// 2단 드롭다운 컴포넌트 (AI 서비스용)
+// 2단 드롭다운 컴포넌트
 function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onClose, active }) {
   const [hoveredCategory, setHoveredCategory] = useState(null);
   const navigate = useNavigate();
@@ -72,7 +72,6 @@ function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onC
     navigate(path);
   };
 
-  // 메뉴가 닫힐 때 hoveredCategory 초기화
   useEffect(() => {
     if (!isOpen) {
       setHoveredCategory(null);
@@ -80,7 +79,7 @@ function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onC
   }, [isOpen]);
 
   return (
-    <div 
+    <div
       className="relative"
       onMouseEnter={onOpen}
       onMouseLeave={onClose}
@@ -88,15 +87,14 @@ function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onC
       <button className={`nav-link ${(isOpen || active) ? 'nav-link-active' : ''}`}>
         <Icon size={18} />
         <span>{label}</span>
-        <ChevronDown 
-          size={16} 
-          className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} 
+        <ChevronDown
+          size={16}
+          className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
         />
       </button>
 
-      {/* 1단 드롭다운: 카테고리 목록 */}
       {isOpen && (
-        <div 
+        <div
           className="absolute top-full left-0 pt-2"
           style={{ zIndex: 9999 }}
         >
@@ -117,13 +115,12 @@ function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onC
                   <ChevronRight size={14} className="text-slate-400" />
                 </div>
 
-                {/* 2단 드롭다운: 서비스 목록 */}
                 {hoveredCategory === category.id && (
-                  <div 
+                  <div
                     className="absolute left-full top-0 pl-1"
                     style={{ zIndex: 10000 }}
                   >
-                    <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 min-w-[200px]">
+                    <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-2 min-w-[220px]">
                       {category.services.map((service, idx) => (
                         <div
                           key={idx}
@@ -146,7 +143,7 @@ function NestedDropdownMenu({ label, icon: Icon, categories, isOpen, onOpen, onC
   );
 }
 
-// 일반 드롭다운 컴포넌트 (소통공간용)
+// 일반 드롭다운 컴포넌트
 function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, active }) {
   const navigate = useNavigate();
 
@@ -156,7 +153,7 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, activ
   };
 
   return (
-    <div 
+    <div
       className="relative"
       onMouseEnter={onOpen}
       onMouseLeave={onClose}
@@ -164,15 +161,14 @@ function DropdownMenu({ label, icon: Icon, items, isOpen, onOpen, onClose, activ
       <button className={`nav-link ${(isOpen || active) ? 'nav-link-active' : ''}`}>
         <Icon size={18} />
         <span>{label}</span>
-        <ChevronDown 
-          size={16} 
-          className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} 
+        <ChevronDown
+          size={16}
+          className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
         />
       </button>
 
-      {/* 드롭다운 메뉴 */}
       {isOpen && (
-        <div 
+        <div
           className="absolute top-full left-0 pt-2"
           style={{ zIndex: 9999 }}
         >
@@ -199,12 +195,10 @@ export default function Layout({ children }) {
   const [openMenu, setOpenMenu] = useState(null);
   const { user, logout, isAdmin } = useAuth();
 
-  // 메뉴 열기 - 다른 메뉴가 열려있으면 바로 전환
   const handleOpen = (menu) => {
     setOpenMenu(menu);
   };
 
-  // 메뉴 닫기
   const handleClose = () => {
     setOpenMenu(null);
   };
@@ -213,7 +207,6 @@ export default function Layout({ children }) {
     await logout();
   };
 
-  // 페이지 이동 시 메뉴 닫기
   useEffect(() => {
     setOpenMenu(null);
   }, [location.pathname]);
@@ -240,7 +233,6 @@ export default function Layout({ children }) {
 
             {/* 네비게이션 메뉴 */}
             <nav className="hidden md:flex items-center gap-1">
-              {/* 홈으로 */}
               <Link
                 to="/"
                 className={`nav-link ${location.pathname === '/' ? 'nav-link-active' : ''}`}
@@ -249,7 +241,6 @@ export default function Layout({ children }) {
                 <span>홈으로</span>
               </Link>
 
-              {/* 시스템 소개 */}
               <Link
                 to="/about"
                 className={`nav-link ${location.pathname === '/about' ? 'nav-link-active' : ''}`}
@@ -258,7 +249,6 @@ export default function Layout({ children }) {
                 <span>시스템 소개</span>
               </Link>
 
-              {/* AI 서비스 - 2단 드롭다운 */}
               <NestedDropdownMenu
                 label="AI 서비스"
                 icon={Cpu}
@@ -269,7 +259,6 @@ export default function Layout({ children }) {
                 active={isServicesActive}
               />
 
-              {/* 소통공간 드롭다운 */}
               <DropdownMenu
                 label="소통공간"
                 icon={MessageSquare}
@@ -280,7 +269,6 @@ export default function Layout({ children }) {
                 active={isCommunityActive}
               />
 
-              {/* 관리자 전용: 프롬프트 관리 */}
               {isAdmin && (
                 <Link
                   to="/prompt-manager"

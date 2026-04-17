@@ -32,12 +32,17 @@ import TimelinePlanner from "./pages/TimelinePlanner";
 import PromptManager from './pages/PromptManager';
 import HwpxConverter from './pages/HwpxConverter';
 
+// Disaster Dashboard Pages
+import DisasterUpload from './pages/DisasterUpload';
+import DisasterDashboard from './pages/DisasterDashboard';
+import DisasterIncidents from './pages/DisasterIncidents';
+import DisasterDailyReport from './pages/DisasterDailyReport';
+
 
 // 보호된 라우트 컴포넌트
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
 
-  // 로딩 중일 때 스피너 표시
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -49,7 +54,6 @@ function ProtectedRoute({ children }) {
     );
   }
 
-  // 인증 안 되면 로그인 페이지로
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
@@ -80,169 +84,205 @@ function AppRoutes() {
   return (
     <Routes>
       {/* 로그인 페이지 (비인증 사용자만) */}
-      <Route 
-        path="/login" 
+      <Route
+        path="/login"
         element={
           <PublicRoute>
             <Login />
           </PublicRoute>
-        } 
+        }
       />
 
       {/* 보호된 라우트들 (인증 필요) */}
-      <Route 
-        path="/" 
+      <Route
+        path="/"
         element={
           <ProtectedRoute>
             <Layout><Dashboard /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/news" 
+      <Route
+        path="/news"
         element={
           <ProtectedRoute>
             <Layout><NewsViewer /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/press-release" 
+      <Route
+        path="/press-release"
         element={
           <ProtectedRoute>
             <Layout><PressRelease /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/merit-report" 
+      <Route
+        path="/merit-report"
         element={
           <ProtectedRoute>
             <Layout><MeritReport /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/data-analysis" 
+      <Route
+        path="/data-analysis"
         element={
           <ProtectedRoute>
             <Layout><DataAnalysis /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/translator" 
+      <Route
+        path="/translator"
         element={
           <ProtectedRoute>
             <Layout><Translator /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/election-law" 
+      <Route
+        path="/election-law"
         element={
           <ProtectedRoute>
             <Layout><ElectionLaw /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/meeting-summary" 
+      <Route
+        path="/meeting-summary"
         element={
           <ProtectedRoute>
             <Layout><MeetingSummarizer /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/kakao-promo" 
+      <Route
+        path="/kakao-promo"
         element={
           <ProtectedRoute>
             <Layout><KakaoPromo /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/report-writer" 
+      <Route
+        path="/report-writer"
         element={
           <ProtectedRoute>
             <Layout><ReportWriter /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/address-geocoder" 
+      <Route
+        path="/address-geocoder"
         element={
           <ProtectedRoute>
             <Layout><AddressGeocoder /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/excel-merger" 
+      <Route
+        path="/excel-merger"
         element={
           <ProtectedRoute>
             <Layout><ExcelMerger /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/about" 
+      <Route
+        path="/about"
         element={
           <ProtectedRoute>
             <Layout><About /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/data-validator" 
+      <Route
+        path="/data-validator"
         element={
           <ProtectedRoute>
             <Layout><DataValidator /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      
+
       {/* 출장보고 생성기 */}
-      <Route 
-        path="/trip-report" 
+      <Route
+        path="/trip-report"
         element={
           <ProtectedRoute>
             <Layout><TripReport /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      <Route 
-        path="/law-chatbot" 
+      <Route
+        path="/law-chatbot"
         element={
           <ProtectedRoute>
             <Layout><LawChatbot /></Layout>
           </ProtectedRoute>
         }
       />
-      <Route 
-        path="/timeline" 
+      <Route
+        path="/timeline"
         element={
           <ProtectedRoute>
             <Layout><TimelinePlanner /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
-      
-      {/* 프롬프트 관리 (관리자 전용) */}
-      <Route 
-        path="/prompt-manager" 
+
+      {/* 프롬프트 관리 */}
+      <Route
+        path="/prompt-manager"
         element={
           <ProtectedRoute>
             <Layout><PromptManager /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
+
+      {/* HWPX 변환기 */}
       <Route
         path="/hwpx-converter"
         element={
           <ProtectedRoute>
             <Layout><HwpxConverter /></Layout>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* 재난상황 대시보드 */}
+      <Route
+        path="/disaster-upload"
+        element={
+          <ProtectedRoute>
+            <Layout><DisasterUpload /></Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/disaster-dashboard"
+        element={
+          <ProtectedRoute>
+            <Layout><DisasterDashboard /></Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/disaster-incidents"
+        element={
+          <ProtectedRoute>
+            <Layout><DisasterIncidents /></Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/disaster-report"
+        element={
+          <ProtectedRoute>
+            <Layout><DisasterDailyReport /></Layout>
           </ProtectedRoute>
         }
       />
@@ -255,14 +295,14 @@ function AppRoutes() {
       <Route path="/board/:boardType/write" element={<ProtectedRoute><Layout><BoardWrite /></Layout></ProtectedRoute>} />
       <Route path="/board/:boardType/edit/:id" element={<ProtectedRoute><Layout><BoardEdit /></Layout></ProtectedRoute>} />
 
-      {/* 404 - 맨 마지막에 위치 */}
-      <Route 
-        path="*" 
+      {/* 404 */}
+      <Route
+        path="*"
         element={
           <ProtectedRoute>
             <Layout><NotFound /></Layout>
           </ProtectedRoute>
-        } 
+        }
       />
     </Routes>
   );

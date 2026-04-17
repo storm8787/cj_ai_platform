@@ -1,0 +1,182 @@
+import re
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+DATE_LINE_RE_1 = re.compile(r"^\d{4}년\s*\d{1,2}월\s*\d{1,2}일")
+DATE_LINE_RE_2 = re.compile(r"^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.")
+
+MESSAGE_RE_KOR = re.compile(
+    r"^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*(오전|오후)\s*(\d{1,2}):(\d{2}),\s*(.+?)\s*:\s*(.*)$"
+)
+
+MESSAGE_RE_DOT = re.compile(
+    r"^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}),\s*(.+?)\s*:\s*(.*)$"
+)
+
+SYSTEM_RE = re.compile(r"초대했습니다|나갔습니다|들어왔습니다")
+PHOTO_RE = re.compile(r"^사진(?:\s*(\d+)장)?$")
+VIDEO_RE = re.compile(r"^동영상$")
+DELETED_RE = re.compile(r"삭제된 메시지입니다")
+
+EMD_PATTERN = re.compile(r"([가-힣]{1,10}(?:읍|면|동))")
+
+LOCATION_HINT_PATTERNS = [
+    re.compile(r"([가-힣0-9\-\s]+(?:로|길|번지|리|산\d+[\-\d]*|사거리|굴다리|삼거리|마을|공원|산책로|지하차도|통로박스))"),
+]
+
+INCIDENT_TYPE_RULES = [
+    (re.compile(r"통제|출입 통제|통행제한|차단"), "road_control"),
+    (re.compile(r"산사태|토사유출|토사유실|사면|붕괴|낙석"), "landslide"),
+    (re.compile(r"나무전도|수목전도|쓰러진 나무|전도된 나무"), "tree_fall"),
+    (re.compile(r"침수|범람|월류|수위상승|도로침수"), "flood"),
+    (re.compile(r"싱크홀|씽크홀|노면 파손|웅덩이"), "sinkhole"),
+    (re.compile(r"배수로|맨홀|양수|펌프장|역류|준설"), "drainage"),
+    (re.compile(r"유실|시설|공사현장|절개지|맨홀|오수"), "facility"),
+    (re.compile(r"이상없음|이상 없습니다|상황관리|점검결과 이상없습니다"), "inspection"),
+]
+
+STATUS_RULES = [
+    (re.compile(r"조치중|작업중|진행중|준설 중|투입"), "in_progress"),
+    (re.compile(r"완료|복구 완료|처리 완료|긴급조치 완료|제거 완료|설치 완료"), "completed"),
+    (re.compile(r"해제|통행재개|개통"), "closed"),
+    (re.compile(r"이상없음|이상 없습니다|우려 없습니다"), "no_issue"),
+    (re.compile(r"모니터링|상황관리|지속적으로 확인|관찰지역"), "monitoring"),
+]
+
+AGENCY_RULES = ["119", "소방", "경찰", "한전", "도로관리사업소", "농어촌공사", "하수과", "안전총괄과"]
+
+
+def _to_24h(hour: int, ampm: str) -> int:
+    if ampm == "오전":
+        return 0 if hour == 12 else hour
+    return 12 if hour == 12 else hour + 12
+
+
+def parse_timestamp(year: str, month: str, day: str, ampm: str, hour: str, minute: str) -> datetime:
+    hh = _to_24h(int(hour), ampm)
+    return datetime(int(year), int(month), int(day), hh, int(minute))
+
+
+def classify_message_type(text: str) -> Dict[str, Any]:
+    stripped = (text or "").strip()
+
+    if DELETED_RE.search(stripped):
+        return {"message_type": "deleted", "photo_count": 0, "is_system": False}
+    if SYSTEM_RE.search(stripped):
+        return {"message_type": "system_invite", "photo_count": 0, "is_system": True}
+
+    photo_match = PHOTO_RE.match(stripped)
+    if photo_match:
+        count = int(photo_match.group(1) or 1)
+        return {"message_type": "photo", "photo_count": count, "is_system": False}
+
+    if VIDEO_RE.match(stripped):
+        return {"message_type": "video", "photo_count": 0, "is_system": False}
+
+    return {"message_type": "normal", "photo_count": 0, "is_system": False}
+
+
+def infer_incident_type(text: str) -> str:
+    for pattern, value in INCIDENT_TYPE_RULES:
+        if pattern.search(text):
+            return value
+    return "inspection"
+
+
+def infer_status(text: str, incident_type: str) -> str:
+    for pattern, value in STATUS_RULES:
+        if pattern.search(text):
+            return value
+    if incident_type == "inspection":
+        return "no_issue"
+    return "reported"
+
+
+def extract_location_raw(text: str) -> Optional[str]:
+    emd_match = EMD_PATTERN.search(text)
+    emd = emd_match.group(1) if emd_match else None
+
+    for pattern in LOCATION_HINT_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            loc = match.group(1).strip()
+            if emd and emd not in loc:
+                return f"{emd} {loc}".strip()
+            return loc
+
+    return emd
+
+
+def extract_emd(text: str) -> Optional[str]:
+    match = EMD_PATTERN.search(text)
+    return match.group(1) if match else None
+
+
+def extract_related_agency(text: str) -> str:
+    found = [a for a in AGENCY_RULES if a in text]
+    return ", ".join(found)
+
+
+def normalize_summary(text: str) -> str:
+    return " ".join(text.replace("\n", " ").split())[:300]
+
+
+def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
+    lines = content.splitlines()
+    messages: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
+
+    def flush_current():
+        nonlocal current
+        if current:
+            current["raw_text"] = current["raw_text"].strip()
+            messages.append(current)
+            current = None
+
+    for line in lines:
+        line = line.rstrip("\n")
+        if not line.strip():
+            if current:
+                current["raw_text"] += "\n"
+            continue
+
+        if DATE_LINE_RE_1.match(line) and "," not in line and ":" not in line:
+            continue
+        if DATE_LINE_RE_2.match(line) and "," not in line and ":" in line and "님이" in line:
+            pass
+
+        m = MESSAGE_RE_KOR.match(line) or MESSAGE_RE_DOT.match(line)
+        if m:
+            flush_current()
+            dt = parse_timestamp(*m.groups()[:6])
+            sender = m.group(7).strip()
+            text = m.group(8)
+            current = {
+                "message_time": dt.isoformat(),
+                "sender_name": sender,
+                "raw_text": text,
+            }
+        else:
+            if current:
+                current["raw_text"] += f"\n{line}"
+
+    flush_current()
+
+    parsed: List[Dict[str, Any]] = []
+    for msg in messages:
+        meta = classify_message_type(msg["raw_text"])
+        text = msg["raw_text"]
+        parsed.append(
+            {
+                **msg,
+                **meta,
+                "parsed_success": True,
+                "emd": extract_emd(text),
+                "location_raw": extract_location_raw(text),
+                "incident_type": infer_incident_type(text),
+                "status": infer_status(text, infer_incident_type(text)),
+                "related_agency": extract_related_agency(text),
+                "summary": normalize_summary(text),
+            }
+        )
+    return parsed

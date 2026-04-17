@@ -11,9 +11,8 @@ const categories = [
   { id: 'chatbot', name: '업무 챗봇', icon: '💬' },
 ];
 
-// 서비스 목록 (기존 순서 유지 + 카테고리 추가)
+// 서비스 목록
 const services = [
-  // 기존 순서 1~12 + 신규 추가
   {
     icon: '📰',
     title: '충주시 뉴스',
@@ -98,7 +97,6 @@ const services = [
     path: '/data-validator',
     category: 'data',
   },
-  // 신규 추가: 출장보고 생성기
   {
     icon: '📋',
     title: '출장보고 생성기',
@@ -114,25 +112,25 @@ const services = [
     category: 'chatbot',
   },
   {
-    icon: '📅',  // CalendarRange 대신 이모지
-    title: "사업 타임라인",
-    description: "AI 일정 추천 + 간트차트 시각화",
-    path: "/timeline",
+    icon: '📅',
+    title: '사업 타임라인',
+    description: 'AI 일정 추천 + 간트차트 시각화',
+    path: '/timeline',
     category: 'data',
   },
-  //{
-  //  icon: '📃',
-  //  title: "MD 파일 변환기",
-  //  description: "한글문서를 md파일로 변환",
-  //  path: "/hwpx-converter",
-  //  category: 'document',
-  //}
+  {
+    icon: '🚨',
+    title: '재난상황 대시보드',
+    description: '카카오톡 상황보고를 분석하여 사건 목록, 통계, 일일보고서를 생성합니다',
+    path: '/disaster-dashboard',
+    category: 'data',
+  },
 ];
 
-// 카테고리별 순서 정의 (각 카테고리 클릭 시 이 순서로 표시)
+// 카테고리별 순서 정의
 const categoryOrder = {
-  document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report'],  // trip-report 추가
-  data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger', '/timeline'],
+  document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report'],
+  data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger', '/timeline', '/disaster-dashboard'],
   translate: ['/news', '/translator', '/meeting-summary'],
   chatbot: ['/election-law', '/law-chatbot'],
 };
@@ -155,7 +153,7 @@ export default function Dashboard() {
   };
 
   const scrollToServices = () => {
-    document.getElementById('services')?.scrollIntoView({ 
+    document.getElementById('services')?.scrollIntoView({
       behavior: 'smooth',
       block: 'start'
     });
@@ -163,24 +161,21 @@ export default function Dashboard() {
 
   const greeting = getGreeting();
 
-  // 필터링된 서비스 목록
-  const filteredServices = activeCategory === 'all' 
-    ? services 
+  const filteredServices = activeCategory === 'all'
+    ? services
     : categoryOrder[activeCategory]
         .map(path => services.find(s => s.path === path))
         .filter(Boolean);
 
   return (
     <div className="min-h-screen overflow-x-hidden">
-      {/* Hero Section with Aurora Effect */}
+      {/* Hero Section */}
       <section className="relative bg-slate-950 text-white py-20 px-4 sm:px-6 lg:px-8 overflow-hidden">
-        {/* Aurora Background Blobs */}
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-cyan-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob"></div>
         <div className="absolute top-0 right-1/4 w-96 h-96 bg-purple-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-2000"></div>
         <div className="absolute -bottom-32 left-1/3 w-96 h-96 bg-blue-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob animation-delay-4000"></div>
 
         <div className="relative z-10 max-w-4xl mx-auto text-center">
-          {/* Dynamic Greeting */}
           <div className="fade-in-up flex flex-col items-center mb-6" style={{ animationDelay: '0.1s' }}>
             <div className="flex items-center gap-2 text-cyan-400 mb-2 font-medium">
               {greeting.icon}
@@ -191,7 +186,6 @@ export default function Dashboard() {
             </h2>
           </div>
 
-          {/* Main Title */}
           <div className="fade-in-up" style={{ animationDelay: '0.2s' }}>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-4">
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">AI 기반</span>
@@ -271,7 +265,6 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* Empty State */}
           {filteredServices.length === 0 && (
             <div className="text-center py-12 text-slate-500">
               해당 카테고리에 서비스가 없습니다.

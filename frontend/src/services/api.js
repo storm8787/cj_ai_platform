@@ -1,12 +1,12 @@
 import axios from 'axios';
 
 // API 베이스 URL
-const API_BASE_URL = import.meta.env.VITE_API_URL 
+const API_BASE_URL = import.meta.env.VITE_API_URL
   || 'https://cj-ai-backend.ashysky-a846c5bf.koreacentral.azurecontainerapps.io';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 120000, // 120초 타임아웃 (번역 등 긴 작업용)
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -73,30 +73,27 @@ export const translatorApi = {
   getLanguages: () => api.get('/api/translator/languages'),
   translate: (formData) => api.post('/api/translator/translate', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    responseType: 'arraybuffer', // 파일 다운로드용
-    timeout: 300000, // 5분 타임아웃
+    responseType: 'arraybuffer',
+    timeout: 300000,
   }),
 };
 
 // ===== 주소-좌표 변환기 API =====
 export const addressGeocoderApi = {
-  // 단일 변환
   addressToCoord: (data) => api.post('/api/geocoder/address-to-coord', data),
   coordToAddress: (data) => api.post('/api/geocoder/coord-to-address', data),
-  
-  // 파일 변환
+
   fileAddressToCoord: (formData) => api.post('/api/geocoder/file/address-to-coord', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     responseType: 'arraybuffer',
-    timeout: 180000, // 3분 타임아웃
+    timeout: 180000,
   }),
   fileCoordToAddress: (formData) => api.post('/api/geocoder/file/coord-to-address', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     responseType: 'arraybuffer',
     timeout: 180000,
   }),
-  
-  // 템플릿 다운로드
+
   downloadTemplate: (type) => api.get(`/api/geocoder/template/${type}`, {
     responseType: 'arraybuffer',
   }),
@@ -108,7 +105,7 @@ export const kakaoPromoApi = {
   generate: (data) => api.post('/api/kakao-promo/generate', data),
   generateWithImage: (formData) => api.post('/api/kakao-promo/generate-with-image', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000, // 1분 타임아웃
+    timeout: 60000,
   }),
 };
 
@@ -117,7 +114,7 @@ export const excelMergerApi = {
   merge: (formData) => api.post('/api/excel-merger/merge', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     responseType: 'arraybuffer',
-    timeout: 180000, // 3분 타임아웃
+    timeout: 180000,
   }),
   preview: (formData) => api.post('/api/excel-merger/preview', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -129,11 +126,29 @@ export const meetingSummarizerApi = {
   getModes: () => api.get('/api/meeting/modes'),
   getSystemInfo: () => api.get('/api/meeting/system-info'),
   summarize: (data) => api.post('/api/meeting/summarize', data, {
-    timeout: 180000, // 3분 타임아웃
+    timeout: 180000,
   }),
   summarizeFile: (formData) => api.post('/api/meeting/summarize-file', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 180000,
+  }),
+};
+
+// ===== 재난상황 대시보드 API =====
+export const disasterApi = {
+  upload: (formData) => api.post('/api/disaster/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  analyze: (uploadId) => api.post(`/api/disaster/analyze/${uploadId}`),
+  getUploadSummary: (uploadId) => api.get(`/api/disaster/upload/${uploadId}/summary`),
+  getIncidents: (params) => api.get('/api/disaster/incidents', { params }),
+  getIncidentDetail: (incidentId) => api.get(`/api/disaster/incidents/${incidentId}`),
+  getOverview: (uploadId) => api.get('/api/disaster/dashboard/overview', {
+    params: { upload_id: uploadId }
+  }),
+  generateDailyReport: (data) => api.post('/api/disaster/reports/daily/generate', data),
+  getReports: (uploadId) => api.get('/api/disaster/reports', {
+    params: { upload_id: uploadId }
   }),
 };
 
