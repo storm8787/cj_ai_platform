@@ -17,9 +17,6 @@ export default function HwpxConverter() {
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef(null);
 
-  var HWPX_EXT = ".hwpx";
-  var MD_EXT = ".md";
-
   var handleDragOver = useCallback(function(e) {
     e.preventDefault();
     setIsDragging(true);
@@ -34,7 +31,7 @@ export default function HwpxConverter() {
     e.preventDefault();
     setIsDragging(false);
     var droppedFile = e.dataTransfer.files[0];
-    if (droppedFile && droppedFile.name.toLowerCase().endsWith(HWPX_EXT)) {
+    if (droppedFile && droppedFile.name.toLowerCase().endsWith(".hwpx")) {
       setFile(droppedFile);
       setError(null);
       setResult(null);
@@ -46,7 +43,7 @@ export default function HwpxConverter() {
   var handleFileSelect = function(e) {
     var selectedFile = e.target.files[0];
     if (selectedFile) {
-      if (selectedFile.name.toLowerCase().endsWith(HWPX_EXT)) {
+      if (selectedFile.name.toLowerCase().endsWith(".hwpx")) {
         setFile(selectedFile);
         setError(null);
         setResult(null);
@@ -83,7 +80,7 @@ export default function HwpxConverter() {
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    var dlName = file && file.name ? file.name.replace(/\.hwpx$/i, MD_EXT) : "converted.md";
+    var dlName = file && file.name ? file.name.replace(/\.hwpx$/i, ".md") : "converted.md";
     a.download = dlName;
     document.body.appendChild(a);
     a.click();
@@ -154,7 +151,7 @@ export default function HwpxConverter() {
     ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-300"
     : "bg-slate-800 border-slate-700 text-gray-400 hover:text-gray-300";
 
-  var mdFilename = file && file.name ? file.name.replace(/\.hwpx$/i, MD_EXT) : "output.md";
+  var mdFilename = file && file.name ? file.name.replace(/\.hwpx$/i, ".md") : "output.md";
   var charCount = result && result.markdown ? result.markdown.length.toLocaleString() : "0";
 
   return (
@@ -166,10 +163,10 @@ export default function HwpxConverter() {
             <div className="p-2 bg-cyan-500/10 rounded-lg">
               <FileText className="w-6 h-6 text-cyan-400" />
             </div>
-            <h1 className="text-2xl font-bold text-white">HWPX Markdown Converter</h1>
+            <h1 className="text-2xl font-bold text-white">{"HWPX \ubcc0\ud658\uae30"}</h1>
           </div>
           <p className="text-gray-400 ml-12">
-            HWPX to Markdown. Supports text, tables, and images.
+            {"\ud55c\uae00(HWPX) \ubb38\uc11c\ub97c Markdown\uc73c\ub85c \ubcc0\ud658\ud569\ub2c8\ub2e4. \ud14d\uc2a4\ud2b8, \ud45c, \uc774\ubbf8\uc9c0\ub97c \uc9c0\uc6d0\ud569\ub2c8\ub2e4."}
           </p>
         </div>
 
@@ -206,21 +203,21 @@ export default function HwpxConverter() {
                       <X className="w-4 h-4 text-gray-400" />
                     </button>
                   </div>
-                  <p className="text-gray-500 text-sm">Click to select another file</p>
+                  <p className="text-gray-500 text-sm">{"\ud074\ub9ad\ud558\uc5ec \ub2e4\ub978 \ud30c\uc77c \uc120\ud0dd"}</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   <Upload className={"w-10 h-10 mx-auto " + (isDragging ? "text-cyan-400" : "text-gray-500")} />
                   <div>
-                    <p className="text-gray-300">Drag HWPX file here or click to select</p>
-                    <p className="text-gray-500 text-sm mt-1">Max 50MB</p>
+                    <p className="text-gray-300">{"HWPX \ud30c\uc77c\uc744 \ub4dc\ub798\uadf8\ud558\uac70\ub098 \ud074\ub9ad\ud558\uc5ec \uc120\ud0dd"}</p>
+                    <p className="text-gray-500 text-sm mt-1">{"\ucd5c\ub300 50MB"}</p>
                   </div>
                 </div>
               )}
             </div>
 
             <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5">
-              <h3 className="text-sm font-medium text-gray-300 mb-3">Options</h3>
+              <h3 className="text-sm font-medium text-gray-300 mb-3">{"\ubcc0\ud658 \uc635\uc158"}</h3>
               <div className="flex gap-4">
                 <label className={inlineOptClass}>
                   <input
@@ -232,7 +229,7 @@ export default function HwpxConverter() {
                     className="hidden"
                   />
                   <Image className="w-4 h-4" />
-                  <span className="text-sm">Image Inline (Base64)</span>
+                  <span className="text-sm">{"\uc774\ubbf8\uc9c0 \uc778\ub77c\uc778 (Base64)"}</span>
                 </label>
                 <label className={separateOptClass}>
                   <input
@@ -244,13 +241,13 @@ export default function HwpxConverter() {
                     className="hidden"
                   />
                   <FileDown className="w-4 h-4" />
-                  <span className="text-sm">Image Separate Files</span>
+                  <span className="text-sm">{"\uc774\ubbf8\uc9c0 \ubcc4\ub3c4 \ud30c\uc77c"}</span>
                 </label>
               </div>
               <p className="text-gray-500 text-xs mt-2">
                 {imageMode === "inline"
-                  ? "Images embedded as Base64 inside the Markdown file."
-                  : "Images extracted as separate files. Smaller file size."
+                  ? "\uc774\ubbf8\uc9c0\uac00 Markdown \ud30c\uc77c \uc548\uc5d0 Base64\ub85c \ud3ec\ud568\ub429\ub2c8\ub2e4. \ub2e8\uc77c \ud30c\uc77c\ub85c \uad00\ub9ac \uac00\ub2a5."
+                  : "\uc774\ubbf8\uc9c0\uac00 \ubcc4\ub3c4 \ud30c\uc77c\ub85c \ucd94\ucd9c\ub429\ub2c8\ub2e4. \ud30c\uc77c \ud06c\uae30\uac00 \uc791\uc544\uc9d1\ub2c8\ub2e4."
                 }
               </p>
             </div>
@@ -263,12 +260,12 @@ export default function HwpxConverter() {
               {converting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Converting...</span>
+                  <span>{"\ubcc0\ud658 \uc911..."}</span>
                 </>
               ) : (
                 <>
                   <RefreshCw className="w-4 h-4" />
-                  <span>Convert to Markdown</span>
+                  <span>{"Markdown\uc73c\ub85c \ubcc0\ud658"}</span>
                 </>
               )}
             </button>
@@ -279,7 +276,7 @@ export default function HwpxConverter() {
           <div className="mt-4 flex items-start gap-3 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
             <AlertCircle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
             <div>
-              <p className="text-red-300 font-medium">Conversion Failed</p>
+              <p className="text-red-300 font-medium">{"\ubcc0\ud658 \uc2e4\ud328"}</p>
               <p className="text-red-400/80 text-sm mt-1">{error}</p>
             </div>
           </div>
@@ -292,17 +289,17 @@ export default function HwpxConverter() {
               <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 text-center">
                 <Type className="w-5 h-5 text-cyan-400 mx-auto mb-1" />
                 <p className="text-2xl font-bold text-white">{(result.stats && result.stats.paragraphs) || 0}</p>
-                <p className="text-gray-500 text-xs">Paragraphs</p>
+                <p className="text-gray-500 text-xs">{"\ub2e8\ub77d"}</p>
               </div>
               <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 text-center">
                 <Table className="w-5 h-5 text-emerald-400 mx-auto mb-1" />
                 <p className="text-2xl font-bold text-white">{(result.stats && result.stats.tables) || 0}</p>
-                <p className="text-gray-500 text-xs">Tables</p>
+                <p className="text-gray-500 text-xs">{"\ud45c"}</p>
               </div>
               <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 text-center">
                 <Image className="w-5 h-5 text-purple-400 mx-auto mb-1" />
                 <p className="text-2xl font-bold text-white">{(result.stats && result.stats.images) || 0}</p>
-                <p className="text-gray-500 text-xs">Images</p>
+                <p className="text-gray-500 text-xs">{"\uc774\ubbf8\uc9c0"}</p>
               </div>
             </div>
 
@@ -312,21 +309,21 @@ export default function HwpxConverter() {
                 className="flex-1 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-medium text-sm transition-all flex items-center justify-center gap-2"
               >
                 <Download className="w-4 h-4" />
-                <span>.md Download</span>
+                <span>{".md \ub2e4\uc6b4\ub85c\ub4dc"}</span>
               </button>
               <button
                 onClick={handleCopy}
                 className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-gray-300 rounded-xl font-medium text-sm transition-all flex items-center justify-center gap-2 border border-slate-700"
               >
                 {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                <span>{copied ? "Copied!" : "Copy to Clipboard"}</span>
+                <span>{copied ? "\ubcf5\uc0ac\ub428!" : "\ud074\ub9bd\ubcf4\ub4dc \ubcf5\uc0ac"}</span>
               </button>
               <button
                 onClick={function() { setShowPreview(!showPreview); }}
                 className={previewBtnClass}
               >
                 <Eye className="w-4 h-4" />
-                <span>Preview</span>
+                <span>{"\ubbf8\ub9ac\ubcf4\uae30"}</span>
               </button>
               <button
                 onClick={handleReset}
@@ -342,7 +339,7 @@ export default function HwpxConverter() {
                   <FileText className="w-4 h-4 text-cyan-400" />
                   <span className="text-sm text-gray-300">{mdFilename}</span>
                 </div>
-                <span className="text-xs text-gray-500">{charCount + " chars"}</span>
+                <span className="text-xs text-gray-500">{charCount + "\uc790"}</span>
               </div>
 
               <div className="max-h-[600px] overflow-y-auto">
@@ -365,7 +362,7 @@ export default function HwpxConverter() {
               <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5">
                 <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
                   <Image className="w-4 h-4 text-purple-400" />
-                  <span>{"Extracted Images (" + result.images.length + ")"}</span>
+                  <span>{"\ucd94\ucd9c\ub41c \uc774\ubbf8\uc9c0 (" + result.images.length + "\uac1c)"}</span>
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {result.images.map(function(img, idx) {
