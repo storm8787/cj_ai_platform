@@ -16,11 +16,12 @@ from services.disaster_incident_service import build_incidents
 from services.disaster_report_service import generate_daily_report
 
 router = APIRouter()
-supabase = get_supabase_client()
+#supabase = get_supabase_client()
 
 
 @router.post("/upload")
 async def upload_disaster_chat(file: UploadFile = File(...)):
+    supabase = get_supabase_client()
     if not file.filename:
         raise HTTPException(status_code=400, detail="파일이 없습니다.")
     if not file.filename.lower().endswith(".txt"):
@@ -88,6 +89,7 @@ async def upload_disaster_chat(file: UploadFile = File(...)):
 
 @router.get("/uploads")
 def get_disaster_uploads(limit: int = 20):
+    supabase = get_supabase_client()
     res = (
         supabase.table("disaster_uploads")
         .select("*")
@@ -100,6 +102,7 @@ def get_disaster_uploads(limit: int = 20):
 
 @router.post("/analyze/{upload_id}")
 async def analyze_disaster_chat(upload_id: str):
+    supabase = get_supabase_client()
     msg_res = (
         supabase.table("disaster_raw_messages")
         .select("*")
@@ -215,6 +218,7 @@ async def analyze_disaster_chat(upload_id: str):
 
 @router.get("/upload/{upload_id}/summary")
 def get_upload_summary(upload_id: str):
+    supabase = get_supabase_client()
     upload_res = supabase.table("disaster_uploads").select("*").eq("id", upload_id).single().execute()
     if not upload_res.data:
         raise HTTPException(status_code=404, detail="업로드 정보가 없습니다.")
@@ -223,6 +227,7 @@ def get_upload_summary(upload_id: str):
 
 @router.get("/incidents")
 def get_incidents(upload_id: str = None, status: str = None, incident_type: str = None, emd: str = None):
+    supabase = get_supabase_client()
     query = supabase.table("disaster_incidents").select("*").order("incident_time")
 
     if upload_id:
@@ -240,6 +245,7 @@ def get_incidents(upload_id: str = None, status: str = None, incident_type: str 
 
 @router.get("/incidents/{incident_id}")
 def get_incident_detail(incident_id: str):
+    supabase = get_supabase_client()
     incident_res = supabase.table("disaster_incidents").select("*").eq("id", incident_id).single().execute()
     incident = incident_res.data
 
@@ -274,6 +280,7 @@ def get_incident_detail(incident_id: str):
 
 @router.get("/dashboard/overview")
 def get_dashboard_overview(upload_id: str):
+    supabase = get_supabase_client()
     res = (
         supabase.table("disaster_incidents")
         .select("id, incident_type, status, emd, incident_time")
@@ -303,6 +310,7 @@ def get_dashboard_overview(upload_id: str):
 
 @router.post("/reports/daily/generate")
 def create_daily_report(payload: dict):
+    supabase = get_supabase_client()
     upload_id = payload.get("upload_id")
     report_date = payload.get("report_date")
     created_by = payload.get("created_by", "system")
@@ -342,6 +350,7 @@ def create_daily_report(payload: dict):
 
 @router.get("/reports")
 def get_reports(upload_id: str = None):
+    supabase = get_supabase_client()
     query = supabase.table("disaster_daily_reports").select("*").order("created_at", desc=True)
     if upload_id:
         query = query.eq("upload_id", upload_id)
