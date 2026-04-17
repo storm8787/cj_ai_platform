@@ -14,8 +14,8 @@ const aiServiceCategories = [
       { icon: '🏅', title: '공적조서 생성기', path: '/merit-report' },
       { icon: '📢', title: '홍보문구 생성기', path: '/kakao-promo' },
       { icon: '📄', title: '업무보고 생성기', path: '/report-writer' },
-      { icon: '📋', title: '출장보고 생성기', path: '/trip-report' },
-      { icon: '📃', title: 'MD 파일 변환기', path:'/hwpx-converter'}
+      { icon: '📋', title: '출장보고 생성기', path: '/trip-report' }
+      //{ icon: '📃', title: 'MD 파일 변환기', path:'/hwpx-converter'}
     ]
   },
   {
