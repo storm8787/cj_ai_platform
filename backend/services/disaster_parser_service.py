@@ -185,6 +185,7 @@ def extract_location_raw(text: str) -> Optional[str]:
 
                 # 너무 긴 문장 방지
                 candidate = candidate.split("조치")[0].split("완료")[0].split("입니다")[0].strip()
+                candidate = candidate.replace("[", "").replace("]", "").strip()
                 candidate = " ".join(candidate.split())
 
                 if candidate:
@@ -195,6 +196,7 @@ def extract_location_raw(text: str) -> Optional[str]:
         match = pattern.search(text)
         if match:
             loc = " ".join(match.group(1).split()).strip()
+            loc = loc.replace("[", "").replace("]", "").strip()
             if emd and emd not in loc:
                 return f"{emd} {loc}".strip()
             return loc
