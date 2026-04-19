@@ -103,6 +103,7 @@ def get_disaster_uploads(limit: int = 20):
 @router.post("/analyze/{upload_id}")
 async def analyze_disaster_chat(upload_id: str):
     supabase = get_supabase_client()
+
     msg_res = (
         supabase.table("disaster_raw_messages")
         .select("*")
@@ -110,6 +111,9 @@ async def analyze_disaster_chat(upload_id: str):
         .order("message_time")
         .execute()
     )
+
+    print(f"[ANALYZE] upload_id={upload_id}")
+    print(f"[ANALYZE] raw_messages_count={len(msg_res.data or [])}")
 
     if not msg_res.data:
         raise HTTPException(status_code=404, detail="업로드된 메시지가 없습니다.")
@@ -138,7 +142,19 @@ async def analyze_disaster_chat(upload_id: str):
             }
         )
 
+    print(f"[ANALYZE] parsed_messages_count={len(parsed_messages)}")
+    print(
+        f"[ANALYZE] normal_messages_count="
+        f"{len([m for m in parsed_messages if m.get('message_type') == 'normal'])}"
+    )
+
     incidents = build_incidents(parsed_messages)
+
+    print(f"[ANALYZE] incidents_count={len(incidents)}")
+    if incidents:
+        print(f"[ANALYZE] first_incident_sample={incidents[0]}")
+    else:
+        print("[ANALYZE] incidents is empty")
 
     # 기존 incident_messages 삭제
     existing_incidents_res = (
@@ -179,13 +195,26 @@ async def analyze_disaster_chat(upload_id: str):
             }
         )
 
+    print(f"[ANALYZE] incident_rows_count={len(incident_rows)}")
+    if incident_rows:
+        print(f"[ANALYZE] first_incident_row={incident_rows[0]}")
+    else:
+        print("[ANALYZE] incident_rows is empty")
+
     incident_insert_res = supabase.table("disaster_incidents").insert(incident_rows).execute()
     inserted_incidents = incident_insert_res.data or []
+
+    print(f"[ANALYZE] inserted_incidents_count={len(inserted_incidents)}")
+    if inserted_incidents:
+        print(f"[ANALYZE] first_inserted_incident={inserted_incidents[0]}")
+    else:
+        print("[ANALYZE] inserted_incidents is empty")
 
     link_rows = []
     for idx, incident in enumerate(incidents):
         if idx >= len(inserted_incidents):
             continue
+
         incident_id = inserted_incidents[idx]["id"]
 
         for rm in incident["raw_messages"]:
@@ -199,6 +228,8 @@ async def analyze_disaster_chat(upload_id: str):
                     }
                 )
 
+    print(f"[ANALYZE] link_rows_count={len(link_rows)}")
+
     if link_rows:
         supabase.table("disaster_incident_messages").insert(link_rows).execute()
 
@@ -209,12 +240,13 @@ async def analyze_disaster_chat(upload_id: str):
         }
     ).eq("id", upload_id).execute()
 
+    print(f"[ANALYZE] upload update complete / incident_count={len(incidents)}")
+
     return {
         "success": True,
         "upload_id": upload_id,
         "incident_count": len(incidents),
     }
-
 
 @router.get("/upload/{upload_id}/summary")
 def get_upload_summary(upload_id: str):
