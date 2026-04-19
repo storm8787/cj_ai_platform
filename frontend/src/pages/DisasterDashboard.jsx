@@ -13,33 +13,19 @@ function StatCard({ title, value }) {
 
 export default function DisasterDashboard() {
   const navigate = useNavigate();
-  const [uploads, setUploads] = useState([]);
-  const [selectedUploadId, setSelectedUploadId] = useState(localStorage.getItem("disaster_active_upload_id") || "");
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const loadUploads = async () => {
-    try {
-      const res = await disasterApi.getUploads();
-      const items = res.data.items || [];
-      setUploads(items);
+  const activeUploadId = sessionStorage.getItem("disaster_active_upload_id");
+  const activeFileName = sessionStorage.getItem("disaster_active_upload_name");
 
-      if (!selectedUploadId && items.length > 0) {
-        setSelectedUploadId(items[0].id);
-        localStorage.setItem("disaster_active_upload_id", items[0].id);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const loadOverview = async () => {
+    if (!activeUploadId) return;
 
-  const loadOverview = async (uploadId) => {
-    if (!uploadId) return;
     setLoading(true);
     try {
-      const res = await disasterApi.getOverview(uploadId);
+      const res = await disasterApi.getOverview(activeUploadId);
       setOverview(res.data);
-      localStorage.setItem("disaster_active_upload_id", uploadId);
     } catch (err) {
       console.error(err);
       setOverview(null);
@@ -49,14 +35,25 @@ export default function DisasterDashboard() {
   };
 
   useEffect(() => {
-    loadUploads();
+    loadOverview();
   }, []);
 
-  useEffect(() => {
-    if (selectedUploadId) {
-      loadOverview(selectedUploadId);
-    }
-  }, [selectedUploadId]);
+  if (!activeUploadId) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white p-6">
+        <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-6">
+          <h1 className="text-2xl font-bold mb-3">재난상황 대시보드</h1>
+          <p className="text-slate-400 mb-4">현재 세션에 선택된 파일이 없습니다. 먼저 txt 파일을 업로드하고 분석해주세요.</p>
+          <button
+            onClick={() => navigate("/disaster-upload")}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg"
+          >
+            업로드 페이지로 이동
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-6">
@@ -65,31 +62,18 @@ export default function DisasterDashboard() {
           <div>
             <h1 className="text-2xl font-bold">재난상황 대시보드</h1>
             <p className="text-slate-400 mt-2">
-              업로드된 카카오톡 재난상황 데이터를 기준으로 사건 통계를 확인합니다.
+              현재 세션 파일 기준 통계입니다.
+            </p>
+            <p className="text-sm text-slate-500 mt-1">
+              파일명: {activeFileName || "현재 세션 파일"}
             </p>
           </div>
           <button
             onClick={() => navigate("/disaster-upload")}
             className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg"
           >
-            새 파일 업로드
+            다른 파일 업로드
           </button>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4">
-          <label className="block text-sm text-slate-400 mb-2">분석 파일 선택</label>
-          <select
-            value={selectedUploadId}
-            onChange={(e) => setSelectedUploadId(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"
-          >
-            <option value="">선택하세요</option>
-            {uploads.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.file_name} ({item.analysis_status})
-              </option>
-            ))}
-          </select>
         </div>
 
         {loading ? (
@@ -158,7 +142,7 @@ export default function DisasterDashboard() {
           </>
         ) : (
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 text-slate-400">
-            분석된 데이터가 없습니다. 먼저 업로드 후 분석을 실행해주세요.
+            분석된 데이터가 없습니다. 업로드 후 분석을 먼저 실행해주세요.
           </div>
         )}
       </div>

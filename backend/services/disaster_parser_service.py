@@ -3,15 +3,27 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
-DATE_LINE_RE_1 = re.compile(r"^\d{4}년\s*\d{1,2}월\s*\d{1,2}일")
-DATE_LINE_RE_2 = re.compile(r"^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.")
+# 날짜/헤더 줄 패턴
+DATE_ONLY_RE_1 = re.compile(r"^\d{4}년\s*\d{1,2}월\s*\d{1,2}일(?:\s*[가-힣]+)?$")
+DATE_ONLY_RE_2 = re.compile(r"^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.\s*(?:[가-힣]+)?$")
+TIME_HEADER_RE_1 = re.compile(r"^\d{4}년\s*\d{1,2}월\s*\d{1,2}일\s*(오전|오후)\s*\d{1,2}:\d{2}$")
+TIME_HEADER_RE_2 = re.compile(r"^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.\s*(오전|오후)\s*\d{1,2}:\d{2}$")
+SAVE_INFO_RE = re.compile(r"^저장한 날짜\s*:")
 
+# 일반 메시지 패턴
 MESSAGE_RE_KOR = re.compile(
     r"^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*(오전|오후)\s*(\d{1,2}):(\d{2}),\s*(.+?)\s*:\s*(.*)$"
 )
-
 MESSAGE_RE_DOT = re.compile(
     r"^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}),\s*(.+?)\s*:\s*(.*)$"
+)
+
+# 시스템 메시지(콤마 없이 콜론만 있는 형식)도 메시지 경계로 인식
+SYSTEM_LINE_RE_KOR = re.compile(
+    r"^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*(오전|오후)\s*(\d{1,2}):(\d{2})[:]\s*(.*)$"
+)
+SYSTEM_LINE_RE_DOT = re.compile(
+    r"^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2})[:]\s*(.*)$"
 )
 
 SYSTEM_RE = re.compile(r"초대했습니다|나갔습니다|들어왔습니다")
@@ -22,24 +34,28 @@ DELETED_RE = re.compile(r"삭제된 메시지입니다")
 EMD_PATTERN = re.compile(r"([가-힣]{1,10}(?:읍|면|동))")
 
 LOCATION_HINT_PATTERNS = [
-    re.compile(r"([가-힣0-9\-\s]+(?:로|길|번지|리|산\d+[\-\d]*|사거리|굴다리|삼거리|마을|공원|산책로|지하차도|통로박스|경로당|고개길|제방|펌프장|병원|시장|휴양림))"),
+    re.compile(
+        r"([가-힣0-9\-\s]+(?:로|길|번지|리|산\d+[\-\d]*|사거리|굴다리|삼거리|마을|공원|산책로|지하차도|통로박스|경로당|고개길|제방|펌프장|병원|시장|휴양림|요양병원|주차장|등산로|하천변도로|세월교))"
+    ),
 ]
 
+# 원인형 사건을 먼저, 조치형(통제)은 뒤로
 INCIDENT_TYPE_RULES = [
-    (re.compile(r"통제|출입 통제|통행제한|차단|통행차단|통제 유지"), "road_control"),
-    (re.compile(r"산사태|토사유출|토사유실|사면|붕괴|낙석|석축이 무너"), "landslide"),
-    (re.compile(r"나무전도|수목전도|쓰러진 나무|전도된 나무|고목.*전도"), "tree_fall"),
-    (re.compile(r"침수|범람|월류|수위상승|도로침수|유실된 제방|맨홀역류"), "flood"),
+    (re.compile(r"산사태|토사유출|토사유실|사면|붕괴|낙석|석축이 무너|임야 사태"), "landslide"),
+    (re.compile(r"나무전도|수목전도|쓰러진 나무|전도된 나무|고목.*전도|아카시아나무.*쓰러"), "tree_fall"),
+    (re.compile(r"침수|범람|월류|수위상승|도로침수|유실된 제방|맨홀역류|배수불량으로 침수"), "flood"),
     (re.compile(r"싱크홀|씽크홀|노면 파손|웅덩이"), "sinkhole"),
     (re.compile(r"배수로|맨홀|양수|펌프장|역류|준설|배수 안됨|오수맨홀"), "drainage"),
     (re.compile(r"유실|시설|공사현장|절개지|오수|정전|반파|파손"), "facility"),
+    (re.compile(r"통제|출입 통제|통행제한|차단|통행차단|통제 유지|출입 통제 유지"), "road_control"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다|현황.*없습니다|상황관리"), "inspection"),
 ]
 
+# 상태 우선순위도 명확히
 STATUS_RULES = [
-    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중"), "in_progress"),
-    (re.compile(r"완료|복구 완료|처리 완료|긴급조치 완료|제거 완료|설치 완료|응급복구 완료|양수 작업 완료"), "completed"),
     (re.compile(r"해제|통행재개|개통"), "closed"),
+    (re.compile(r"완료|복구 완료|처리 완료|긴급조치 완료|제거 완료|설치 완료|응급복구 완료|양수 작업 완료"), "completed"),
+    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|보수예정|정비예정"), "in_progress"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다"), "no_issue"),
     (re.compile(r"모니터링|상황관리|지속적으로 확인|관찰지역|통제 유지|예찰강화"), "monitoring"),
 ]
@@ -138,20 +154,23 @@ def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
             messages.append(current)
             current = None
 
-    for line in lines:
-        line = line.rstrip("\n")
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
 
         if not line.strip():
             if current:
                 current["raw_text"] += "\n"
             continue
 
-        # 날짜 헤더 라인 스킵
-        if DATE_LINE_RE_1.match(line) and "," not in line and ":" not in line:
+        # 저장 정보 / 날짜 헤더 / 단독 시각줄 스킵
+        if SAVE_INFO_RE.match(line):
             continue
-        if DATE_LINE_RE_2.match(line) and "," not in line and "님이" not in line:
+        if DATE_ONLY_RE_1.match(line) or DATE_ONLY_RE_2.match(line):
+            continue
+        if TIME_HEADER_RE_1.match(line) or TIME_HEADER_RE_2.match(line):
             continue
 
+        # 일반 메시지
         m = MESSAGE_RE_KOR.match(line) or MESSAGE_RE_DOT.match(line)
         if m:
             flush_current()
@@ -163,9 +182,25 @@ def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
                 "sender_name": sender,
                 "raw_text": text,
             }
-        else:
-            if current:
-                current["raw_text"] += f"\n{line}"
+            continue
+
+        # 시스템 메시지(초대/입장 등)도 메시지 경계는 잡음
+        sm = SYSTEM_LINE_RE_KOR.match(line) or SYSTEM_LINE_RE_DOT.match(line)
+        if sm:
+            flush_current()
+            dt = parse_timestamp(*sm.groups()[:6])
+            text = sm.group(7).strip()
+            current = {
+                "message_time": dt.isoformat(),
+                "sender_name": "system",
+                "raw_text": text,
+            }
+            flush_current()
+            continue
+
+        # 멀티라인 본문 이어붙이기
+        if current:
+            current["raw_text"] += f"\n{line}"
 
     flush_current()
 

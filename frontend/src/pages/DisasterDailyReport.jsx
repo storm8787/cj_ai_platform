@@ -1,42 +1,27 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { disasterApi } from "../services/api";
 
 export default function DisasterDailyReport() {
-  const [uploads, setUploads] = useState([]);
-  const [selectedUploadId, setSelectedUploadId] = useState(localStorage.getItem("disaster_active_upload_id") || "");
+  const navigate = useNavigate();
   const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const loadUploads = async () => {
-    try {
-      const res = await disasterApi.getUploads();
-      const items = res.data.items || [];
-      setUploads(items);
-
-      if (!selectedUploadId && items.length > 0) {
-        setSelectedUploadId(items[0].id);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  useEffect(() => {
-    loadUploads();
-  }, []);
+  const activeUploadId = sessionStorage.getItem("disaster_active_upload_id");
+  const activeFileName = sessionStorage.getItem("disaster_active_upload_name");
 
   const handleGenerate = async () => {
-    if (!selectedUploadId || !reportDate) return;
+    if (!activeUploadId || !reportDate) return;
+
     setLoading(true);
     try {
       const res = await disasterApi.generateDailyReport({
-        upload_id: selectedUploadId,
+        upload_id: activeUploadId,
         report_date: reportDate,
         created_by: "admin",
       });
       setReport(res.data.report);
-      localStorage.setItem("disaster_active_upload_id", selectedUploadId);
     } catch (err) {
       console.error(err);
       alert(err?.response?.data?.detail || "보고서 생성 중 오류가 발생했습니다.");
@@ -56,33 +41,37 @@ export default function DisasterDailyReport() {
     }
   };
 
+  if (!activeUploadId) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white p-6">
+        <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-6">
+          <h1 className="text-2xl font-bold mb-3">일일보고서 생성</h1>
+          <p className="text-slate-400 mb-4">현재 세션에 선택된 파일이 없습니다. 먼저 txt 파일을 업로드하고 분석해주세요.</p>
+          <button
+            onClick={() => navigate("/disaster-upload")}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg"
+          >
+            업로드 페이지로 이동
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-white p-6">
       <div className="max-w-5xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold">일일보고서 생성</h1>
           <p className="text-slate-400 mt-2">
-            업로드된 사건 데이터를 기반으로 재난상황 일일보고서를 자동 생성합니다.
+            현재 세션 파일 기준 재난상황 일일보고서를 자동 생성합니다.
+          </p>
+          <p className="text-sm text-slate-500 mt-1">
+            파일명: {activeFileName || "현재 세션 파일"}
           </p>
         </div>
 
         <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
-          <div>
-            <label className="block text-sm text-slate-400 mb-2">분석 파일 선택</label>
-            <select
-              value={selectedUploadId}
-              onChange={(e) => setSelectedUploadId(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"
-            >
-              <option value="">선택하세요</option>
-              {uploads.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.file_name} ({item.analysis_status})
-                </option>
-              ))}
-            </select>
-          </div>
-
           <div>
             <label className="block text-sm text-slate-400 mb-2">보고일자</label>
             <input
@@ -110,6 +99,13 @@ export default function DisasterDailyReport() {
                 복사
               </button>
             )}
+
+            <button
+              onClick={() => navigate("/disaster-upload")}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg"
+            >
+              다른 파일 업로드
+            </button>
           </div>
         </div>
 

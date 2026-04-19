@@ -4,32 +4,19 @@ import { disasterApi } from "../services/api";
 
 export default function DisasterIncidents() {
   const navigate = useNavigate();
-  const [uploads, setUploads] = useState([]);
-  const [selectedUploadId, setSelectedUploadId] = useState(localStorage.getItem("disaster_active_upload_id") || "");
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const loadUploads = async () => {
-    try {
-      const res = await disasterApi.getUploads();
-      const uploadItems = res.data.items || [];
-      setUploads(uploadItems);
+  const activeUploadId = sessionStorage.getItem("disaster_active_upload_id");
+  const activeFileName = sessionStorage.getItem("disaster_active_upload_name");
 
-      if (!selectedUploadId && uploadItems.length > 0) {
-        setSelectedUploadId(uploadItems[0].id);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const loadIncidents = async () => {
+    if (!activeUploadId) return;
 
-  const loadIncidents = async (uploadId) => {
-    if (!uploadId) return;
     setLoading(true);
     try {
-      const res = await disasterApi.getIncidents({ upload_id: uploadId });
+      const res = await disasterApi.getIncidents({ upload_id: activeUploadId });
       setItems(res.data.items || []);
-      localStorage.setItem("disaster_active_upload_id", uploadId);
     } catch (err) {
       console.error(err);
       setItems([]);
@@ -39,14 +26,25 @@ export default function DisasterIncidents() {
   };
 
   useEffect(() => {
-    loadUploads();
+    loadIncidents();
   }, []);
 
-  useEffect(() => {
-    if (selectedUploadId) {
-      loadIncidents(selectedUploadId);
-    }
-  }, [selectedUploadId]);
+  if (!activeUploadId) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white p-6">
+        <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-6">
+          <h1 className="text-2xl font-bold mb-3">사건 목록</h1>
+          <p className="text-slate-400 mb-4">현재 세션에 선택된 파일이 없습니다. 먼저 txt 파일을 업로드하고 분석해주세요.</p>
+          <button
+            onClick={() => navigate("/disaster-upload")}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg"
+          >
+            업로드 페이지로 이동
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-6">
@@ -55,31 +53,26 @@ export default function DisasterIncidents() {
           <div>
             <h1 className="text-2xl font-bold">사건 목록</h1>
             <p className="text-slate-400 mt-2">
-              업로드된 재난상황 카카오톡 데이터를 사건 단위로 정리한 목록입니다.
+              현재 세션 파일 기준 사건 목록입니다.
+            </p>
+            <p className="text-sm text-slate-500 mt-1">
+              파일명: {activeFileName || "현재 세션 파일"}
             </p>
           </div>
-          <button
-            onClick={() => navigate("/disaster-dashboard")}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg"
-          >
-            대시보드로
-          </button>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4">
-          <label className="block text-sm text-slate-400 mb-2">분석 파일 선택</label>
-          <select
-            value={selectedUploadId}
-            onChange={(e) => setSelectedUploadId(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"
-          >
-            <option value="">선택하세요</option>
-            {uploads.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.file_name} ({item.analysis_status})
-              </option>
-            ))}
-          </select>
+          <div className="flex gap-2">
+            <button
+              onClick={() => navigate("/disaster-dashboard")}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg"
+            >
+              대시보드로
+            </button>
+            <button
+              onClick={() => navigate("/disaster-upload")}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg"
+            >
+              다른 파일 업로드
+            </button>
+          </div>
         </div>
 
         <div className="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden">

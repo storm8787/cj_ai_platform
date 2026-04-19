@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { disasterApi } from "../services/api";
 
@@ -9,28 +9,15 @@ export default function DisasterUpload() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
   const [uploadResult, setUploadResult] = useState(null);
-  const [uploads, setUploads] = useState([]);
 
-  const loadUploads = async () => {
-    try {
-      const res = await disasterApi.getUploads();
-      setUploads(res.data.items || []);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  useEffect(() => {
-    loadUploads();
-  }, []);
-
-  const saveActiveUpload = (upload) => {
-    localStorage.setItem("disaster_active_upload_id", upload.id || upload.upload_id);
-    localStorage.setItem("disaster_active_upload_name", upload.file_name || "");
+  const saveActiveUpload = (uploadId, fileName = "") => {
+    sessionStorage.setItem("disaster_active_upload_id", uploadId);
+    sessionStorage.setItem("disaster_active_upload_name", fileName);
   };
 
   const handleUpload = async () => {
     if (!file) return;
+
     setUploading(true);
     setError("");
     setUploadResult(null);
@@ -42,10 +29,7 @@ export default function DisasterUpload() {
       const res = await disasterApi.upload(formData);
       setUploadResult(res.data);
 
-      localStorage.setItem("disaster_active_upload_id", res.data.upload_id);
-      localStorage.setItem("disaster_active_upload_name", res.data.file_name || file.name);
-
-      await loadUploads();
+      saveActiveUpload(res.data.upload_id, res.data.file_name || file.name);
     } catch (err) {
       setError(err?.response?.data?.detail || "업로드 중 오류가 발생했습니다.");
     } finally {
@@ -53,14 +37,15 @@ export default function DisasterUpload() {
     }
   };
 
-  const handleAnalyze = async (uploadId) => {
+  const handleAnalyze = async () => {
+    const uploadId = uploadResult?.upload_id || sessionStorage.getItem("disaster_active_upload_id");
     if (!uploadId) return;
+
     setAnalyzing(true);
     setError("");
 
     try {
       await disasterApi.analyze(uploadId);
-      localStorage.setItem("disaster_active_upload_id", uploadId);
       alert("분석이 완료되었습니다.");
       navigate("/disaster-dashboard");
     } catch (err) {
@@ -72,7 +57,7 @@ export default function DisasterUpload() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-6">
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="max-w-4xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold">재난상황 카카오톡 업로드</h1>
           <p className="text-slate-400 mt-2">
@@ -81,7 +66,7 @@ export default function DisasterUpload() {
         </div>
 
         <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold">새 파일 업로드</h2>
+          <h2 className="text-lg font-semibold">파일 업로드</h2>
 
           <input
             type="file"
@@ -99,13 +84,13 @@ export default function DisasterUpload() {
               {uploading ? "업로드 중..." : "업로드"}
             </button>
 
-            {uploadResult?.upload_id && (
+            {(uploadResult?.upload_id || sessionStorage.getItem("disaster_active_upload_id")) && (
               <button
-                onClick={() => handleAnalyze(uploadResult.upload_id)}
+                onClick={handleAnalyze}
                 disabled={analyzing}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg disabled:opacity-50"
               >
-                {analyzing ? "분석 중..." : "업로드한 파일 분석"}
+                {analyzing ? "분석 중..." : "분석 실행"}
               </button>
             )}
           </div>
@@ -124,71 +109,14 @@ export default function DisasterUpload() {
         </div>
 
         <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-          <h2 className="text-lg font-semibold mb-4">최근 업로드</h2>
-
-          {!uploads.length ? (
-            <p className="text-slate-400">업로드된 파일이 없습니다.</p>
-          ) : (
-            <div className="space-y-3">
-              {uploads.map((item) => (
-                <div
-                  key={item.id}
-                  className="bg-slate-800 rounded-xl p-4 flex items-center justify-between"
-                >
-                  <div>
-                    <p className="font-medium">{item.file_name}</p>
-                    <p className="text-sm text-slate-400">
-                      업로드: {item.uploaded_at?.replace("T", " ").slice(0, 16)} / 상태: {item.analysis_status}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      메시지 {item.message_count || 0}건 / 사건 {item.incident_count || 0}건
-                    </p>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        saveActiveUpload(item);
-                        navigate("/disaster-dashboard");
-                      }}
-                      className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
-                    >
-                      대시보드
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        saveActiveUpload(item);
-                        navigate("/disaster-incidents");
-                      }}
-                      className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
-                    >
-                      사건목록
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        saveActiveUpload(item);
-                        navigate("/disaster-report");
-                      }}
-                      className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
-                    >
-                      보고서
-                    </button>
-
-                    {item.analysis_status !== "analyzed" && (
-                      <button
-                        onClick={() => handleAnalyze(item.id)}
-                        disabled={analyzing}
-                        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm disabled:opacity-50"
-                      >
-                        분석
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
+          <h2 className="text-lg font-semibold mb-3">현재 작업 파일</h2>
+          {sessionStorage.getItem("disaster_active_upload_id") ? (
+            <div className="text-sm text-slate-300 space-y-1">
+              <p>파일명: {sessionStorage.getItem("disaster_active_upload_name") || "현재 세션 파일"}</p>
+              <p className="text-slate-500">현재 세션에서만 유지됩니다. 브라우저를 닫으면 목록은 사라집니다.</p>
             </div>
+          ) : (
+            <p className="text-slate-400">현재 세션에 선택된 파일이 없습니다.</p>
           )}
         </div>
       </div>
