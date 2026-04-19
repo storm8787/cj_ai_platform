@@ -2,6 +2,26 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { disasterApi } from "../services/api";
 
+const INCIDENT_TYPE_LABELS = {
+  road_control: "도로통제",
+  landslide: "산사태·토사유출",
+  tree_fall: "나무전도",
+  flood: "침수·범람",
+  sinkhole: "싱크홀·노면파손",
+  drainage: "배수·맨홀·양수",
+  facility: "시설물 이상",
+  inspection: "기타/미분류",
+};
+
+const STATUS_LABELS = {
+  reported: "발생",
+  in_progress: "조치중",
+  completed: "조치완료",
+  monitoring: "모니터링",
+  no_issue: "이상없음",
+  closed: "해제·종결",
+};
+
 export default function DisasterIncidents() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
@@ -52,12 +72,8 @@ export default function DisasterIncidents() {
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold">사건 목록</h1>
-            <p className="text-slate-400 mt-2">
-              현재 세션 파일 기준 사건 목록입니다.
-            </p>
-            <p className="text-sm text-slate-500 mt-1">
-              파일명: {activeFileName || "현재 세션 파일"}
-            </p>
+            <p className="text-slate-400 mt-2">현재 세션 파일 기준 사건 목록입니다.</p>
+            <p className="text-sm text-slate-500 mt-1">파일명: {activeFileName || "현재 세션 파일"}</p>
           </div>
           <div className="flex gap-2">
             <button
@@ -107,8 +123,8 @@ export default function DisasterIncidents() {
                       <td className="p-3 whitespace-nowrap">{item.incident_time?.replace("T", " ").slice(0, 16)}</td>
                       <td className="p-3">{item.emd || "-"}</td>
                       <td className="p-3">{item.location_raw || "-"}</td>
-                      <td className="p-3">{item.incident_type || "-"}</td>
-                      <td className="p-3">{item.status || "-"}</td>
+                      <td className="p-3">{INCIDENT_TYPE_LABELS[item.incident_type] || item.incident_type || "-"}</td>
+                      <td className="p-3">{STATUS_LABELS[item.status] || item.status || "-"}</td>
                       <td className="p-3">{item.reporter_name || "-"}</td>
                       <td className="p-3">{item.photo_count || 0}</td>
                       <td className="p-3">{item.summary || "-"}</td>

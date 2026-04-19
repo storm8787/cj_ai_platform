@@ -10,7 +10,7 @@ INCIDENT_LABELS = {
     "sinkhole": "싱크홀·노면파손",
     "drainage": "배수·맨홀·양수",
     "facility": "시설물 이상",
-    "inspection": "예찰·이상없음",
+    "inspection": "기타/미분류",
 }
 
 STATUS_LABELS = {
