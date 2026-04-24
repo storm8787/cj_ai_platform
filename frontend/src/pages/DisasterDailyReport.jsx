@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { disasterApi } from "../services/api";
+import { useDisasterSession } from "../hooks/useDisasterSession";
 
 export default function DisasterDailyReport() {
   const navigate = useNavigate();
+  const { uploadId: activeUploadId, fileName: activeFileName } = useDisasterSession();
+
   const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  const activeUploadId = sessionStorage.getItem("disaster_active_upload_id");
-  const activeFileName = sessionStorage.getItem("disaster_active_upload_name");
 
   const handleGenerate = async () => {
     if (!activeUploadId || !reportDate) return;
@@ -46,7 +46,9 @@ export default function DisasterDailyReport() {
       <div className="min-h-screen bg-slate-950 text-white p-6">
         <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-6">
           <h1 className="text-2xl font-bold mb-3">일일보고서 생성</h1>
-          <p className="text-slate-400 mb-4">현재 세션에 선택된 파일이 없습니다. 먼저 txt 파일을 업로드하고 분석해주세요.</p>
+          <p className="text-slate-400 mb-4">
+            현재 세션에 선택된 파일이 없습니다. 먼저 txt 파일을 업로드하고 분석해주세요.
+          </p>
           <button
             onClick={() => navigate("/disaster-upload")}
             className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg"

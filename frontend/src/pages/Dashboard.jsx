@@ -121,8 +121,8 @@ const services = [
   {
     icon: '🚨',
     title: '재난상황 대시보드',
-    description: '카카오톡 상황보고를 분석하여 사건 목록, 통계, 일일보고서를 생성합니다',
-    path: '/disaster-dashboard',
+    description: '카카오톡 상황보고 txt를 업로드하면 사건 목록·대시보드·일일보고서를 생성합니다',
+    path: '/disaster-upload',
     category: 'data',
   },
 ];
@@ -130,7 +130,7 @@ const services = [
 // 카테고리별 순서 정의
 const categoryOrder = {
   document: ['/press-release', '/merit-report', '/kakao-promo', '/report-writer', '/trip-report'],
-  data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger', '/timeline', '/disaster-dashboard'],
+  data: ['/data-analysis', '/data-validator', '/address-geocoder', '/excel-merger', '/timeline', '/disaster-upload'],
   translate: ['/news', '/translator', '/meeting-summary'],
   chatbot: ['/election-law', '/law-chatbot'],
 };

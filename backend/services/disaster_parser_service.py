@@ -1,3 +1,15 @@
+"""
+카카오톡 txt 파서 서비스
+
+변경사항 (v7.1):
+- 날짜 포맷 추가: 단축형(--- 헤더) 및 연도 누락형 대응
+- infer_status 정교화:
+  * '~예정' 계열은 reported로 분리 (in_progress에서 제외)
+  * '~중' 계열만 in_progress
+- extract_location_raw: 다양한 괄호 문자 정리
+- 응답 문구 필터는 disaster_incident_service로 이동
+"""
+
 import re
 from datetime import datetime
 from pathlib import Path
@@ -37,11 +49,17 @@ EMD_LIST = load_emd_list()
 DATE_ONLY_RE_1 = re.compile(r"^\d{4}년\s*\d{1,2}월\s*\d{1,2}일(?:\s*[가-힣]+)?$")
 DATE_ONLY_RE_2 = re.compile(r"^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.\s*(?:[가-힣]+)?$")
 
+# "--------------- 2025년 7월 15일 월요일 ---------------" 형태
+DATE_DIVIDER_RE = re.compile(
+    r"^-+\s*\d{4}년\s*\d{1,2}월\s*\d{1,2}일.*-+$"
+)
+
 TIME_HEADER_RE_1 = re.compile(r"^\d{4}년\s*\d{1,2}월\s*\d{1,2}일\s*(오전|오후)\s*\d{1,2}:\d{2}$")
 TIME_HEADER_RE_2 = re.compile(r"^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.\s*(오전|오후)\s*\d{1,2}:\d{2}$")
 
 SAVE_INFO_RE = re.compile(r"^저장한 날짜\s*:")
 
+# 연도 포함 패턴
 MESSAGE_RE_KOR = re.compile(
     r"^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*(오전|오후)\s*(\d{1,2}):(\d{2}),\s*(.+?)\s*:\s*(.*)$"
 )
@@ -50,7 +68,7 @@ MESSAGE_RE_DOT = re.compile(
     r"^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2}),\s*(.+?)\s*:\s*(.*)$"
 )
 
-# 콤마 없이 시스템 메시지 시작하는 경우
+# 시스템 메시지 (콤마 없이 시작)
 SYSTEM_LINE_RE_KOR = re.compile(
     r"^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일\s*(오전|오후)\s*(\d{1,2}):(\d{2})[:]\s*(.*)$"
 )
@@ -59,7 +77,12 @@ SYSTEM_LINE_RE_DOT = re.compile(
     r"^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.\s*(오전|오후)\s*(\d{1,2}):(\d{2})[:]\s*(.*)$"
 )
 
-SYSTEM_RE = re.compile(r"초대했습니다|나갔습니다|들어왔습니다")
+# 대괄호 포맷 [보내는사람] [오후 3:30] 메시지 (모바일 최신 포맷)
+MESSAGE_RE_BRACKET = re.compile(
+    r"^\[(.+?)\]\s*\[(오전|오후)\s*(\d{1,2}):(\d{2})\]\s*(.*)$"
+)
+
+SYSTEM_RE = re.compile(r"초대했습니다|나갔습니다|들어왔습니다|내보냈습니다")
 PHOTO_RE = re.compile(r"^사진(?:\s*(\d+)장)?$")
 VIDEO_RE = re.compile(r"^동영상$")
 DELETED_RE = re.compile(r"삭제된 메시지입니다")
@@ -84,6 +107,9 @@ LOCATION_KEYWORDS = [
     "교현천 산책로", "충주천 하천변 산책로", "남산등산로", "참샘골 마을안길"
 ]
 
+# 괄호 정리용 문자 (위치 추출 시)
+BRACKET_CHARS_RE = re.compile(r"[\[\]【】『』()〔〕「」《》]")
+
 # 원인형 재난 먼저, 통제는 뒤로
 INCIDENT_TYPE_RULES = [
     (re.compile(r"산사태|토사유출|토사유실|사면|붕괴|낙석|석축이 무너|임야 사태"), "landslide"),
@@ -96,12 +122,15 @@ INCIDENT_TYPE_RULES = [
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다|현황.*없습니다|상황관리|점검결과 이상없습니다"), "inspection"),
 ]
 
+# 상태 규칙: 예정 계열은 reported로, 진행 계열만 in_progress
 STATUS_RULES = [
     (re.compile(r"해제|통행재개|개통"), "closed"),
-    (re.compile(r"완료|복구 완료|처리 완료|긴급조치 완료|제거 완료|설치 완료|응급복구 완료|양수 작업 완료"), "completed"),
-    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|보수예정|정비예정|조치예정"), "in_progress"),
+    (re.compile(r"복구 완료|처리 완료|긴급조치 완료|제거 완료|설치 완료|응급복구 완료|양수 작업 완료|조치 완료|조치완료|완료했습니다|완료하였습니다"), "completed"),
+    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|처리중|처리 중"), "in_progress"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다"), "no_issue"),
-    (re.compile(r"모니터링|상황관리|지속적으로 확인|관찰지역|통제 유지|예찰강화"), "monitoring"),
+    (re.compile(r"모니터링|상황관리|지속적으로 확인|관찰지역|통제 유지|예찰강화|예찰 강화"), "monitoring"),
+    # '~예정'은 아직 시작 안 함 → reported 유지 (명시적 패턴이지만 마지막에 배치)
+    (re.compile(r"예정"), "reported"),
 ]
 
 AGENCY_RULES = [
@@ -170,6 +199,12 @@ def extract_emd(text: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _clean_location_text(text: str) -> str:
+    """위치 문자열의 괄호 및 여분 공백 정리"""
+    cleaned = BRACKET_CHARS_RE.sub("", text)
+    return " ".join(cleaned.split()).strip()
+
+
 def extract_location_raw(text: str) -> Optional[str]:
     text = text or ""
     emd = extract_emd(text)
@@ -185,8 +220,7 @@ def extract_location_raw(text: str) -> Optional[str]:
 
                 # 너무 긴 문장 방지
                 candidate = candidate.split("조치")[0].split("완료")[0].split("입니다")[0].strip()
-                candidate = candidate.replace("[", "").replace("]", "").strip()
-                candidate = " ".join(candidate.split())
+                candidate = _clean_location_text(candidate)
 
                 if candidate:
                     return f"{emd} {candidate}".strip()
@@ -195,8 +229,7 @@ def extract_location_raw(text: str) -> Optional[str]:
     for pattern in LOCATION_HINT_PATTERNS:
         match = pattern.search(text)
         if match:
-            loc = " ".join(match.group(1).split()).strip()
-            loc = loc.replace("[", "").replace("]", "").strip()
+            loc = _clean_location_text(match.group(1))
             if emd and emd not in loc:
                 return f"{emd} {loc}".strip()
             return loc
@@ -219,6 +252,9 @@ def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
     messages: List[Dict[str, Any]] = []
     current: Optional[Dict[str, Any]] = None
 
+    # 구분선 형태 날짜에서 추출한 최근 날짜 (대괄호 포맷 보완용)
+    current_date: Optional[Dict[str, int]] = None
+
     def flush_current():
         nonlocal current
         if current:
@@ -234,15 +270,34 @@ def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
                 current["raw_text"] += "\n"
             continue
 
-        # 저장 정보 / 날짜 헤더 / 단독 시각줄 스킵
+        # 저장 정보 스킵
         if SAVE_INFO_RE.match(line):
             continue
+
+        # 구분선 형태 날짜 ("-------- 2025년 7월 15일 월요일 --------")
+        div_match = re.search(r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일", line)
+        if DATE_DIVIDER_RE.match(line) and div_match:
+            current_date = {
+                "year": int(div_match.group(1)),
+                "month": int(div_match.group(2)),
+                "day": int(div_match.group(3)),
+            }
+            continue
+
+        # 단독 날짜 / 시각 헤더 스킵 (단, 날짜는 current_date로 기억)
         if DATE_ONLY_RE_1.match(line) or DATE_ONLY_RE_2.match(line):
+            dm = re.search(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})", line)
+            if dm:
+                current_date = {
+                    "year": int(dm.group(1)),
+                    "month": int(dm.group(2)),
+                    "day": int(dm.group(3)),
+                }
             continue
         if TIME_HEADER_RE_1.match(line) or TIME_HEADER_RE_2.match(line):
             continue
 
-        # 일반 메시지
+        # 일반 메시지 (연도 포함)
         m = MESSAGE_RE_KOR.match(line) or MESSAGE_RE_DOT.match(line)
         if m:
             flush_current()
@@ -255,6 +310,33 @@ def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
                 "raw_text": text,
             }
             continue
+
+        # 대괄호 포맷 [이름] [오후 3:30] 메시지 (연도 없음 → current_date 사용)
+        br = MESSAGE_RE_BRACKET.match(line)
+        if br and current_date:
+            flush_current()
+            sender = br.group(1).strip()
+            ampm = br.group(2)
+            hour = br.group(3)
+            minute = br.group(4)
+            text = br.group(5)
+            try:
+                hh = _to_24h(int(hour), ampm)
+                dt = datetime(
+                    current_date["year"],
+                    current_date["month"],
+                    current_date["day"],
+                    hh,
+                    int(minute),
+                )
+                current = {
+                    "message_time": dt.isoformat(),
+                    "sender_name": sender,
+                    "raw_text": text,
+                }
+                continue
+            except (ValueError, KeyError):
+                pass
 
         # 시스템 메시지도 메시지 경계는 잡기
         sm = SYSTEM_LINE_RE_KOR.match(line) or SYSTEM_LINE_RE_DOT.match(line)
