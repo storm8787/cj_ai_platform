@@ -416,8 +416,8 @@ class KoreanLawMCPService:
                 "connected": False,
                 "reason": "LAW_API_OC/LAW_OC 미설정",
                 "mode": "cli",
-                #"command": self.cli_command,
-                "command": f"{self.cli_command} {self.cli_script}",
+                "command": self.cli_command,
+                #"command": f"{self.cli_command} {self.cli_script}",
             }
 
         try:
@@ -427,8 +427,8 @@ class KoreanLawMCPService:
                 "connected": len(results) > 0,
                 "result_count": len(results),
                 "mode": "cli",
-                #"command": self.cli_command,
-                "command": f"{self.cli_command} {self.cli_script}",
+                "command": self.cli_command,
+                #"command": f"{self.cli_command} {self.cli_script}",
             }
         except Exception as e:
             return {
@@ -436,8 +436,8 @@ class KoreanLawMCPService:
                 "connected": False,
                 "reason": str(e),
                 "mode": "cli",
-                #"command": self.cli_command,
-                "command": f"{self.cli_command} {self.cli_script}",                
+                "command": self.cli_command,
+                #"command": f"{self.cli_command} {self.cli_script}",                
             }
 
 
