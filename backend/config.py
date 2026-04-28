@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     
     # 국가법령정보센터 API (법령·자치법규 챗봇용)
     LAW_API_OC: str = ""
+
+    # korean-law-mcp 설정
+    # 기존 LAW_API_OC 값을 LAW_OC로 전달하여 사용
+    KOREAN_LAW_MCP_ENABLED: str = "true"
+    KOREAN_LAW_MCP_COMMAND: str = "korean-law-mcp"
+    KOREAN_LAW_MCP_TIMEOUT: int = 25
+    KOREAN_LAW_MCP_SEARCH_TOOL: str = "search_law"
+    KOREAN_LAW_MCP_TEXT_TOOL: str = "get_law_text"
+    KOREAN_LAW_MCP_ALL_SEARCH_TOOL: str = "search_all"
     
     # CORS 설정
     CORS_ORIGINS: str = "http://localhost:5173"

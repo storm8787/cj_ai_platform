@@ -24,6 +24,7 @@ from FlagEmbedding import BGEM3FlagModel
 
 from config import settings
 from services.prompt_service import prompt_service
+from services.korean_law_mcp_service import korean_law_mcp_service
 
 # BM25 Hybrid Search
 try:
@@ -528,45 +529,113 @@ def _apply_dynamic_threshold(results: list) -> list:
 # ══════════════════════════════════════════════════════
 
 async def _search_law_api(query: str, targets: list) -> list:
+    """
+    법령 검색.
+    1순위: korean-law-mcp
+    2순위: 기존 law.go.kr 직접 API fallback
+
+    주의:
+    - 국가법령(law)은 MCP 우선 사용
+    - 자치법규(ordin)는 기존 직접 API 방식 유지
+    """
     oc = settings.LAW_API_OC
-    if not oc:
-        return []
     all_results = []
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for target in targets:
+
+    for target in targets:
+        # ── 1순위: 국가법령은 MCP 우선 ──
+        if target == "law":
+            try:
+                mcp_results = await korean_law_mcp_service.search_law(
+                    query=query,
+                    target=target,
+                    display=10,
+                )
+                if mcp_results:
+                    print(f"[law-chatbot] MCP 검색 성공: query={query}, count={len(mcp_results)}")
+                    all_results.extend(mcp_results)
+                    continue
+            except Exception as e:
+                print(f"[law-chatbot] MCP 검색 예외, 기존 API fallback 진행: {e}")
+
+        # ── 2순위: 기존 law.go.kr 직접 API fallback ──
+        if not oc:
+            continue
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
             try:
                 params = {
-                    "OC": oc, "target": target, "type": "XML",
+                    "OC": oc,
+                    "target": target,
+                    "type": "XML",
                     "query": query if target != "ordin" else f"충주시 {query}",
-                    "display": 10, "page": 1,
+                    "display": 10,
+                    "page": 1,
                 }
                 resp = await client.get(LAW_SEARCH_URL, params=params)
                 if resp.status_code != 200:
                     continue
+
                 text = resp.content.decode("utf-8")
                 if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
                     continue
+
                 items = _parse_search_xml(text, target)
+                for item in items:
+                    item.setdefault("source", "law.go.kr-api")
                 all_results.extend(items)
+
             except Exception as e:
                 print(f"[law-chatbot] API 검색 실패 (target={target}): {e}")
+
     return all_results
 
 
 async def _call_law_search_api(target: str, query: str, page: int, display: int) -> list:
+    """
+    직접 검색 API.
+    /api/law-chatbot/search에서 사용.
+
+    국가법령 target=law는 MCP 우선 사용,
+    실패 시 기존 law.go.kr API 사용.
+    """
+    # ── 1순위: MCP 검색 ──
+    if target == "law":
+        try:
+            mcp_results = await korean_law_mcp_service.search_law(
+                query=query,
+                target=target,
+                display=display,
+            )
+            if mcp_results:
+                print(f"[law-chatbot] /search MCP 검색 성공: query={query}, count={len(mcp_results)}")
+                return mcp_results
+        except Exception as e:
+            print(f"[law-chatbot] /search MCP 실패, 기존 API fallback 진행: {e}")
+
+    # ── 2순위: 기존 law.go.kr 직접 API ──
     oc = settings.LAW_API_OC
     if not oc:
         raise HTTPException(status_code=500, detail="LAW_API_OC 환경변수 미설정")
+
     async with httpx.AsyncClient(timeout=15.0) as client:
         params = {
-            "OC": oc, "target": target, "type": "XML",
-            "query": query, "display": display, "page": page,
+            "OC": oc,
+            "target": target,
+            "type": "XML",
+            "query": query,
+            "display": display,
+            "page": page,
         }
         resp = await client.get(LAW_SEARCH_URL, params=params)
         text = resp.content.decode("utf-8")
+
         if text.strip().startswith("<!DOCTYPE"):
             raise HTTPException(status_code=502, detail="법령 API 인증 실패")
-        return _parse_search_xml(text, target)
+
+        results = _parse_search_xml(text, target)
+        for item in results:
+            item.setdefault("source", "law.go.kr-api")
+        return results
 
 
 # ══════════════════════════════════════════════════════
@@ -576,18 +645,68 @@ async def _call_law_search_api(target: str, query: str, page: int, display: int)
 async def _fetch_relevant_articles(
     mst: str, target: str, question: str, keywords: list
 ) -> str:
+    """
+    법령 본문/관련 조문 조회.
+
+    1순위: korean-law-mcp get_law_text
+    2순위: 기존 law.go.kr lawService.do 직접 호출 fallback
+
+    주의:
+    - 국가법령(target="law")은 MCP 본문 조회를 먼저 시도
+    - 자치법규(target="ordin")는 기존 law.go.kr API 방식 유지
+    - MCP 실패 또는 결과 없음 시 기존 API로 자동 fallback
+    """
+    # ─────────────────────────────────────────────
+    # 1순위: 국가법령은 korean-law-mcp 본문 조회 우선
+    # ─────────────────────────────────────────────
+    if target == "law":
+        try:
+            mcp_text = await korean_law_mcp_service.get_law_text(
+                mst=mst,
+                question=question,
+            )
+
+            if mcp_text and len(mcp_text.strip()) > 20:
+                print(
+                    f"[law-chatbot] MCP 본문 조회 성공: "
+                    f"MST={mst}, chars={len(mcp_text)}"
+                )
+                return mcp_text[:8000]
+
+            print(
+                f"[law-chatbot] MCP 본문 조회 결과 없음, 기존 API fallback 진행: "
+                f"MST={mst}"
+            )
+
+        except Exception as e:
+            print(
+                f"[law-chatbot] MCP 본문 조회 예외, 기존 API fallback 진행: "
+                f"MST={mst}, error={e}"
+            )
+
+    # ─────────────────────────────────────────────
+    # 2순위: 기존 law.go.kr 직접 API fallback
+    # ─────────────────────────────────────────────
     oc = settings.LAW_API_OC
     if not oc:
         return ""
+
     async with httpx.AsyncClient(timeout=20.0) as client:
         try:
             resp = await client.get(
                 LAW_SERVICE_URL,
-                params={"OC": oc, "target": target, "MST": mst, "type": "XML"},
+                params={
+                    "OC": oc,
+                    "target": target,
+                    "MST": mst,
+                    "type": "XML",
+                },
             )
             text = resp.content.decode("utf-8")
+
             if text.strip().startswith("<!DOCTYPE"):
                 return ""
+
         except Exception as e:
             print(f"[law-chatbot] 본문 조회 실패 (MST={mst}): {e}")
             return ""
@@ -598,31 +717,39 @@ async def _fetch_relevant_articles(
 
     # 검색어 구성
     search_terms = set()
+
     for word in question.split():
         if len(word) >= 2:
             search_terms.add(word)
+
     for kw in keywords:
         for word in kw.split():
             if len(word) >= 2:
                 search_terms.add(word)
-    stopwords = {"어떻게", "어떤", "무엇", "알려줘", "알려주세요", "규정은",
-                 "기준이", "기준은", "몇일이야", "있나요", "인가요", "해줘",
-                 "어떻게돼", "뭐야", "구성은", "해야해", "받을수", "있을까",
-                 "경우", "했을경우", "복직했을경우", "대상사업은"}
+
+    stopwords = {
+        "어떻게", "어떤", "무엇", "알려줘", "알려주세요", "규정은",
+        "기준이", "기준은", "몇일이야", "있나요", "인가요", "해줘",
+        "어떻게돼", "뭐야", "구성은", "해야해", "받을수", "있을까",
+        "경우", "했을경우", "복직했을경우", "대상사업은",
+    }
     search_terms -= stopwords
 
     # 관련도 점수
     scored_articles = []
+
     for article in articles:
         title = article.get("title", "")
         content = article.get("content", "")
         full_text = f"{title} {content}"
+
         score = 0
         for term in search_terms:
             if term in full_text:
                 score += 1
                 if term in title:
                     score += 2
+
         if score > 0:
             scored_articles.append((score, article))
 
@@ -630,24 +757,34 @@ async def _fetch_relevant_articles(
 
     selected = []
     total_chars = 0
+
     for score, article in scored_articles[:10]:
-        article_text = f"[{article.get('number', '')} {article.get('title', '')}]\n{article.get('content', '')}"
+        article_text = (
+            f"[{article.get('number', '')} {article.get('title', '')}]\n"
+            f"{article.get('content', '')}"
+        )
+
         if total_chars + len(article_text) > 8000:
             break
+
         selected.append(article_text)
         total_chars += len(article_text)
 
-    # 관련 조문 없으면 처음 5개
+    # 관련 조문 없으면 처음 5개 fallback
     if not selected and articles:
         for article in articles[:5]:
-            article_text = f"[{article.get('number', '')} {article.get('title', '')}]\n{article.get('content', '')}"
+            article_text = (
+                f"[{article.get('number', '')} {article.get('title', '')}]\n"
+                f"{article.get('content', '')}"
+            )
+
             selected.append(article_text)
             total_chars += len(article_text)
+
             if total_chars > 5000:
                 break
 
     return "\n\n".join(selected)
-
 
 def _parse_articles_from_xml(xml_text: str) -> list:
     articles = []
@@ -865,17 +1002,67 @@ def _deduplicate_api_results(results: list) -> list:
 
 
 async def _check_api_connection() -> dict:
+    """
+    법령 검색 연결 상태 확인.
+    MCP 상태와 기존 law.go.kr API 상태를 모두 반환.
+    """
+    result = {
+        "mcp": {
+            "enabled": False,
+            "connected": False,
+        },
+        "law_api": {
+            "connected": False,
+        },
+        "connected": False,
+    }
+
+    # ── MCP 상태 확인 ──
+    try:
+        mcp_status = await korean_law_mcp_service.check_connection()
+        result["mcp"] = mcp_status
+    except Exception as e:
+        result["mcp"] = {
+            "enabled": True,
+            "connected": False,
+            "reason": str(e),
+        }
+
+    # ── 기존 law.go.kr API 상태 확인 ──
     oc = settings.LAW_API_OC
     if not oc:
-        return {"connected": False, "reason": "LAW_API_OC 미설정"}
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                LAW_SEARCH_URL,
-                params={"OC": oc, "target": "law", "type": "XML", "query": "헌법", "display": 1},
-            )
-            text = resp.content.decode("utf-8")
-            is_xml = not text.strip().startswith("<!DOCTYPE")
-            return {"connected": is_xml, "status_code": resp.status_code}
-    except Exception as e:
-        return {"connected": False, "reason": str(e)}
+        result["law_api"] = {
+            "connected": False,
+            "reason": "LAW_API_OC 미설정",
+        }
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    LAW_SEARCH_URL,
+                    params={
+                        "OC": oc,
+                        "target": "law",
+                        "type": "XML",
+                        "query": "헌법",
+                        "display": 1,
+                    },
+                )
+                text = resp.content.decode("utf-8")
+                is_xml = not text.strip().startswith("<!DOCTYPE")
+                result["law_api"] = {
+                    "connected": is_xml,
+                    "status_code": resp.status_code,
+                }
+        except Exception as e:
+            result["law_api"] = {
+                "connected": False,
+                "reason": str(e),
+            }
+
+    result["connected"] = bool(
+        result.get("mcp", {}).get("connected") or
+        result.get("law_api", {}).get("connected")
+    )
+
+    return result
