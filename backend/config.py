@@ -40,9 +40,19 @@ class Settings(BaseSettings):
     KOREAN_LAW_MCP_ENABLED: str = "true"
     KOREAN_LAW_MCP_CLI_COMMAND: str = "korean-law"
     KOREAN_LAW_MCP_TIMEOUT: int = 25
+
+    # MCP 도구명
     KOREAN_LAW_MCP_SEARCH_TOOL: str = "search_law"
     KOREAN_LAW_MCP_TEXT_TOOL: str = "get_law_text"
-    KOREAN_LAW_MCP_ALL_SEARCH_TOOL: str = "search_all" 
+    KOREAN_LAW_MCP_ALL_SEARCH_TOOL: str = "search_all"
+
+    # 자치법규
+    KOREAN_LAW_MCP_ORDINANCE_SEARCH_TOOL: str = "search_ordinance"
+    KOREAN_LAW_MCP_ORDINANCE_TEXT_TOOL: str = "get_ordinance"
+
+    # 행정규칙: 훈령·예규·고시·공고
+    KOREAN_LAW_MCP_ADMIN_RULE_SEARCH_TOOL: str = "search_admin_rule"
+    KOREAN_LAW_MCP_ADMIN_RULE_TEXT_TOOL: str = "get_admin_rule"
     
     # CORS 설정
     CORS_ORIGINS: str = "http://localhost:5173"
