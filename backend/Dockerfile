@@ -3,23 +3,29 @@ FROM python:3.11-slim
 
 # 시스템 패키지 + Node 18 설치
 # 시스템 패키지 + Node 18 설치
+# 시스템 패키지 + Node 18 설치
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
     ca-certificates \
     gnupg \
+    git \
     fonts-noto-cjk \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
     && apt-get update && apt-get install -y nodejs \
-    && npm install -g kordoc korean-law-mcp \
+    && npm install -g kordoc \
+    && git clone https://github.com/chrisryugj/korean-law-mcp.git /opt/korean-law-mcp \
+    && cd /opt/korean-law-mcp \
+    && npm install \
+    && npm run build \
     && node --version \
     && npm --version \
     && kordoc --help || true \
-    && korean-law-mcp --help || true \
-    && korean-law list || true \
+    && test -f /opt/korean-law-mcp/build/index.js \
+    && node /opt/korean-law-mcp/build/index.js --help || true \
     && rm -rf /var/lib/apt/lists/*
 
 # 작업 디렉토리

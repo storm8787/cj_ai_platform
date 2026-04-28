@@ -32,11 +32,10 @@ class KoreanLawMCPService:
         self.enabled = str(getattr(settings, "KOREAN_LAW_MCP_ENABLED", "true")).lower() == "true"
         self.timeout = int(getattr(settings, "KOREAN_LAW_MCP_TIMEOUT", 25))
 
-        # korean-law-mcp 설치 시 제공되는 CLI 명령어
-        # README 기준 예: korean-law search_law --query "관세법"
-        self.cli_command = getattr(settings, "KOREAN_LAW_MCP_CLI_COMMAND", "korean-law")
+        # GitHub에서 clone/build한 korean-law-mcp 서버를 node로 직접 실행
+        self.cli_command = getattr(settings, "KOREAN_LAW_MCP_CLI_COMMAND", "node")
+        self.cli_script = getattr(settings, "KOREAN_LAW_MCP_CLI_SCRIPT", "/opt/korean-law-mcp/build/index.js")
 
-        # 도구명
         self.search_tool = getattr(settings, "KOREAN_LAW_MCP_SEARCH_TOOL", "search_law")
         self.text_tool = getattr(settings, "KOREAN_LAW_MCP_TEXT_TOOL", "get_law_text")
         self.all_search_tool = getattr(settings, "KOREAN_LAW_MCP_ALL_SEARCH_TOOL", "search_all")
@@ -65,7 +64,11 @@ class KoreanLawMCPService:
         env = os.environ.copy()
         env["LAW_OC"] = law_oc
 
-        cmd = [self.cli_command] + args
+        #cmd = [self.cli_command] + args
+        if self.cli_command == "node":
+            cmd = [self.cli_command, self.cli_script] + args
+        else:
+            cmd = [self.cli_command] + args
 
         try:
             logger.info(f"[korean-law-mcp] CLI 호출: {' '.join(cmd)}")
@@ -418,7 +421,8 @@ class KoreanLawMCPService:
                 "connected": False,
                 "reason": "LAW_API_OC/LAW_OC 미설정",
                 "mode": "cli",
-                "command": self.cli_command,
+                #"command": self.cli_command,
+                "command": f"{self.cli_command} {self.cli_script}",
             }
 
         try:
@@ -428,7 +432,8 @@ class KoreanLawMCPService:
                 "connected": len(results) > 0,
                 "result_count": len(results),
                 "mode": "cli",
-                "command": self.cli_command,
+                #"command": self.cli_command,
+                "command": f"{self.cli_command} {self.cli_script}",
             }
         except Exception as e:
             return {
@@ -436,7 +441,8 @@ class KoreanLawMCPService:
                 "connected": False,
                 "reason": str(e),
                 "mode": "cli",
-                "command": self.cli_command,
+                #"command": self.cli_command,
+                "command": f"{self.cli_command} {self.cli_script}",
             }
 
 
