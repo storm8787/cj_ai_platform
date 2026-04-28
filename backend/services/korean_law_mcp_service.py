@@ -331,6 +331,44 @@ class KoreanLawMCPService:
                 normalized.append(row)
 
         return normalized
+    
+    async def search_unified(self, query: str, display: int = 15) -> List[Dict[str, Any]]:
+        """
+        통합검색용 함수.
+
+        우선순위:
+        1. korean-law search_all
+        2. search_all 실패/결과 없음 시 korean-law search_law
+        3. 둘 다 실패하면 빈 배열 반환
+
+        이 함수는 law_chatbot.py에서 검색범위 구분 없이 우선 호출하는 메인 MCP 검색 함수로 사용.
+        """
+        if not query or not query.strip():
+            return []
+
+        # 1순위: MCP 통합검색
+        try:
+            results = await self.search_all(query=query, display=display)
+            if results:
+                logger.info(
+                    f"[korean-law-mcp] 통합검색 성공: query={query}, count={len(results)}"
+                )
+                return results[:display]
+        except Exception as e:
+            logger.warning(f"[korean-law-mcp] 통합검색 실패: query={query}, error={e}")
+
+        # 2순위: MCP 국가법령 검색
+        try:
+            results = await self.search_law(query=query, target="law", display=display)
+            if results:
+                logger.info(
+                    f"[korean-law-mcp] 법령검색 성공: query={query}, count={len(results)}"
+                )
+                return results[:display]
+        except Exception as e:
+            logger.warning(f"[korean-law-mcp] 법령검색 실패: query={query}, error={e}")
+
+        return []
 
     async def get_law_text(
         self,

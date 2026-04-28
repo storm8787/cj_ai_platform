@@ -10,6 +10,7 @@ import os
 import json
 import pickle
 import re
+import asyncio
 from pathlib import Path
 from typing import Optional, List
 
@@ -270,60 +271,177 @@ async def _agentic_search(
     client, question: str, initial_keywords: list, search_scope: str,
 ) -> tuple:
     """
-    검색 → 결과 평가 → 부족하면 키워드 변경 후 재검색 (최대 MAX_RETRY회)
+    통합검색 안정화 버전.
+
+    정책:
+    1. 사용자가 검색범위를 고르지 않아도 됨
+    2. 모든 질문은 MCP 통합검색을 우선 사용
+    3. MCP 결과가 있으면 우선 그 결과로 답변 생성
+    4. MCP 결과가 없거나 실패하면 기존 국가법령 API + 자치법규 API fallback
+    5. 충주시 조례/규칙/자치법규 성격의 질문은 기존 FAISS + BM25 벡터스토어도 보조 검색
+    6. 자치법규 벡터검색은 timeout을 걸어 전체 답변 생성을 막지 않도록 함
+
+    주의:
+    - search_scope 인자는 프론트 호환성을 위해 받지만, 실제로는 통합검색으로 처리함.
     """
     all_vector_results = []
     all_api_results = []
     tried_keywords = set()
 
-    current_keywords = initial_keywords
+    # 질문 원문 + GPT 추출 키워드를 모두 검색 후보로 사용
+    search_terms = []
+    if question and question.strip():
+        search_terms.append(question.strip())
 
-    for attempt in range(MAX_RETRY + 1):
-        # ── 벡터스토어 검색 (첫 시도만) ──
-        if attempt == 0 and search_scope in ("all", "local"):
-            vector_results = _search_vectorstore(question, top_k=7)
-            all_vector_results = vector_results
+    for kw in initial_keywords or []:
+        if isinstance(kw, str) and kw.strip():
+            search_terms.append(kw.strip())
 
-        # ── API 검색 ──
-        if search_scope in ("all", "national"):
-            for kw in current_keywords:
-                if kw in tried_keywords:
-                    continue
-                tried_keywords.add(kw)
-                results = await _search_law_api(kw, targets=["law"])
-                all_api_results.extend(results)
+    # 중복 제거
+    deduped_terms = []
+    seen_terms = set()
+    for term in search_terms:
+        if term not in seen_terms:
+            seen_terms.add(term)
+            deduped_terms.append(term)
 
-        if search_scope == "all":
-            for kw in current_keywords[:2]:
-                ordin_kw = kw
-                if ordin_kw in tried_keywords:
-                    continue
-                tried_keywords.add(ordin_kw)
-                ordin_results = await _search_law_api(kw, targets=["ordin"])
-                all_api_results.extend(ordin_results)
+    search_terms = deduped_terms[:5]
 
-        all_api_results = _deduplicate_api_results(all_api_results)
+    print(f"[law-chatbot] 통합검색 시작: terms={search_terms}")
 
-        # ── 결과 충분성 판단 ──
-        has_good_vector = (
-            all_vector_results
-            and all_vector_results[0]["score"] > 0.5
-        )
-        has_api_results = len(all_api_results) > 0
+    # ══════════════════════════════════════════════════════
+    # 1단계: MCP 통합검색 우선
+    # ══════════════════════════════════════════════════════
+    mcp_success = False
 
-        if has_good_vector or has_api_results:
-            print(f"[law-chatbot] 검색 성공 (attempt {attempt + 1})")
-            break
+    for term in search_terms:
+        try:
+            print(f"[law-chatbot] MCP 통합검색 시작: keyword={term}")
 
-        if attempt < MAX_RETRY:
-            # ── GPT에게 대안 키워드 요청 ──
-            current_keywords = await _generate_alternative_keywords(
-                client, question, list(tried_keywords)
+            mcp_results = await korean_law_mcp_service.search_unified(
+                query=term,
+                display=15,
             )
-            print(f"[law-chatbot] 재검색 (attempt {attempt + 2}): {current_keywords}")
 
-    # 동적 threshold로 벡터 결과 필터링
+            print(f"[law-chatbot] MCP 통합검색 종료: keyword={term}, count={len(mcp_results)}")
+
+            if mcp_results:
+                for item in mcp_results:
+                    item.setdefault("source", "korean-law-mcp")
+                all_api_results.extend(mcp_results)
+                mcp_success = True
+
+                # 하나의 키워드에서 충분히 찾았으면 더 돌리지 않음
+                if len(all_api_results) >= 5:
+                    break
+
+        except Exception as e:
+            print(f"[law-chatbot] MCP 통합검색 예외: keyword={term}, error={e}")
+
+    all_api_results = _deduplicate_api_results(all_api_results)
+
+    if mcp_success and all_api_results:
+        print(f"[law-chatbot] MCP 우선검색 성공: count={len(all_api_results)}")
+
+    # ══════════════════════════════════════════════════════
+    # 2단계: MCP 실패 시 기존 API fallback
+    # ══════════════════════════════════════════════════════
+    if not all_api_results:
+        print("[law-chatbot] MCP 결과 없음, 기존 국가법령/자치법규 API fallback 시작")
+
+        current_keywords = initial_keywords or [_simple_keyword_extract(question)]
+
+        for attempt in range(MAX_RETRY + 1):
+            for kw in current_keywords:
+                if not kw or kw in tried_keywords:
+                    continue
+
+                tried_keywords.add(kw)
+
+                # 국가법령 fallback
+                try:
+                    print(f"[law-chatbot] 기존 국가법령 API 검색 시작: keyword={kw}")
+                    law_results = await _search_law_api(kw, targets=["law"])
+                    print(f"[law-chatbot] 기존 국가법령 API 검색 종료: keyword={kw}, count={len(law_results)}")
+                    all_api_results.extend(law_results)
+                except Exception as e:
+                    print(f"[law-chatbot] 기존 국가법령 API 검색 예외: keyword={kw}, error={e}")
+
+                # 자치법규 API fallback
+                try:
+                    print(f"[law-chatbot] 기존 자치법규 API 검색 시작: keyword={kw}")
+                    ordin_results = await _search_law_api(kw, targets=["ordin"])
+                    print(f"[law-chatbot] 기존 자치법규 API 검색 종료: keyword={kw}, count={len(ordin_results)}")
+                    all_api_results.extend(ordin_results)
+                except Exception as e:
+                    print(f"[law-chatbot] 기존 자치법규 API 검색 예외: keyword={kw}, error={e}")
+
+            all_api_results = _deduplicate_api_results(all_api_results)
+
+            if all_api_results:
+                print(f"[law-chatbot] 기존 API fallback 검색 성공: attempt={attempt + 1}, count={len(all_api_results)}")
+                break
+
+            if attempt < MAX_RETRY:
+                current_keywords = await _generate_alternative_keywords(
+                    client, question, list(tried_keywords)
+                )
+                print(f"[law-chatbot] 기존 API 재검색 키워드: attempt={attempt + 2}, keywords={current_keywords}")
+
+    # ══════════════════════════════════════════════════════
+    # 3단계: 자치법규 벡터스토어 fallback
+    # ══════════════════════════════════════════════════════
+    # 충주시/조례/규칙/자치법규성 질문은 기존 벡터스토어도 보조 검색
+    local_hint_words = [
+        "충주시",
+        "충주",
+        "조례",
+        "규칙",
+        "자치법규",
+        "고시",
+        "공고",
+        "훈령",
+        "예규",
+        "지원금",
+        "출산",
+    ]
+
+    needs_local_vector = any(word in question for word in local_hint_words)
+
+    # MCP/API 결과가 없거나, 질문이 자치법규 성격이면 벡터스토어 검색
+    if (not all_api_results) or needs_local_vector:
+        print(
+            f"[law-chatbot] 자치법규 벡터검색 시작: "
+            f"needs_local_vector={needs_local_vector}, api_count={len(all_api_results)}"
+        )
+
+        try:
+            vector_results = await asyncio.wait_for(
+                asyncio.to_thread(_search_vectorstore, question, 7),
+                timeout=15.0,
+            )
+
+            all_vector_results = vector_results or []
+            print(f"[law-chatbot] 자치법규 벡터검색 종료: count={len(all_vector_results)}")
+
+        except asyncio.TimeoutError:
+            print("[law-chatbot] ⚠️ 자치법규 벡터검색 timeout, 벡터검색 없이 진행")
+            all_vector_results = []
+
+        except Exception as e:
+            print(f"[law-chatbot] ⚠️ 자치법규 벡터검색 실패, 벡터검색 없이 진행: {e}")
+            all_vector_results = []
+
+    # ══════════════════════════════════════════════════════
+    # 4단계: 결과 정리
+    # ══════════════════════════════════════════════════════
+    all_api_results = _deduplicate_api_results(all_api_results)
     all_vector_results = _apply_dynamic_threshold(all_vector_results)
+
+    print(
+        f"[law-chatbot] 통합검색 최종결과: "
+        f"mcp_or_api={len(all_api_results)}, vector={len(all_vector_results)}"
+    )
 
     return all_vector_results, all_api_results
 
