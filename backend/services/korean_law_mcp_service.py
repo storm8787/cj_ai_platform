@@ -474,68 +474,98 @@ class KoreanLawMCPService:
 
         return normalized
 
-    async def search_unified(self, query: str, display: int = 15) -> List[Dict[str, Any]]:
-        """
-        통합검색용 함수.
+async def search_unified(self, query: str, display: int = 15) -> List[Dict[str, Any]]:
+    """
+    통합검색용 함수.
 
-        우선순위:
-        1. 자치법규 의심 질문이면 search_ordinance 우선
-        2. 행정규칙 의심 질문이면 search_admin_rule 우선
-        3. search_all
-        4. search_law
-        """
-        if not query or not query.strip():
+    핵심 정책:
+    - 자치법규 의심 질문이면 search_ordinance만 호출하고 종료
+      ※ search_all/search_law로 넘어가지 않음
+    - 행정규칙 의심 질문이면 search_admin_rule만 우선 호출
+    - 일반 국가법령 질문만 search_all → search_law 순서로 검색
+    """
+    if not query or not query.strip():
+        return []
+
+    q = query.strip()
+
+    local_hint_words = [
+        "충주시", "충주", "조례", "규칙", "자치법규",
+        "지원금", "출산", "보조금", "위원회", "시행규칙",
+        "주차장", "주차요금", "감면", "수수료",
+    ]
+
+    admin_rule_hint_words = [
+        "훈령", "예규", "고시", "공고", "지침", "행정규칙",
+    ]
+
+    is_local_question = any(word in q for word in local_hint_words)
+    is_admin_rule_question = any(word in q for word in admin_rule_hint_words)
+
+    # 1. 자치법규 의심 질문은 자치법규 전용 검색만 수행
+    #    search_all/search_law로 넘어가면 불필요한 timeout이 발생하므로 여기서 종료
+    if is_local_question:
+        try:
+            results = await self.search_ordinance(query=q, display=display)
+            if results:
+                logger.info(
+                    f"[korean-law-mcp] 자치법규 검색 성공: query={q}, count={len(results)}"
+                )
+                return results[:display]
+
+            logger.info(
+                f"[korean-law-mcp] 자치법규 검색 결과 없음: query={q}"
+            )
             return []
 
-        q = query.strip()
-
-        local_hint_words = [
-            "충주시", "충주", "조례", "규칙", "자치법규",
-            "지원금", "출산", "보조금", "위원회", "시행규칙",
-        ]
-
-        admin_rule_hint_words = [
-            "훈령", "예규", "고시", "공고", "지침", "행정규칙",
-        ]
-
-        is_local_question = any(word in q for word in local_hint_words)
-        is_admin_rule_question = any(word in q for word in admin_rule_hint_words)
-
-        if is_local_question:
-            try:
-                results = await self.search_ordinance(query=q, display=display)
-                if results:
-                    logger.info(f"[korean-law-mcp] 자치법규 검색 성공: query={q}, count={len(results)}")
-                    return results[:display]
-            except Exception as e:
-                logger.warning(f"[korean-law-mcp] 자치법규 검색 실패: query={q}, error={e}")
-
-        if is_admin_rule_question:
-            try:
-                results = await self.search_admin_rule(query=q, display=display)
-                if results:
-                    logger.info(f"[korean-law-mcp] 행정규칙 검색 성공: query={q}, count={len(results)}")
-                    return results[:display]
-            except Exception as e:
-                logger.warning(f"[korean-law-mcp] 행정규칙 검색 실패: query={q}, error={e}")
-
-        try:
-            results = await self.search_all(query=q, display=display)
-            if results:
-                logger.info(f"[korean-law-mcp] 통합검색 성공: query={q}, count={len(results)}")
-                return results[:display]
         except Exception as e:
-            logger.warning(f"[korean-law-mcp] 통합검색 실패: query={q}, error={e}")
+            logger.warning(
+                f"[korean-law-mcp] 자치법규 검색 실패: query={q}, error={e}"
+            )
+            return []
 
+    # 2. 행정규칙 의심 질문은 행정규칙 전용 검색 우선
+    if is_admin_rule_question:
         try:
-            results = await self.search_law(query=q, target="law", display=display)
+            results = await self.search_admin_rule(query=q, display=display)
             if results:
-                logger.info(f"[korean-law-mcp] 법령검색 성공: query={q}, count={len(results)}")
+                logger.info(
+                    f"[korean-law-mcp] 행정규칙 검색 성공: query={q}, count={len(results)}"
+                )
                 return results[:display]
-        except Exception as e:
-            logger.warning(f"[korean-law-mcp] 법령검색 실패: query={q}, error={e}")
 
-        return []
+            logger.info(
+                f"[korean-law-mcp] 행정규칙 검색 결과 없음: query={q}"
+            )
+            # 행정규칙 결과가 없으면 일반 법령으로도 이어서 검색 가능
+        except Exception as e:
+            logger.warning(
+                f"[korean-law-mcp] 행정규칙 검색 실패: query={q}, error={e}"
+            )
+
+    # 3. 일반 통합검색
+    try:
+        results = await self.search_all(query=q, display=display)
+        if results:
+            logger.info(
+                f"[korean-law-mcp] 통합검색 성공: query={q}, count={len(results)}"
+            )
+            return results[:display]
+    except Exception as e:
+        logger.warning(f"[korean-law-mcp] 통합검색 실패: query={q}, error={e}")
+
+    # 4. 국가법령 검색
+    try:
+        results = await self.search_law(query=q, target="law", display=display)
+        if results:
+            logger.info(
+                f"[korean-law-mcp] 법령검색 성공: query={q}, count={len(results)}"
+            )
+            return results[:display]
+    except Exception as e:
+        logger.warning(f"[korean-law-mcp] 법령검색 실패: query={q}, error={e}")
+
+    return []
 
     async def get_law_text(
         self,

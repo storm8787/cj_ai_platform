@@ -273,20 +273,22 @@ async def get_categories():
             {"id": "all", "name": "통합검색", "icon": "📚"},
         ]
     }
-
-
 async def _agentic_search(
     client, question: str, initial_keywords: list, search_scope: str,
 ) -> tuple:
     """
     통합검색 안정화 버전.
 
-    정책:
-    1. 모든 질문은 MCP 통합검색 우선
-    2. 자치법규 의심 질문은 MCP search_ordinance 우선
-    3. 행정규칙 의심 질문은 MCP search_admin_rule 우선
-    4. MCP 실패 시 기존 국가법령 API + 자치법규 API fallback
-    5. 자치법규 질문은 기존 FAISS + BM25 벡터스토어도 강제 보조검색
+    핵심 정책:
+    1. 자치법규 질문이면 자치법규 루트만 수행
+       - MCP search_ordinance
+       - 기존 law.go.kr 자치법규 API
+       - 기존 자치법규 벡터스토어
+       - 국가법령 search_law/search_all 생략
+
+    2. 행정규칙 질문이면 행정규칙 루트 우선
+
+    3. 일반 국가법령 질문이면 MCP 통합검색/국가법령 검색 우선
     """
     all_vector_results = []
     all_api_results = []
@@ -316,6 +318,7 @@ async def _agentic_search(
     local_hint_words = [
         "충주시", "충주", "조례", "규칙", "자치법규",
         "지원금", "출산", "보조금", "위원회", "시행규칙",
+        "주차장", "주차요금", "감면", "수수료",
     ]
 
     admin_rule_hint_words = [
@@ -325,92 +328,73 @@ async def _agentic_search(
     needs_local_vector = any(word in question for word in local_hint_words)
     needs_admin_rule = any(word in question for word in admin_rule_hint_words)
 
-    # 1단계: MCP 우선 검색
-    for term in search_terms:
-        try:
-            print(f"[law-chatbot] MCP 통합검색 시작: keyword={term}")
+    # ══════════════════════════════════════════════════════
+    # 1. 자치법규 질문 전용 루트
+    # ══════════════════════════════════════════════════════
+    if needs_local_vector:
+        print("[law-chatbot] 자치법규 질문 감지: local-only route")
 
-            mcp_results = await korean_law_mcp_service.search_unified(
-                query=term,
-                display=15,
-            )
+        # 1-1. MCP 자치법규 검색
+        for term in search_terms:
+            try:
+                print(f"[law-chatbot] MCP 자치법규 검색 시작: keyword={term}")
 
-            print(f"[law-chatbot] MCP 통합검색 종료: keyword={term}, count={len(mcp_results)}")
+                mcp_results = await korean_law_mcp_service.search_ordinance(
+                    query=term,
+                    display=10,
+                )
 
-            if mcp_results:
-                for item in mcp_results:
-                    item.setdefault("source", "korean-law-mcp")
-                all_api_results.extend(mcp_results)
+                print(
+                    f"[law-chatbot] MCP 자치법규 검색 종료: "
+                    f"keyword={term}, count={len(mcp_results)}"
+                )
 
-                if len(all_api_results) >= 5:
+                if mcp_results:
+                    all_api_results.extend(mcp_results)
                     break
 
-        except Exception as e:
-            print(f"[law-chatbot] MCP 통합검색 예외: keyword={term}, error={e}")
+            except Exception as e:
+                print(f"[law-chatbot] MCP 자치법규 검색 예외: keyword={term}, error={e}")
 
-    all_api_results = _deduplicate_api_results(all_api_results)
+        all_api_results = _deduplicate_api_results(all_api_results)
 
-    if all_api_results:
-        print(f"[law-chatbot] MCP 우선검색 성공: count={len(all_api_results)}")
+        # 1-2. MCP 자치법규 결과가 없으면 기존 자치법규 API fallback
+        if not all_api_results:
+            print("[law-chatbot] MCP 자치법규 결과 없음, 기존 자치법규 API fallback 시작")
 
-    # 2단계: MCP 결과 없음 → 기존 API fallback
-    if not all_api_results:
-        print("[law-chatbot] MCP 결과 없음, 기존 국가법령/자치법규 API fallback 시작")
-
-        current_keywords = initial_keywords or [_simple_keyword_extract(question)]
-
-        for attempt in range(MAX_RETRY + 1):
-            for kw in current_keywords:
+            for kw in initial_keywords or [_simple_keyword_extract(question)]:
                 if not kw or kw in tried_keywords:
                     continue
 
                 tried_keywords.add(kw)
 
                 try:
-                    print(f"[law-chatbot] 기존 국가법령 API 검색 시작: keyword={kw}")
-                    law_results = await _search_law_api(kw, targets=["law"])
-                    print(f"[law-chatbot] 기존 국가법령 API 검색 종료: keyword={kw}, count={len(law_results)}")
-                    all_api_results.extend(law_results)
-                except Exception as e:
-                    print(f"[law-chatbot] 기존 국가법령 API 검색 예외: keyword={kw}, error={e}")
-
-                try:
                     print(f"[law-chatbot] 기존 자치법규 API 검색 시작: keyword={kw}")
                     ordin_results = await _search_law_api(kw, targets=["ordin"])
-                    print(f"[law-chatbot] 기존 자치법규 API 검색 종료: keyword={kw}, count={len(ordin_results)}")
+                    print(
+                        f"[law-chatbot] 기존 자치법규 API 검색 종료: "
+                        f"keyword={kw}, count={len(ordin_results)}"
+                    )
                     all_api_results.extend(ordin_results)
+
+                    if ordin_results:
+                        break
+
                 except Exception as e:
                     print(f"[law-chatbot] 기존 자치법규 API 검색 예외: keyword={kw}, error={e}")
 
             all_api_results = _deduplicate_api_results(all_api_results)
 
-            if all_api_results:
-                print(
-                    f"[law-chatbot] 기존 API fallback 검색 성공: "
-                    f"attempt={attempt + 1}, count={len(all_api_results)}"
-                )
-                break
-
-            if attempt < MAX_RETRY:
-                current_keywords = await _generate_alternative_keywords(
-                    client, question, list(tried_keywords)
-                )
-                print(
-                    f"[law-chatbot] 기존 API 재검색 키워드: "
-                    f"attempt={attempt + 2}, keywords={current_keywords}"
-                )
-
-    # 3단계: 자치법규 벡터스토어 보조검색
-    if (not all_api_results) or needs_local_vector:
+        # 1-3. 자치법규 벡터스토어는 항상 보조검색
         print(
             f"[law-chatbot] 자치법규 벡터검색 시작: "
-            f"needs_local_vector={needs_local_vector}, api_count={len(all_api_results)}"
+            f"api_count={len(all_api_results)}"
         )
 
         try:
             vector_results = await asyncio.wait_for(
                 asyncio.to_thread(_search_vectorstore, question, 7),
-                timeout=15.0,
+                timeout=20.0,
             )
 
             all_vector_results = vector_results or []
@@ -424,12 +408,128 @@ async def _agentic_search(
             print(f"[law-chatbot] ⚠️ 자치법규 벡터검색 실패, 벡터검색 없이 진행: {e}")
             all_vector_results = []
 
+        # 자치법규 질문은 threshold를 강하게 적용하지 않음
+        all_vector_results = all_vector_results[:5]
+
+        print(
+            f"[law-chatbot] 자치법규 전용검색 최종결과: "
+            f"ordin={len(all_api_results)}, vector={len(all_vector_results)}"
+        )
+
+        return all_vector_results, all_api_results
+
+    # ══════════════════════════════════════════════════════
+    # 2. 행정규칙 질문 우선 루트
+    # ══════════════════════════════════════════════════════
+    if needs_admin_rule:
+        print("[law-chatbot] 행정규칙 질문 감지: admin-rule route")
+
+        for term in search_terms:
+            try:
+                print(f"[law-chatbot] MCP 행정규칙 검색 시작: keyword={term}")
+
+                admin_results = await korean_law_mcp_service.search_admin_rule(
+                    query=term,
+                    display=10,
+                )
+
+                print(
+                    f"[law-chatbot] MCP 행정규칙 검색 종료: "
+                    f"keyword={term}, count={len(admin_results)}"
+                )
+
+                if admin_results:
+                    all_api_results.extend(admin_results)
+                    break
+
+            except Exception as e:
+                print(f"[law-chatbot] MCP 행정규칙 검색 예외: keyword={term}, error={e}")
+
+        all_api_results = _deduplicate_api_results(all_api_results)
+
+        if all_api_results:
+            print(
+                f"[law-chatbot] 행정규칙 우선검색 성공: "
+                f"count={len(all_api_results)}"
+            )
+            return [], all_api_results
+
+        print("[law-chatbot] 행정규칙 결과 없음, 일반 법령검색으로 전환")
+
+    # ══════════════════════════════════════════════════════
+    # 3. 일반 국가법령 / 통합검색 루트
+    # ══════════════════════════════════════════════════════
+    for term in search_terms:
+        try:
+            print(f"[law-chatbot] MCP 통합검색 시작: keyword={term}")
+
+            mcp_results = await korean_law_mcp_service.search_unified(
+                query=term,
+                display=15,
+            )
+
+            print(
+                f"[law-chatbot] MCP 통합검색 종료: "
+                f"keyword={term}, count={len(mcp_results)}"
+            )
+
+            if mcp_results:
+                all_api_results.extend(mcp_results)
+
+                if len(all_api_results) >= 5:
+                    break
+
+        except Exception as e:
+            print(f"[law-chatbot] MCP 통합검색 예외: keyword={term}, error={e}")
+
     all_api_results = _deduplicate_api_results(all_api_results)
 
-    if needs_local_vector:
-        all_vector_results = all_vector_results[:5]
+    if all_api_results:
+        print(f"[law-chatbot] MCP 우선검색 성공: count={len(all_api_results)}")
     else:
-        all_vector_results = _apply_dynamic_threshold(all_vector_results)
+        print("[law-chatbot] MCP 결과 없음, 기존 국가법령 API fallback 시작")
+
+        current_keywords = initial_keywords or [_simple_keyword_extract(question)]
+
+        for attempt in range(MAX_RETRY + 1):
+            for kw in current_keywords:
+                if not kw or kw in tried_keywords:
+                    continue
+
+                tried_keywords.add(kw)
+
+                try:
+                    print(f"[law-chatbot] 기존 국가법령 API 검색 시작: keyword={kw}")
+                    law_results = await _search_law_api(kw, targets=["law"])
+                    print(
+                        f"[law-chatbot] 기존 국가법령 API 검색 종료: "
+                        f"keyword={kw}, count={len(law_results)}"
+                    )
+                    all_api_results.extend(law_results)
+
+                    if law_results:
+                        break
+
+                except Exception as e:
+                    print(f"[law-chatbot] 기존 국가법령 API 검색 예외: keyword={kw}, error={e}")
+
+            all_api_results = _deduplicate_api_results(all_api_results)
+
+            if all_api_results:
+                print(
+                    f"[law-chatbot] 기존 국가법령 API fallback 검색 성공: "
+                    f"attempt={attempt + 1}, count={len(all_api_results)}"
+                )
+                break
+
+            if attempt < MAX_RETRY:
+                current_keywords = await _generate_alternative_keywords(
+                    client, question, list(tried_keywords)
+                )
+                print(
+                    f"[law-chatbot] 기존 API 재검색 키워드: "
+                    f"attempt={attempt + 2}, keywords={current_keywords}"
+                )
 
     print(
         f"[law-chatbot] 통합검색 최종결과: "
@@ -437,7 +537,6 @@ async def _agentic_search(
     )
 
     return all_vector_results, all_api_results
-
 
 async def _generate_alternative_keywords(
     client, question: str, tried_keywords: list
