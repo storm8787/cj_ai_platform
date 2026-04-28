@@ -38,12 +38,11 @@ class Settings(BaseSettings):
     # korean-law-mcp 설정
     # korean-law-mcp 설정
     KOREAN_LAW_MCP_ENABLED: str = "true"
-    KOREAN_LAW_MCP_CLI_COMMAND: str = "node"
-    KOREAN_LAW_MCP_CLI_SCRIPT: str = "/opt/korean-law-mcp/build/index.js"
+    KOREAN_LAW_MCP_CLI_COMMAND: str = "korean-law"
     KOREAN_LAW_MCP_TIMEOUT: int = 25
     KOREAN_LAW_MCP_SEARCH_TOOL: str = "search_law"
     KOREAN_LAW_MCP_TEXT_TOOL: str = "get_law_text"
-    KOREAN_LAW_MCP_ALL_SEARCH_TOOL: str = "search_all"   
+    KOREAN_LAW_MCP_ALL_SEARCH_TOOL: str = "search_all" 
     
     # CORS 설정
     CORS_ORIGINS: str = "http://localhost:5173"

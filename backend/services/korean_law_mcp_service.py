@@ -32,9 +32,8 @@ class KoreanLawMCPService:
         self.enabled = str(getattr(settings, "KOREAN_LAW_MCP_ENABLED", "true")).lower() == "true"
         self.timeout = int(getattr(settings, "KOREAN_LAW_MCP_TIMEOUT", 25))
 
-        # GitHub에서 clone/build한 korean-law-mcp 서버를 node로 직접 실행
-        self.cli_command = getattr(settings, "KOREAN_LAW_MCP_CLI_COMMAND", "node")
-        self.cli_script = getattr(settings, "KOREAN_LAW_MCP_CLI_SCRIPT", "/opt/korean-law-mcp/build/index.js")
+        # npm install -g korean-law-mcp 시 package.json bin에 의해 생성되는 CLI
+        self.cli_command = getattr(settings, "KOREAN_LAW_MCP_CLI_COMMAND", "korean-law")
 
         self.search_tool = getattr(settings, "KOREAN_LAW_MCP_SEARCH_TOOL", "search_law")
         self.text_tool = getattr(settings, "KOREAN_LAW_MCP_TEXT_TOOL", "get_law_text")
@@ -64,11 +63,7 @@ class KoreanLawMCPService:
         env = os.environ.copy()
         env["LAW_OC"] = law_oc
 
-        #cmd = [self.cli_command] + args
-        if self.cli_command == "node":
-            cmd = [self.cli_command, self.cli_script] + args
-        else:
-            cmd = [self.cli_command] + args
+        cmd = [self.cli_command] + args        
 
         try:
             logger.info(f"[korean-law-mcp] CLI 호출: {' '.join(cmd)}")
@@ -442,7 +437,7 @@ class KoreanLawMCPService:
                 "reason": str(e),
                 "mode": "cli",
                 #"command": self.cli_command,
-                "command": f"{self.cli_command} {self.cli_script}",
+                "command": f"{self.cli_command} {self.cli_script}",                
             }
 
 
