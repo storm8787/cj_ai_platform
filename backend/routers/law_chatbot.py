@@ -65,20 +65,16 @@ MAX_DETAIL_DOCS = 5
 MAX_ARTICLES_FOR_ANSWER = 12
 MAX_CONTEXT_CHARS = 60000
 
-# 수치형 질문 판별 키워드 — 금액·기간·횟수·수당·한도 등 구체 수치가 필요한 질문
-_NUMERIC_Q_KEYWORDS = frozenset([
-    "금액", "기준", "한도", "상한", "하한", "수당", "여비", "수의계약",
-    "과태료", "벌금", "지급", "임기", "연임", "횟수", "얼마", "몇",
-    "기간", "일수", "가액", "금품", "상한액", "한도액", "이상", "이하",
-    "원까지", "만원", "억원",
-])
-
-# 조문 내 수치 표현 패턴
+# 조문 내 수치 표현 정규식 (사전 매핑이 아니라 일반 패턴)
+# planner의 question_type.numeric=true일 때만 사용한다.
 _NUMERIC_VALUE_RE = re.compile(
     r'\d[\d,]*\s*(?:원|만원|억원|천원|개월|일|년|회|명|퍼센트|%|배|이하|이상|미만|초과)'
     r'|\d+\s*(?:일간|년간|주일|분의\s*\d+)',
     re.UNICODE,
 )
+
+# 질문 내 조문번호 직접 언급 ("제25조", "제17조의2" 등) 정규식
+_ARTICLE_NO_RE = re.compile(r"제\s*\d+\s*조(?:의\s*\d+)?")
 
 _faiss_index = None
 _faiss_data = None
@@ -282,6 +278,11 @@ async def _execute_legal_search_plan(
     plans = search_plan.get("search_plans", []) or []
     plans = sorted(plans, key=lambda x: x.get("priority", 999))[:MAX_SEARCH_PLANS]
 
+    question_type = search_plan.get("question_type") or {}
+    numeric_question = bool(question_type.get("numeric"))
+    requires_local_law = bool(question_type.get("requires_local_law"))
+    plan_targets = {p.get("target") for p in plans}
+
     all_candidates: List[Dict[str, Any]] = []
     selected_articles: List[Dict[str, Any]] = []
     vector_results: List[Dict[str, Any]] = []
@@ -348,6 +349,7 @@ async def _execute_legal_search_plan(
             law_name=candidate.get("name", ""),
             target=candidate.get("type", ""),
             source=candidate.get("source", ""),
+            numeric_question=numeric_question,
         )
 
         for article in relevant_articles:
@@ -371,7 +373,9 @@ async def _execute_legal_search_plan(
     )[:MAX_ARTICLES_FOR_ANSWER]
 
     # 3. 자치법규 질문인데 조문이 없으면 벡터스토어 fallback
-    if not selected_articles and _looks_like_local_question(question):
+    #    판단 기준: planner가 requires_local_law=true로 표시했거나 ordin 검색계획이 있는 경우
+    needs_local_fallback = requires_local_law or ("ordin" in plan_targets) or ("all" in plan_targets)
+    if not selected_articles and needs_local_fallback:
         print("[law-chatbot] 자치법규 조문 결과 없음 → 벡터스토어 fallback 시작")
 
         try:
@@ -740,21 +744,37 @@ def _select_relevant_articles(
     law_name: str,
     target: str,
     source: str,
+    numeric_question: bool = False,
 ) -> List[Dict[str, Any]]:
+    """
+    조문 선별 점수 계산.
+
+    원칙:
+    - 키워드 사전 매핑 없음
+    - 점수원은 (a) 질문 토큰 (b) planner가 만든 article_keywords (c) 질문 내 명시적 조문번호
+      (d) numeric_question=true일 때 조문에 수치 패턴이 있는지
+    - 즉, 코드는 법률 판단을 하지 않고 GPT planner 결과만 신뢰한다.
+    """
     if not articles:
         return []
 
+    # planner가 만든 article_keywords와 질문 토큰을 같은 무게로 합쳐 사용
     question_terms = _extract_query_terms(question)
-    keyword_terms = []
-
+    keyword_terms: List[str] = []
     for kw in article_keywords or []:
-        keyword_terms.extend(_extract_query_terms(kw))
-        if kw:
-            keyword_terms.append(kw)
+        if not kw:
+            continue
+        kw_str = str(kw).strip()
+        if kw_str:
+            keyword_terms.append(kw_str)
+            keyword_terms.extend(_extract_query_terms(kw_str))
 
     all_terms = list(dict.fromkeys(question_terms + keyword_terms))
 
-    numeric_q = _is_numeric_question(question)
+    # 질문 내 명시적 조문번호 추출 ("제17조" 등)
+    explicit_article_nos = [
+        re.sub(r"\s+", "", m) for m in _ARTICLE_NO_RE.findall(question)
+    ]
 
     scored: List[Dict[str, Any]] = []
 
@@ -763,14 +783,12 @@ def _select_relevant_articles(
         number = article.get("number", "") or ""
         content = article.get("content", "") or ""
 
-        haystack = f"{number} {title} {content}"
-
         score = 0
 
+        # (a)+(b) 토큰 매칭 — 위치별 가중치
         for term in all_terms:
             if not term:
                 continue
-
             if term in title:
                 score += 8
             if term in number:
@@ -778,35 +796,14 @@ def _select_relevant_articles(
             if term in content:
                 score += 3
 
-        # 조문번호 직접 언급 보정
-        article_no_terms = re.findall(r"제\s*\d+\s*조(?:의\s*\d+)?", question)
-        for article_no in article_no_terms:
-            normalized = re.sub(r"\s+", "", article_no)
-            if normalized and normalized in haystack.replace(" ", ""):
+        # (c) 명시적 조문번호 매칭 (강한 신호)
+        haystack_no_space = (number + title + content).replace(" ", "")
+        for ano in explicit_article_nos:
+            if ano and ano in haystack_no_space:
                 score += 20
 
-        # 자주 나오는 실무 키워드 보정
-        boosts = [
-            ("연임", ["연임", "임기"]),
-            ("임기", ["임기"]),
-            ("위원", ["위원", "위원회"]),
-            ("지원금", ["지원금", "지원대상", "지원기준"]),
-            ("제3자", ["제3자", "제공"]),
-            ("위탁", ["위탁", "위탁계약"]),
-            ("기부행위", ["기부행위", "금품", "제공"]),
-            ("경품", ["경품", "금품", "기부행위"]),
-            ("과업심의", ["과업심의", "과업심의위원회"]),
-        ]
-
-        for qkey, terms in boosts:
-            if qkey in question:
-                for t in terms:
-                    if t in haystack:
-                        score += 6
-
-        # 수치형 질문: 조문에 실제 수치(원·만원·개월·일·회 등)가 있으면 가점
-        # → 금액·기간 등을 직접 규정한 조문을 우선 선별
-        if numeric_q and _NUMERIC_VALUE_RE.search(content):
+        # (d) 수치형 질문일 때만 — 조문 본문에 수치 패턴이 있으면 가점
+        if numeric_question and _NUMERIC_VALUE_RE.search(content):
             score += 10
 
         if score > 0:
@@ -816,14 +813,9 @@ def _select_relevant_articles(
 
     scored.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-    # 관련 조문을 못 찾은 경우, 상위 몇 개라도 제공
+    # 관련 조문을 전혀 못 찾은 경우, 본문 상위 몇 개라도 제공
     if not scored:
-        fallback = []
-        for article in articles[:3]:
-            item = dict(article)
-            item["score"] = 1
-            fallback.append(item)
-        return fallback
+        return [{**article, "score": 1} for article in articles[:3]]
 
     return scored[:4]
 
@@ -846,12 +838,13 @@ async def _search_law_api_direct(
     async with httpx.AsyncClient(timeout=15.0) as client:
         for target in targets:
             try:
-                q = query if target != "ordin" else _normalize_ordin_query(query)
+                # 자치법규 검색에 강제 prefix를 붙이지 않는다.
+                # 충주시 컨텍스트는 GPT planner가 law_name에 직접 명시하도록 위임.
                 params = {
                     "OC": oc,
                     "target": target,
                     "type": "XML",
-                    "query": q,
+                    "query": query,
                     "display": display,
                     "page": 1,
                 }
@@ -869,13 +862,6 @@ async def _search_law_api_direct(
                 print(f"[law-chatbot] 직접 API 검색 실패: target={target}, query={query}, error={e}")
 
     return all_results
-
-
-def _normalize_ordin_query(query: str) -> str:
-    q = query.strip()
-    if "충주시" not in q and "충주" not in q:
-        q = f"충주시 {q}"
-    return q
 
 
 def _parse_search_xml(xml_text: str, target: str) -> List[Dict[str, Any]]:
@@ -1272,15 +1258,6 @@ def _extract_query_terms(text: str) -> List[str]:
     return [w for w in words if w not in stopwords]
 
 
-def _looks_like_local_question(question: str) -> bool:
-    return any(x in question for x in ["충주시", "충주", "조례", "자치법규", "시행규칙"])
-
-
-def _is_numeric_question(question: str) -> bool:
-    """금액·기간·횟수·수당·한도 등 수치가 필요한 질문 여부 판별"""
-    return any(kw in question for kw in _NUMERIC_Q_KEYWORDS)
-
-
 def _deduplicate_candidates(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     unique = []
@@ -1300,64 +1277,60 @@ def _deduplicate_candidates(results: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 
 def _rank_candidates(question: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    후보 정렬.
+
+    원칙:
+    - 키워드 사전 매핑 없음 ("충주", "조례", "위원회", "소프트웨어" 등 하드코딩 제거)
+    - 점수원은 (a) 검색계획 law_name과 후보명 일치도 (b) 질문 토큰과 후보명 일치도
+      (c) plan_target과 후보 type 일치도
+    - 코드는 법률 판단을 하지 않고 GPT planner의 결정만 신뢰한다.
+    """
     if not results:
         return results
 
-    terms = _extract_query_terms(question)
+    question_terms = _extract_query_terms(question)
 
     def score_item(item: Dict[str, Any]) -> int:
         name = item.get("name", "") or ""
-        category = item.get("category", "") or ""
-        region = item.get("region", "") or ""
         target = item.get("type", "") or ""
-        source = item.get("source", "") or ""
         plan = item.get("_plan") or {}
         plan_target = str(plan.get("target", "all"))
-        plan_law_name = str(plan.get("law_name", ""))
-
-        haystack = f"{name} {category} {region} {target} {source}"
+        plan_law_name = str(plan.get("law_name", "")).strip()
+        plan_keywords = plan.get("article_keywords", []) or []
 
         score = 0
 
-        for term in terms:
-            if term in name:
-                score += 8
-            elif term in haystack:
-                score += 3
-
-        if "충주" in question and ("충주" in name or "충주" in region):
-            score += 15
-
-        if "조례" in question and "조례" in name:
-            score += 10
-
-        if "위원회" in question and "위원회" in name:
-            score += 10
-
-        if "소프트웨어" in question and "소프트웨어" in name:
-            score += 10
-
-        if "개인정보" in question and "개인정보" in name:
-            score += 10
-
-        if ("충주" in question or "조례" in question) and target == "ordin":
-            score += 8
-
-        # 검색계획 law_name과 후보 법령명 일치 가점
+        # (a) 검색계획 law_name과의 일치 — 가장 신뢰
         if plan_law_name:
             if plan_law_name == name:
-                score += 25
+                score += 30
             elif plan_law_name in name or name in plan_law_name:
-                score += 12
+                score += 15
             else:
-                # 부분 단어 매칭
-                for word in plan_law_name.split():
-                    if len(word) >= 2 and word in name:
-                        score += 4
+                # 단어 단위 매칭 비율로 부분 가점
+                plan_words = [w for w in plan_law_name.split() if len(w) >= 2]
+                if plan_words:
+                    hit = sum(1 for w in plan_words if w in name)
+                    score += int(hit / len(plan_words) * 12)
 
-        # 검색계획이 law/ordin을 의도했는데 admrul이 잡힌 경우 감점
-        # (일반 질문에서 특정 기관 내부규정이 먼저 올라오는 것 방지)
-        if target == "admrul" and plan_target in ("law", "ordin"):
+        # (b) 질문 토큰과 후보명 매칭
+        for term in question_terms:
+            if term and term in name:
+                score += 6
+
+        # (b') planner가 만든 article_keywords가 후보명에도 등장하면 보조 가점
+        for kw in plan_keywords:
+            kw_str = str(kw).strip()
+            if kw_str and len(kw_str) >= 2 and kw_str in name:
+                score += 3
+
+        # (c) plan_target과 후보 type 일치도
+        if plan_target == target and plan_target in ("law", "ordin", "admrul"):
+            score += 5
+        elif plan_target in ("law", "ordin") and target == "admrul":
+            # 검색계획이 law/ordin을 의도했는데 admrul이 잡힌 경우 감점
+            # (특정 기관 내부규정이 일반 질문에서 먼저 올라오지 않도록)
             score -= 5
 
         return score
