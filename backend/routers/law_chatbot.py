@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import faiss
-import httpx
 import numpy as np
 import xml.etree.ElementTree as ET
 from fastapi import APIRouter, HTTPException
@@ -47,9 +46,6 @@ except ImportError:
 
 
 router = APIRouter(prefix="/api/law-chatbot", tags=["law-chatbot"])
-
-LAW_SEARCH_URL = "http://www.law.go.kr/DRF/lawSearch.do"
-LAW_SERVICE_URL = "http://www.law.go.kr/DRF/lawService.do"
 
 ANSWER_MODEL = "gpt-4o"
 
@@ -459,49 +455,34 @@ async def _safe_search_target(target: str, query: str, display: int = 8) -> List
 
 
 async def _search_target(target: str, query: str, display: int = 10) -> List[Dict[str, Any]]:
-    """
-    target별 검색.
-    1순위 MCP
-    2순위 기존 law.go.kr API fallback
-    """
-    mcp_results: List[Dict[str, Any]] = []
-
+    """target별 MCP 검색"""
     try:
         if target == "law":
-            mcp_results = await korean_law_mcp_service.search_law(
+            results = await korean_law_mcp_service.search_law(
                 query=query,
                 target="law",
                 display=display,
             )
         elif target == "ordin":
-            mcp_results = await korean_law_mcp_service.search_ordinance(
+            results = await korean_law_mcp_service.search_ordinance(
                 query=query,
                 display=display,
             )
         elif target == "admrul":
-            mcp_results = await korean_law_mcp_service.search_admin_rule(
+            results = await korean_law_mcp_service.search_admin_rule(
                 query=query,
                 display=display,
             )
+        else:
+            return []
 
-        if mcp_results:
-            print(f"[law-chatbot] MCP 검색 성공: target={target}, query={query}, count={len(mcp_results)}")
-            return mcp_results
+        if results:
+            print(f"[law-chatbot] MCP 검색 성공: target={target}, query={query}, count={len(results)}")
+        return results
 
     except Exception as e:
-        print(f"[law-chatbot] MCP 검색 예외: target={target}, query={query}, error={e}")
-
-    # admrul은 MCP 실패 시 API도 시도
-    direct_results = await _search_law_api_direct(
-        query=query,
-        targets=[target],
-        display=display,
-    )
-
-    if direct_results:
-        print(f"[law-chatbot] law.go.kr fallback 검색 성공: target={target}, query={query}, count={len(direct_results)}")
-
-    return direct_results
+        print(f"[law-chatbot] MCP 검색 실패: target={target}, query={query}, error={e}")
+        return []
 
 
 # =========================================================
@@ -513,7 +494,6 @@ async def _get_full_text(candidate: Dict[str, Any]) -> str:
     item_id = candidate.get("id", "")
     name = candidate.get("name", "")
 
-    # 1. MCP 상세조회
     try:
         if target == "law":
             text = await korean_law_mcp_service.get_law_text(
@@ -531,7 +511,7 @@ async def _get_full_text(candidate: Dict[str, Any]) -> str:
                 admin_rule_name=name,
             )
         else:
-            text = ""
+            return ""
 
         if text and len(text.strip()) > 50:
             print(f"[law-chatbot] MCP 본문 조회 성공: target={target}, name={name}, chars={len(text)}")
@@ -540,51 +520,7 @@ async def _get_full_text(candidate: Dict[str, Any]) -> str:
     except Exception as e:
         print(f"[law-chatbot] MCP 본문 조회 실패: target={target}, name={name}, error={e}")
 
-    # 2. 기존 law.go.kr API fallback
-    if item_id:
-        text = await _fetch_full_text_from_law_api(
-            mst=item_id,
-            target=target,
-        )
-
-        if text:
-            print(f"[law-chatbot] law.go.kr 본문 조회 성공: target={target}, name={name}, chars={len(text)}")
-            return text
-
     return ""
-
-
-async def _fetch_full_text_from_law_api(mst: str, target: str) -> str:
-    oc = settings.LAW_API_OC
-
-    if not oc:
-        return ""
-
-    if target not in ("law", "ordin", "admrul"):
-        target = "law"
-
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(
-                LAW_SERVICE_URL,
-                params={
-                    "OC": oc,
-                    "target": target,
-                    "MST": mst,
-                    "type": "XML",
-                },
-            )
-
-            text = resp.content.decode("utf-8", errors="ignore")
-
-            if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
-                return ""
-
-            return text
-
-    except Exception as e:
-        print(f"[law-chatbot] law.go.kr 본문 조회 실패: MST={mst}, target={target}, error={e}")
-        return ""
 
 
 # =========================================================
@@ -860,113 +796,6 @@ def _select_relevant_articles(
         return fallback
 
     return scored[:4]
-
-
-# =========================================================
-# 기존 law.go.kr 직접 API fallback
-# =========================================================
-
-async def _search_law_api_direct(
-    query: str,
-    targets: List[str],
-    display: int = 10,
-) -> List[Dict[str, Any]]:
-    oc = settings.LAW_API_OC
-
-    if not oc:
-        return []
-
-    all_results: List[Dict[str, Any]] = []
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for target in targets:
-            try:
-                params = {
-                    "OC": oc,
-                    "target": target,
-                    "type": "XML",
-                    "query": query if target != "ordin" else _normalize_ordin_query(query),
-                    "display": display,
-                    "page": 1,
-                }
-
-                resp = await client.get(LAW_SEARCH_URL, params=params)
-
-                if resp.status_code != 200:
-                    continue
-
-                text = resp.content.decode("utf-8", errors="ignore")
-
-                if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
-                    continue
-
-                items = _parse_search_xml(text, target)
-
-                for item in items:
-                    item.setdefault("source", "law.go.kr-direct-api")
-
-                all_results.extend(items)
-
-            except Exception as e:
-                print(f"[law-chatbot] 직접 API 검색 실패: target={target}, query={query}, error={e}")
-
-    return all_results
-
-
-def _normalize_ordin_query(query: str) -> str:
-    q = query.strip()
-    if "충주시" not in q and "충주" not in q:
-        q = f"충주시 {q}"
-    return q
-
-
-def _parse_search_xml(xml_text: str, target: str) -> List[Dict[str, Any]]:
-    results: List[Dict[str, Any]] = []
-
-    try:
-        root = ET.fromstring(xml_text)
-        total = root.findtext("totalCnt", "0")
-
-        for item in (
-            list(root.findall("law"))
-            + list(root.findall("ordin"))
-            + list(root.findall("admrul"))
-            + list(root.findall("expc"))
-        ):
-            r: Dict[str, Any] = {
-                "type": target,
-                "total_count": int(total or 0),
-            }
-
-            if target == "ordin":
-                r["id"] = item.findtext("자치법규일련번호", item.findtext("법령일련번호", ""))
-                r["name"] = item.findtext("자치법규명", item.findtext("법령명한글", ""))
-                r["category"] = item.findtext("자치법규종류", item.findtext("자치법규구분", item.findtext("법령구분명", "")))
-                r["region"] = item.findtext("지자체기관명", item.findtext("자치단체명", ""))
-                r["enforcement_date"] = item.findtext("시행일자", "")
-
-            elif target == "admrul":
-                r["id"] = item.findtext("행정규칙일련번호", item.findtext("법령일련번호", ""))
-                r["name"] = item.findtext("행정규칙명", item.findtext("법령명한글", ""))
-                r["category"] = item.findtext("행정규칙종류", item.findtext("법령구분명", ""))
-                r["ministry"] = item.findtext("소관부처명", "")
-                r["enforcement_date"] = item.findtext("시행일자", "")
-
-            else:
-                r["id"] = item.findtext("법령일련번호", "")
-                r["name"] = item.findtext("법령명한글", "")
-                r["category"] = item.findtext("법령구분명", "")
-                r["ministry"] = item.findtext("소관부처명", "")
-                r["enforcement_date"] = item.findtext("시행일자", "")
-                r["status"] = item.findtext("현행연혁코드", "")
-
-            if r.get("name"):
-                results.append(r)
-
-    except ET.ParseError as e:
-        print(f"[law-chatbot] XML 검색결과 파싱 오류: {e}")
-
-    return results
 
 
 # =========================================================
@@ -1438,65 +1267,12 @@ def _deduplicate_articles(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 async def _check_api_connection() -> Dict[str, Any]:
-    result = {
-        "mcp": {
-            "enabled": False,
-            "connected": False,
-        },
-        "law_api": {
-            "connected": False,
-        },
-        "connected": False,
-    }
-
     try:
         mcp_status = await korean_law_mcp_service.check_connection()
-        result["mcp"] = mcp_status
     except Exception as e:
-        result["mcp"] = {
-            "enabled": True,
-            "connected": False,
-            "reason": str(e),
-        }
+        mcp_status = {"enabled": True, "connected": False, "reason": str(e)}
 
-    oc = settings.LAW_API_OC
-
-    if not oc:
-        result["law_api"] = {
-            "connected": False,
-            "reason": "LAW_API_OC 미설정",
-        }
-    else:
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(
-                    LAW_SEARCH_URL,
-                    params={
-                        "OC": oc,
-                        "target": "law",
-                        "type": "XML",
-                        "query": "헌법",
-                        "display": 1,
-                    },
-                )
-
-                text = resp.content.decode("utf-8", errors="ignore")
-                is_xml = not text.strip().startswith("<!DOCTYPE")
-
-                result["law_api"] = {
-                    "connected": is_xml,
-                    "status_code": resp.status_code,
-                }
-
-        except Exception as e:
-            result["law_api"] = {
-                "connected": False,
-                "reason": str(e),
-            }
-
-    result["connected"] = bool(
-        result.get("mcp", {}).get("connected")
-        or result.get("law_api", {}).get("connected")
-    )
-
-    return result
+    return {
+        "mcp": mcp_status,
+        "connected": bool(mcp_status.get("connected")),
+    }
