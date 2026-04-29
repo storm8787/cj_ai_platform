@@ -1,0 +1,90 @@
+name: Law Chatbot Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "평가 모드 (mock / planner)"
+        required: false
+        default: "mock"
+        type: choice
+        options:
+          - mock
+          - planner
+      case_ids:
+        description: "특정 케이스만 실행 (예: TC-001 TC-003, 비워두면 전체)"
+        required: false
+        default: ""
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install openai httpx pydantic pydantic-settings python-dotenv
+
+      - name: Create .env stub (no secrets in code)
+        run: |
+          cat > .env <<'EOF'
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          LAW_API_OC=${{ secrets.LAW_API_OC }}
+          KOREAN_LAW_MCP_ENABLED=false
+          EOF
+
+      - name: Run evaluation
+        id: eval
+        run: |
+          CASE_ARG=""
+          if [ -n "${{ github.event.inputs.case_ids }}" ]; then
+            CASE_ARG="--cases ${{ github.event.inputs.case_ids }}"
+          fi
+
+          python tests/evaluate_law_chatbot.py \
+            --mode "${{ github.event.inputs.mode || 'mock' }}" \
+            --output /tmp/eval_result.json \
+            $CASE_ARG
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LAW_CHATBOT_URL: ${{ vars.LAW_CHATBOT_URL }}
+
+      - name: Upload evaluation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: law-chatbot-eval-results
+          path: /tmp/eval_result.json
+          retention-days: 30
+
+      - name: Print summary
+        if: always()
+        run: |
+          if [ -f /tmp/eval_result.json ]; then
+            python - <<'PYEOF'
+          import json, sys
+          data = json.load(open("/tmp/eval_result.json", encoding="utf-8"))
+          passed = data.get("passed", 0)
+          total = data.get("total", 0)
+          print(f"결과: {passed}/{total} 통과")
+          for r in data.get("results", []):
+              c = r["case"]
+              res = r["result"]
+              ok = "✅" if res.get("passed") else "❌"
+              print(f"  {ok} [{c['id']}] {c['category']}  {res.get('score', 0):.1f}점")
+          sys.exit(0 if passed == total else 1)
+          PYEOF
+          fi
