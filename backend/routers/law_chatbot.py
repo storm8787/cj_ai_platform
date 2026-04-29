@@ -3,10 +3,13 @@
 
 변경 방향:
 1. 프론트의 국가법령/자치법규 선택 구조를 사실상 폐지
-2. 모든 질문은 MCP 통합검색 우선
-3. 자치법규 의심 질문은 MCP search_ordinance 우선
-4. 행정규칙 의심 질문은 MCP search_admin_rule 우선
-5. MCP 실패 시 기존 law.go.kr API + 자치법규 벡터스토어 fallback
+2. 모든 질문은 MCP 기반 통합검색 우선
+3. MCP 검색은 경량 병렬검색 방식 적용
+   - 국가법령
+   - 자치법규
+   - 행정규칙
+4. MCP 실패 시 기존 law.go.kr API fallback
+5. 자치법규 벡터스토어는 충주/조례/자치법규성 질문일 때만 보조검색
 6. 기존 응답 형식(answer, references, search_info)은 유지
 """
 
@@ -36,6 +39,7 @@ try:
 except ImportError:
     _BM25_AVAILABLE = False
     print("[law-chatbot] ⚠️ rank_bm25 미설치, dense 검색만 사용")
+
 
 router = APIRouter(prefix="/api/law-chatbot", tags=["law-chatbot"])
 
@@ -210,6 +214,7 @@ async def ask_question(req: AskRequest):
     for r in api_results[:3]:
         mst = r.get("id", "")
         target = r.get("type", "law")
+
         if target not in ("law", "ordin", "admrul"):
             target = "law"
 
@@ -223,7 +228,10 @@ async def ask_question(req: AskRequest):
                 source=r.get("source", ""),
             )
             if relevant:
-                detail_texts.append({"name": r.get("name", ""), "content": relevant})
+                detail_texts.append({
+                    "name": r.get("name", ""),
+                    "content": relevant,
+                })
 
     print(
         f"[law-chatbot] 최종 결과: "
@@ -250,7 +258,11 @@ async def search_law(req: SearchRequest):
         page=req.page,
         display=req.display,
     )
-    return {"results": results, "query": req.query, "target": req.target}
+    return {
+        "results": results,
+        "query": req.query,
+        "target": req.target,
+    }
 
 
 @router.get("/status")
@@ -274,6 +286,36 @@ async def get_categories():
         ]
     }
 
+
+async def _safe_search_task(label: str, coro, timeout: float = 8.0) -> dict:
+    """
+    병렬검색용 안전 실행 래퍼.
+
+    - 각 검색은 독립적으로 timeout 적용
+    - 하나가 실패해도 전체 검색은 계속 진행
+    - 결과 형식은 {"label": ..., "items": [...]} 로 통일
+    """
+    try:
+        print(f"[law-chatbot] {label} 시작")
+
+        items = await asyncio.wait_for(coro, timeout=timeout)
+
+        if not items:
+            print(f"[law-chatbot] {label} 종료: count=0")
+            return {"label": label, "items": []}
+
+        print(f"[law-chatbot] {label} 종료: count={len(items)}")
+        return {"label": label, "items": items}
+
+    except asyncio.TimeoutError:
+        print(f"[law-chatbot] ⚠️ {label} timeout")
+        return {"label": label, "items": []}
+
+    except Exception as e:
+        print(f"[law-chatbot] ⚠️ {label} 실패: {e}")
+        return {"label": label, "items": []}
+
+
 async def _agentic_search(
     client, question: str, initial_keywords: list, search_scope: str,
 ) -> tuple:
@@ -294,10 +336,7 @@ async def _agentic_search(
     all_api_results = []
     all_vector_results = []
 
-    # ─────────────────────────────────────────────
     # 1. 검색어 구성
-    #    GPT 추출 키워드를 우선 사용하고, 없으면 질문 원문 사용
-    # ─────────────────────────────────────────────
     search_terms = []
 
     for kw in initial_keywords or []:
@@ -325,10 +364,7 @@ async def _agentic_search(
 
     print(f"[law-chatbot] 경량 통합검색 시작: primary={primary_term}, terms={search_terms}")
 
-    # ─────────────────────────────────────────────
     # 2. MCP 3종 병렬검색
-    #    Node CLI 부하를 줄이기 위해 대표 검색어 1개만 사용
-    # ─────────────────────────────────────────────
     mcp_tasks = [
         _safe_search_task(
             label=f"MCP 국가법령 검색: {primary_term}",
@@ -375,10 +411,7 @@ async def _agentic_search(
 
     print(f"[law-chatbot] MCP 경량검색 결과: api={len(all_api_results)}")
 
-    # ─────────────────────────────────────────────
     # 3. MCP 결과가 없으면 기존 law.go.kr API fallback
-    #    fallback은 빠르므로 검색어 2개까지 시도
-    # ─────────────────────────────────────────────
     if not all_api_results:
         print("[law-chatbot] MCP 결과 없음, 기존 law.go.kr API fallback 시작")
 
@@ -397,6 +430,7 @@ async def _agentic_search(
                     f"keyword={kw}, count={len(law_results)}"
                 )
                 all_api_results.extend(law_results)
+
             except Exception as e:
                 print(f"[law-chatbot] 기존 국가법령 API 직접검색 예외: {e}")
 
@@ -411,6 +445,7 @@ async def _agentic_search(
                     f"keyword={kw}, count={len(ordin_results)}"
                 )
                 all_api_results.extend(ordin_results)
+
             except Exception as e:
                 print(f"[law-chatbot] 기존 자치법규 API 직접검색 예외: {e}")
 
@@ -420,10 +455,7 @@ async def _agentic_search(
                 print(f"[law-chatbot] 기존 API fallback 성공: count={len(all_api_results)}")
                 break
 
-    # ─────────────────────────────────────────────
     # 4. 자치법규 벡터스토어 보조검색
-    #    무조건 돌리지 않고, 충주/조례/자치법규 명시 질문만 수행
-    # ─────────────────────────────────────────────
     vector_hint_words = [
         "충주시",
         "충주",
@@ -464,11 +496,13 @@ async def _agentic_search(
 
     return all_vector_results, all_api_results
 
+
 async def _generate_alternative_keywords(
     client, question: str, tried_keywords: list
 ) -> list:
     system_content = prompt_service.get(
-        "law_chatbot", "alternative_keywords",
+        "law_chatbot",
+        "alternative_keywords",
         default=_DEFAULT_ALTERNATIVE_KEYWORDS,
     )
 
@@ -505,7 +539,8 @@ async def _generate_alternative_keywords(
 
 async def _extract_search_keywords(client, question: str) -> list:
     system_content = prompt_service.get(
-        "law_chatbot", "extract_keywords",
+        "law_chatbot",
+        "extract_keywords",
         default=_DEFAULT_EXTRACT_KEYWORDS,
     )
 
@@ -631,9 +666,15 @@ def _search_vectorstore(query: str, top_k: int = 7) -> list:
         })
 
     if results:
-        dense_only = sum(1 for r in results if r["sources"]["dense"] and not r["sources"]["bm25"])
-        bm25_only = sum(1 for r in results if r["sources"]["bm25"] and not r["sources"]["dense"])
-        both = sum(1 for r in results if r["sources"]["dense"] and r["sources"]["bm25"])
+        dense_only = sum(
+            1 for r in results if r["sources"]["dense"] and not r["sources"]["bm25"]
+        )
+        bm25_only = sum(
+            1 for r in results if r["sources"]["bm25"] and not r["sources"]["dense"]
+        )
+        both = sum(
+            1 for r in results if r["sources"]["dense"] and r["sources"]["bm25"]
+        )
 
         print(f"[law-chatbot] Hybrid 검색: dense만={dense_only}, bm25만={bm25_only}, 둘다={both}")
 
@@ -735,6 +776,7 @@ async def _search_law_api(query: str, targets: list) -> list:
 
     return all_results
 
+
 async def _search_law_api_direct(query: str, targets: list) -> list:
     """
     기존 law.go.kr 직접 API 검색 전용 함수.
@@ -794,6 +836,7 @@ async def _search_law_api_direct(query: str, targets: list) -> list:
                 )
 
     return all_results
+
 
 async def _call_law_search_api(target: str, query: str, page: int, display: int) -> list:
     """
@@ -1063,7 +1106,11 @@ def _parse_articles_from_xml(xml_text: str) -> list:
                 if any(k in tag for k in ["조문내용", "조내용"]):
                     match = re.match(r"(제\d+조(?:의\d+)?)", text)
                     number = match.group(1) if match else ""
-                    articles.append({"number": number, "title": "", "content": text})
+                    articles.append({
+                        "number": number,
+                        "title": "",
+                        "content": text,
+                    })
 
         for bt in root.iter("별표단위"):
             bt_title = bt.findtext("별표제목", "")
@@ -1095,12 +1142,18 @@ def _parse_search_xml(xml_text: str, target: str) -> list:
             + list(root.findall("admrul"))
             + list(root.findall("expc"))
         ):
-            r = {"type": target, "total_count": int(total)}
+            r = {
+                "type": target,
+                "total_count": int(total),
+            }
 
             if target == "ordin":
                 r["id"] = item.findtext("자치법규일련번호", item.findtext("법령일련번호", ""))
                 r["name"] = item.findtext("자치법규명", item.findtext("법령명한글", ""))
-                r["category"] = item.findtext("자치법규종류", item.findtext("자치법규구분", item.findtext("법령구분명", "")))
+                r["category"] = item.findtext(
+                    "자치법규종류",
+                    item.findtext("자치법규구분", item.findtext("법령구분명", "")),
+                )
                 r["region"] = item.findtext("지자체기관명", item.findtext("자치단체명", ""))
                 r["enforcement_date"] = item.findtext("시행일자", "")
 
@@ -1197,9 +1250,15 @@ async def _generate_answer(
             content = msg.get("content", "")
 
             if role in ("user", "assistant") and content:
-                messages.append({"role": role, "content": content})
+                messages.append({
+                    "role": role,
+                    "content": content,
+                })
 
-    messages.append({"role": "user", "content": question})
+    messages.append({
+        "role": "user",
+        "content": question,
+    })
 
     try:
         response = await client.chat.completions.create(
