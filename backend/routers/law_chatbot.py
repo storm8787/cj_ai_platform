@@ -1,41 +1,32 @@
 """
-법령정보 · 자치법규 챗봇 라우터
+법령정보 · 자치법규 챗봇 라우터 - 조문 검색 기반 구조
 
-구조:
-1. GPT가 사용자 질문에서 검색 키워드 추출
-2. 백엔드가 MCP 기반 경량 병렬검색 수행
+새 구조:
+1. GPT가 사용자 질문을 '법률 쟁점/검색계획'으로 변환
+2. 검색계획별 MCP 검색 수행
    - 국가법령
    - 자치법규
    - 행정규칙
-3. MCP 결과가 없으면 기존 law.go.kr API fallback
-4. 검색 결과를 질문 관련도 기준으로 재정렬
-5. 검색 결과 중 상위 항목에 대해 본문 조회 시도
-   - 국가법령: get_law_text
-   - 자치법규: get_ordinance
-   - 행정규칙: get_admin_rule
-6. 본문 조회 실패 시 기존 law.go.kr lawService.do fallback
-7. 검색결과 + 관련 본문을 GPT에게 전달하여 최종 답변 생성
+3. 검색 후보의 전문/본문 조회
+4. 본문을 조문 단위로 분리
+5. 질문 및 조문 키워드와 관련 높은 조문만 선별
+6. 선별된 조문 근거를 GPT에게 전달하여 최종 답변 생성
 
-핵심 개선사항:
-- 국가법령/자치법규 선택 구조 폐지
-- 사전기반 라우팅 최소화
-- MCP 자치법규 검색 성공 시 벡터스토어 불필요 실행 방지
-- 자치법규는 id가 없어도 name으로 본문 조회 시도
-- 검색 결과를 질문과 가까운 순서로 재정렬
-- 본문 조회 timeout 적용
+기존 구조와 차이:
+- 기존: 키워드 → 법령 목록 → GPT 답변
+- 신규: 법률 쟁점 → 법령/조례 전문 → 관련 조문 → GPT 답변
 """
 
-import os
 import json
 import pickle
 import re
 import asyncio
 from pathlib import Path
-from typing import Optional, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import faiss
-import numpy as np
 import httpx
+import numpy as np
 import xml.etree.ElementTree as ET
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -44,6 +35,8 @@ from FlagEmbedding import BGEM3FlagModel
 from config import settings
 from services.prompt_service import prompt_service
 from services.korean_law_mcp_service import korean_law_mcp_service
+from services.legal_query_planner import legal_query_planner
+
 
 try:
     from rank_bm25 import BM25Okapi
@@ -59,8 +52,6 @@ LAW_SEARCH_URL = "http://www.law.go.kr/DRF/lawSearch.do"
 LAW_SERVICE_URL = "http://www.law.go.kr/DRF/lawService.do"
 
 ANSWER_MODEL = "gpt-4o"
-KEYWORD_MODEL = "gpt-4o"
-UTILITY_MODEL = "gpt-4o-mini"
 
 VECTORSTORE_DIR = Path(settings.LAW_CHATBOT_VECTORSTORE_PATH)
 EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL
@@ -68,7 +59,11 @@ EMBEDDING_MODEL_NAME = settings.EMBEDDING_MODEL
 VECTOR_SCORE_MIN = 0.30
 VECTOR_SCORE_RELATIVE = 0.85
 
-MAX_RETRY = 2
+MAX_SEARCH_PLANS = 6
+MAX_CANDIDATES_PER_PLAN = 4
+MAX_DETAIL_DOCS = 5
+MAX_ARTICLES_FOR_ANSWER = 12
+MAX_CONTEXT_CHARS = 60000
 
 _faiss_index = None
 _faiss_data = None
@@ -77,126 +72,32 @@ _bm25_index = None
 _bm25_corpus = None
 
 
-_DEFAULT_EXTRACT_KEYWORDS = """당신은 법령 검색 전문가입니다. 사용자의 질문에서 국가법령정보센터 API 검색에 적합한 키워드를 추출하세요.
-
-[규칙]
-1. 법령명이나 핵심 법률 용어를 2~3개 추출
-2. 실무 상황이면 관련 법령명을 추론
-3. 가능하면 정확한 법령명을 포함
-4. 반드시 JSON 배열로만 응답. 다른 텍스트 없이.
-
-[예시]
-"관외출장 갔는데 초과근무 되나?" → ["지방공무원 복무규정", "초과근무"]
-"정근수당 받을 수 있나?" → ["공무원보수규정", "정근수당"]
-"육아휴직 복직 후 수당" → ["공무원보수규정", "육아휴직"]
-"연차 안 쓰면 수당 나오나?" → ["공무원보수규정", "연가보상비"]
-"10년차 공무원 연가일수" → ["지방공무원 복무규정", "국가공무원 복무규정"]
-"소프트웨어사업 과업심의" → ["소프트웨어진흥법", "소프트웨어사업"]
-"건축 허가 기준" → ["건축법"]
-"개인정보 제3자 제공" → ["개인정보보호법", "제3자 제공"]
-"충주시 출산 지원 조례" → ["충주시 출산 지원 조례", "출산 지원금"]
-"충주시 위원회 조례 연임" → ["충주시 위원회 조례", "위원 연임"]"""
-
-_DEFAULT_ALTERNATIVE_KEYWORDS = """사용자의 법령 관련 질문에 대해 국가법령정보센터 API 검색용 키워드를 생성하세요.
-이전에 시도한 키워드로는 검색 결과가 없었습니다.
-다른 법령명이나 다른 표현의 키워드를 2~3개 제안하세요.
-반드시 JSON 배열로만 응답하세요.
-
-전략:
-- 상위법/시행령/시행규칙 등 관련 법령명을 시도
-- 더 넓은 범위의 법령명을 시도
-- 동의어나 유사 표현을 시도"""
-
 _DEFAULT_ANSWER_SYSTEM = """당신은 충주시청 공무원을 위한 법령·자치법규 전문 AI 어시스턴트입니다.
 
 [역할]
 공무원이 실무에서 바로 활용할 수 있도록 정확하고 구체적인 법령 정보를 제공합니다.
 
-[답변 전략]
-
-1단계: [검색된 참고자료]에 답이 있는 경우
-→ 반드시 조문 번호를 정확히 인용하며 구체적으로 답변하세요.
-→ 법령명은 정식 명칭 그대로 사용하세요.
-→ 수치(일수, 금액, 기간, 횟수 등)가 있으면 반드시 구체적으로 제시하세요.
-
-2단계: 검색 결과에 충분한 답이 없지만, 일반 법률 지식으로 답할 수 있는 경우
-→ 답변하되, 답변 끝에 다음 문구를 표시하세요.
-💡 이 내용은 AI의 일반 법률 지식을 기반으로 한 답변입니다. 정확한 조문 확인은 국가법령정보센터(law.go.kr)에서 확인하시기 바랍니다.
-
-3단계: 둘 다 모르는 경우
-→ "해당 내용에 대한 정확한 정보를 찾지 못했습니다. 법제팀 또는 국가법령정보센터에서 확인하시기 바랍니다."
+[답변 원칙]
+1. 반드시 [검색된 참고자료]에 포함된 조문·근거를 우선 사용하세요.
+2. 결론을 먼저 제시하세요.
+3. 조문번호, 법령명, 조례명을 임의로 만들어내지 마세요.
+4. 검색자료에 없는 세부 수치, 기간, 횟수는 단정하지 마세요.
+5. 법령명은 정식 명칭 그대로 사용하세요.
+6. 자치법규 질문이면 국가법령만으로 답하지 말고, 자치법규 검색 결과를 우선 확인하세요.
+7. 지방자치단체의 금품·경품·물품 제공 질문은 공직선거법상 기부행위 가능성을 반드시 유의사항으로 검토하세요.
+8. 실무 적용 시 담당부서, 법제팀, 선관위, 개인정보보호 담당자 등 확인이 필요한 경우 명확히 표시하세요.
 
 [답변 형식]
-1. 결론을 먼저 한 문장으로 제시
-2. 근거 조문 인용
-3. 실무 적용 시 유의사항이 있으면 ⚠️로 안내
-4. 답변 마지막에 📋 참고 법령 목록
-
-[절대 금지 규칙]
-- 검색 결과에 있더라도 질문 대상과 다른 법령은 절대 인용하지 마세요.
-- 법령명을 임의로 변경하거나 축약하지 마세요.
-- 확인할 수 없는 조문 번호를 만들어내지 마세요.
-- 검색 결과 목록만 있고 본문이 없는 경우, 단정적으로 세부 수치를 말하지 마세요.
-- 표(별표)의 수치를 해석할 때 구간을 정확히 매칭하세요.
+1. 결론
+2. 근거
+   - 📌 법령명/조례명 조문번호: 핵심 내용
+3. 실무 적용 시 유의사항
+   - ⚠️ 필요한 경우 작성
+4. 참고 법령 목록
+   - 📋 목록 형태
 
 [검색된 참고자료]
 {context}"""
-
-
-# =========================================================
-# 벡터스토어 / 임베딩 모델 로드
-# =========================================================
-
-def _load_vectorstore():
-    global _faiss_index, _faiss_data, _bm25_index, _bm25_corpus
-
-    if _faiss_index is not None:
-        return
-
-    faiss_path = VECTORSTORE_DIR / "index.faiss"
-    pkl_path = VECTORSTORE_DIR / "index.pkl"
-    bm25_path = VECTORSTORE_DIR / "bm25_corpus.pkl"
-
-    if not faiss_path.exists() or not pkl_path.exists():
-        print(f"[law-chatbot] ⚠️ 벡터스토어 없음: {VECTORSTORE_DIR}")
-        return
-
-    _faiss_index = faiss.read_index(str(faiss_path))
-
-    with open(pkl_path, "rb") as f:
-        _faiss_data = pickle.load(f)
-
-    print(f"[law-chatbot] ✅ 벡터스토어 로드 완료: {_faiss_index.ntotal}개 문서")
-
-    if _BM25_AVAILABLE and bm25_path.exists():
-        try:
-            with open(bm25_path, "rb") as f:
-                bm25_data = pickle.load(f)
-
-            _bm25_corpus = bm25_data.get("tokenized_corpus", [])
-
-            if _bm25_corpus:
-                _bm25_index = BM25Okapi(_bm25_corpus)
-                print(f"[law-chatbot] ✅ BM25 인덱스 로드 완료: {len(_bm25_corpus)}개 문서")
-            else:
-                print("[law-chatbot] ⚠️ BM25 코퍼스가 비어있음")
-
-        except Exception as e:
-            print(f"[law-chatbot] ⚠️ BM25 로드 실패: {e}")
-
-
-def _load_embedding_model():
-    global _embedding_model
-
-    if _embedding_model is not None:
-        return
-
-    try:
-        _embedding_model = BGEM3FlagModel(EMBEDDING_MODEL_NAME, use_fp16=True)
-        print(f"[law-chatbot] ✅ BGEM3 임베딩 모델 로드 완료: {EMBEDDING_MODEL_NAME}")
-    except Exception as e:
-        print(f"[law-chatbot] ❌ BGEM3 임베딩 모델 로드 실패: {e}")
-        _embedding_model = None
 
 
 # =========================================================
@@ -217,6 +118,60 @@ class SearchRequest(BaseModel):
 
 
 # =========================================================
+# 벡터스토어 로드
+# =========================================================
+
+def _load_vectorstore():
+    global _faiss_index, _faiss_data, _bm25_index, _bm25_corpus
+
+    if _faiss_index is not None:
+        return
+
+    faiss_path = VECTORSTORE_DIR / "index.faiss"
+    pkl_path = VECTORSTORE_DIR / "index.pkl"
+    bm25_path = VECTORSTORE_DIR / "bm25_corpus.pkl"
+
+    if not faiss_path.exists() or not pkl_path.exists():
+        print(f"[law-chatbot] ⚠️ 벡터스토어 없음: {VECTORSTORE_DIR}")
+        return
+
+    try:
+        _faiss_index = faiss.read_index(str(faiss_path))
+
+        with open(pkl_path, "rb") as f:
+            _faiss_data = pickle.load(f)
+
+        print(f"[law-chatbot] ✅ 벡터스토어 로드 완료: {_faiss_index.ntotal}개 문서")
+
+        if _BM25_AVAILABLE and bm25_path.exists():
+            with open(bm25_path, "rb") as f:
+                bm25_data = pickle.load(f)
+
+            _bm25_corpus = bm25_data.get("tokenized_corpus", [])
+
+            if _bm25_corpus:
+                _bm25_index = BM25Okapi(_bm25_corpus)
+                print(f"[law-chatbot] ✅ BM25 인덱스 로드 완료: {len(_bm25_corpus)}개 문서")
+
+    except Exception as e:
+        print(f"[law-chatbot] ⚠️ 벡터스토어 로드 실패: {e}")
+
+
+def _load_embedding_model():
+    global _embedding_model
+
+    if _embedding_model is not None:
+        return
+
+    try:
+        _embedding_model = BGEM3FlagModel(EMBEDDING_MODEL_NAME, use_fp16=True)
+        print(f"[law-chatbot] ✅ BGEM3 임베딩 모델 로드 완료: {EMBEDDING_MODEL_NAME}")
+    except Exception as e:
+        print(f"[law-chatbot] ❌ BGEM3 임베딩 모델 로드 실패: {e}")
+        _embedding_model = None
+
+
+# =========================================================
 # 엔드포인트
 # =========================================================
 
@@ -224,82 +179,30 @@ class SearchRequest(BaseModel):
 async def ask_question(req: AskRequest):
     from openai import AsyncOpenAI
 
+    question = req.question.strip()
+
+    if not question:
+        raise HTTPException(status_code=400, detail="질문이 비어 있습니다.")
+
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-    search_keywords = await _extract_search_keywords(client, req.question)
-    print(f"[law-chatbot] 키워드: {search_keywords}")
+    # 1. GPT 기반 법률 쟁점/검색계획 생성
+    search_plan = await legal_query_planner.create_plan(question)
 
-    vector_results, api_results = await _agentic_search(
-        client=client,
-        question=req.question,
-        initial_keywords=search_keywords,
-        search_scope=req.search_scope,
+    print(f"[law-chatbot] 검색계획 생성 완료: {json.dumps(search_plan, ensure_ascii=False)}")
+
+    # 2. 검색계획 기반 검색 및 조문 선별
+    search_results = await _execute_legal_search_plan(
+        question=question,
+        search_plan=search_plan,
     )
 
-    # 질문과 관련도 높은 결과부터 본문 조회
-    api_results = _rank_api_results(req.question, api_results)
-
-    detail_texts = []
-
-    # 본문 조회는 전체 답변을 막지 않도록 timeout 적용
-    for r in api_results[:5]:
-        mst = r.get("id", "")
-        name = r.get("name", "")
-        target = r.get("type", "law")
-
-        if target not in ("law", "ordin", "admrul"):
-            target = "law"
-
-        # 자치법규는 mst가 없어도 name으로 조회 시도 가능
-        if not mst and not name:
-            continue
-
-        try:
-            relevant = await asyncio.wait_for(
-                _fetch_relevant_articles(
-                    mst=mst,
-                    target=target,
-                    question=req.question,
-                    keywords=search_keywords,
-                    name=name,
-                    source=r.get("source", ""),
-                ),
-                timeout=12.0,
-            )
-
-            if relevant:
-                detail_texts.append({
-                    "name": name,
-                    "content": relevant,
-                })
-
-                # 본문 1~2개면 답변에는 충분
-                if len(detail_texts) >= 2:
-                    break
-
-        except asyncio.TimeoutError:
-            print(
-                f"[law-chatbot] ⚠️ 본문 조회 timeout, 검색결과만으로 답변 진행: "
-                f"name={name}, target={target}"
-            )
-
-        except Exception as e:
-            print(
-                f"[law-chatbot] ⚠️ 본문 조회 실패, 검색결과만으로 답변 진행: "
-                f"name={name}, target={target}, error={e}"
-            )
-
-    print(
-        f"[law-chatbot] 최종 결과: "
-        f"vector={len(vector_results)}, api={len(api_results)}, detail={len(detail_texts)}"
-    )
-
+    # 3. 최종 답변 생성
     answer = await _generate_answer(
         client=client,
-        question=req.question,
-        vector_results=vector_results,
-        api_results=api_results,
-        detail_texts=detail_texts,
+        question=question,
+        search_plan=search_plan,
+        search_results=search_results,
         chat_history=req.chat_history,
     )
 
@@ -308,12 +211,16 @@ async def ask_question(req: AskRequest):
 
 @router.post("/search")
 async def search_law(req: SearchRequest):
-    results = await _call_law_search_api(
+    """
+    단순 검색 API.
+    프론트에서 별도 검색 기능이 필요할 때 사용.
+    """
+    results = await _search_target(
         target=req.target,
         query=req.query,
-        page=req.page,
         display=req.display,
     )
+
     return {
         "results": results,
         "query": req.query,
@@ -344,981 +251,451 @@ async def get_categories():
 
 
 # =========================================================
-# 검색 흐름
+# 검색계획 실행
 # =========================================================
 
-async def _safe_search_task(label: str, coro, timeout: float = 8.0) -> dict:
+async def _execute_legal_search_plan(
+    question: str,
+    search_plan: Dict[str, Any],
+) -> Dict[str, Any]:
     """
-    병렬검색용 안전 실행 래퍼.
+    검색계획 기반으로 MCP/API 검색 → 본문 조회 → 관련 조문 선별
     """
-    try:
-        print(f"[law-chatbot] {label} 시작")
+    plans = search_plan.get("search_plans", []) or []
+    plans = sorted(plans, key=lambda x: x.get("priority", 999))[:MAX_SEARCH_PLANS]
 
-        items = await asyncio.wait_for(coro, timeout=timeout)
+    all_candidates: List[Dict[str, Any]] = []
+    selected_articles: List[Dict[str, Any]] = []
+    vector_results: List[Dict[str, Any]] = []
 
-        if not items:
-            print(f"[law-chatbot] {label} 종료: count=0")
-            return {"label": label, "items": []}
+    # 1. 검색계획별 후보 검색
+    for plan in plans:
+        target = plan.get("target", "all")
+        law_name = plan.get("law_name", "")
+        article_keywords = plan.get("article_keywords", []) or []
 
-        print(f"[law-chatbot] {label} 종료: count={len(items)}")
-        return {"label": label, "items": items}
-
-    except asyncio.TimeoutError:
-        print(f"[law-chatbot] ⚠️ {label} timeout")
-        return {"label": label, "items": []}
-
-    except Exception as e:
-        print(f"[law-chatbot] ⚠️ {label} 실패: {e}")
-        return {"label": label, "items": []}
-
-
-async def _agentic_search(
-    client, question: str, initial_keywords: list, search_scope: str,
-) -> tuple:
-    """
-    경량 병렬검색 기반 통합검색.
-
-    정책:
-    1. GPT가 추출한 대표 키워드 1개로 MCP 3종 병렬검색
-       - 국가법령
-       - 자치법규
-       - 행정규칙
-    2. MCP 결과가 없으면 기존 law.go.kr API fallback
-    3. 자치법규 벡터스토어는 다음 경우에만 실행
-       - 충주/조례/자치법규성 질문이고
-       - MCP/API 자치법규 결과가 없을 때
-    """
-
-    all_api_results = []
-    all_vector_results = []
-
-    search_terms = []
-
-    for kw in initial_keywords or []:
-        if isinstance(kw, str) and kw.strip():
-            search_terms.append(kw.strip())
-
-    if question and question.strip():
-        search_terms.append(question.strip())
-
-    deduped_terms = []
-    seen_terms = set()
-
-    for term in search_terms:
-        if term not in seen_terms:
-            seen_terms.add(term)
-            deduped_terms.append(term)
-
-    search_terms = deduped_terms[:3]
-
-    if not search_terms:
-        search_terms = [_simple_keyword_extract(question)]
-
-    primary_term = search_terms[0]
-
-    print(f"[law-chatbot] 경량 통합검색 시작: primary={primary_term}, terms={search_terms}")
-
-    # MCP 3종 병렬검색
-    mcp_tasks = [
-        _safe_search_task(
-            label=f"MCP 국가법령 검색: {primary_term}",
-            coro=korean_law_mcp_service.search_law(
-                query=primary_term,
-                target="law",
-                display=8,
-            ),
-            timeout=8.0,
-        ),
-        _safe_search_task(
-            label=f"MCP 자치법규 검색: {primary_term}",
-            coro=korean_law_mcp_service.search_ordinance(
-                query=primary_term,
-                display=8,
-            ),
-            timeout=8.0,
-        ),
-        _safe_search_task(
-            label=f"MCP 행정규칙 검색: {primary_term}",
-            coro=korean_law_mcp_service.search_admin_rule(
-                query=primary_term,
-                display=8,
-            ),
-            timeout=8.0,
-        ),
-    ]
-
-    task_results = await asyncio.gather(*mcp_tasks, return_exceptions=True)
-
-    for result in task_results:
-        if isinstance(result, Exception):
-            print(f"[law-chatbot] MCP task 예외 무시: {result}")
+        if not law_name:
             continue
 
-        if not result:
-            continue
-
-        items = result.get("items", [])
-        if items:
-            all_api_results.extend(items)
-
-    all_api_results = _deduplicate_api_results(all_api_results)
-
-    print(f"[law-chatbot] MCP 경량검색 결과: api={len(all_api_results)}")
-
-    # MCP 결과가 없으면 기존 API fallback
-    if not all_api_results:
-        print("[law-chatbot] MCP 결과 없음, 기존 law.go.kr API fallback 시작")
-
-        for kw in search_terms[:2]:
-            if not kw:
-                continue
-
-            try:
-                print(f"[law-chatbot] 기존 국가법령 API 직접검색 시작: keyword={kw}")
-                law_results = await _search_law_api_direct(
-                    query=kw,
-                    targets=["law"],
-                )
-                print(
-                    f"[law-chatbot] 기존 국가법령 API 직접검색 종료: "
-                    f"keyword={kw}, count={len(law_results)}"
-                )
-                all_api_results.extend(law_results)
-
-            except Exception as e:
-                print(f"[law-chatbot] 기존 국가법령 API 직접검색 예외: {e}")
-
-            try:
-                print(f"[law-chatbot] 기존 자치법규 API 직접검색 시작: keyword={kw}")
-                ordin_results = await _search_law_api_direct(
-                    query=kw,
-                    targets=["ordin"],
-                )
-                print(
-                    f"[law-chatbot] 기존 자치법규 API 직접검색 종료: "
-                    f"keyword={kw}, count={len(ordin_results)}"
-                )
-                all_api_results.extend(ordin_results)
-
-            except Exception as e:
-                print(f"[law-chatbot] 기존 자치법규 API 직접검색 예외: {e}")
-
-            all_api_results = _deduplicate_api_results(all_api_results)
-
-            if all_api_results:
-                print(f"[law-chatbot] 기존 API fallback 성공: count={len(all_api_results)}")
-                break
-
-    # 자치법규 벡터스토어 보조검색 여부 판단
-    vector_hint_words = [
-        "충주시",
-        "충주",
-        "조례",
-        "자치법규",
-        "시행규칙",
-    ]
-
-    should_search_vector_by_question = any(word in question for word in vector_hint_words)
-
-    has_ordinance_result = any(
-        r.get("type") == "ordin" or "자치법규" in str(r.get("type", ""))
-        for r in all_api_results
-    )
-
-    # 자치법규 검색결과가 이미 있으면 벡터스토어 생략
-    should_search_vector = should_search_vector_by_question and not has_ordinance_result
-
-    if should_search_vector:
         print(
-            "[law-chatbot] 자치법규 벡터스토어 보조검색 시작 "
-            f"(reason=local_question_without_ordinance_result)"
+            f"[law-chatbot] 검색계획 실행: "
+            f"target={target}, law_name={law_name}, keywords={article_keywords}"
         )
+
+        candidates = await _search_by_plan(plan)
+
+        if candidates:
+            for c in candidates:
+                c["_plan"] = plan
+            all_candidates.extend(candidates)
+
+    all_candidates = _deduplicate_candidates(all_candidates)
+    all_candidates = _rank_candidates(question, all_candidates)
+
+    print(f"[law-chatbot] 후보 검색 완료: count={len(all_candidates)}")
+
+    # 2. 후보별 본문 조회 및 조문 선별
+    detail_count = 0
+
+    for candidate in all_candidates[:MAX_DETAIL_DOCS]:
+        plan = candidate.get("_plan", {})
+        article_keywords = plan.get("article_keywords", []) or []
+
+        full_text = candidate.get("content", "") or ""
+
+        if not full_text or len(full_text.strip()) < 50:
+            try:
+                full_text = await asyncio.wait_for(
+                    _get_full_text(candidate),
+                    timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                print(f"[law-chatbot] ⚠️ 본문 조회 timeout: {candidate.get('name')}")
+                full_text = ""
+            except Exception as e:
+                print(f"[law-chatbot] ⚠️ 본문 조회 실패: {candidate.get('name')} / {e}")
+                full_text = ""
+
+        if not full_text:
+            continue
+
+        detail_count += 1
+
+        articles = _split_text_into_articles(full_text)
+
+        relevant_articles = _select_relevant_articles(
+            question=question,
+            articles=articles,
+            article_keywords=article_keywords,
+            law_name=candidate.get("name", ""),
+            target=candidate.get("type", ""),
+            source=candidate.get("source", ""),
+        )
+
+        for article in relevant_articles:
+            article["law_name"] = candidate.get("name", "")
+            article["target"] = candidate.get("type", "")
+            article["category"] = candidate.get("category", "")
+            article["enforcement_date"] = candidate.get("enforcement_date", "")
+            article["source"] = candidate.get("source", "")
+            article["candidate_id"] = candidate.get("id", "")
+            article["plan_reason"] = plan.get("reason", "")
+            selected_articles.append(article)
+
+        if len(selected_articles) >= MAX_ARTICLES_FOR_ANSWER:
+            break
+
+    selected_articles = _deduplicate_articles(selected_articles)
+    selected_articles = sorted(
+        selected_articles,
+        key=lambda x: x.get("score", 0),
+        reverse=True,
+    )[:MAX_ARTICLES_FOR_ANSWER]
+
+    # 3. 자치법규 질문인데 조문이 없으면 벡터스토어 fallback
+    if not selected_articles and _looks_like_local_question(question):
+        print("[law-chatbot] 자치법규 조문 결과 없음 → 벡터스토어 fallback 시작")
 
         try:
             vector_results = await asyncio.wait_for(
                 asyncio.to_thread(_search_vectorstore, question, 7),
                 timeout=20.0,
             )
-            all_vector_results = (vector_results or [])[:5]
-            print(f"[law-chatbot] 자치법규 벡터스토어 보조검색 종료: count={len(all_vector_results)}")
-
+            vector_results = vector_results[:5]
+            print(f"[law-chatbot] 벡터스토어 fallback 종료: count={len(vector_results)}")
         except asyncio.TimeoutError:
-            print("[law-chatbot] 자치법규 벡터스토어 보조검색 timeout")
-            all_vector_results = []
-
+            print("[law-chatbot] 벡터스토어 fallback timeout")
+            vector_results = []
         except Exception as e:
-            print(f"[law-chatbot] 자치법규 벡터스토어 보조검색 실패: {e}")
-            all_vector_results = []
-
-    else:
-        if should_search_vector_by_question and has_ordinance_result:
-            print("[law-chatbot] 자치법규 MCP/API 결과 존재 → 벡터스토어 보조검색 생략")
-        else:
-            print("[law-chatbot] 자치법규 벡터스토어 보조검색 생략")
-
-    all_api_results = _deduplicate_api_results(all_api_results)
+            print(f"[law-chatbot] 벡터스토어 fallback 실패: {e}")
+            vector_results = []
 
     print(
-        f"[law-chatbot] 경량 통합검색 최종결과: "
-        f"api={len(all_api_results)}, vector={len(all_vector_results)}"
+        f"[law-chatbot] 검색계획 최종결과: "
+        f"candidates={len(all_candidates)}, details={detail_count}, "
+        f"articles={len(selected_articles)}, vector={len(vector_results)}"
     )
 
-    return all_vector_results, all_api_results
-
-
-# =========================================================
-# GPT 키워드 추출
-# =========================================================
-
-async def _generate_alternative_keywords(
-    client, question: str, tried_keywords: list
-) -> list:
-    system_content = prompt_service.get(
-        "law_chatbot",
-        "alternative_keywords",
-        default=_DEFAULT_ALTERNATIVE_KEYWORDS,
-    )
-
-    try:
-        response = await client.chat.completions.create(
-            model=UTILITY_MODEL,
-            messages=[
-                {"role": "system", "content": system_content},
-                {
-                    "role": "user",
-                    "content": (
-                        f"질문: {question}\n"
-                        f"이미 시도한 키워드 (결과 없음): {tried_keywords}\n"
-                        f"다른 키워드를 제안해주세요."
-                    ),
-                },
-            ],
-            temperature=0.3,
-            max_tokens=100,
-        )
-
-        raw = response.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        keywords = json.loads(raw)
-
-        if isinstance(keywords, list) and len(keywords) > 0:
-            return keywords[:3]
-
-    except Exception as e:
-        print(f"[law-chatbot] 대안 키워드 생성 실패: {e}")
-
-    return []
-
-
-async def _extract_search_keywords(client, question: str) -> list:
-    system_content = prompt_service.get(
-        "law_chatbot",
-        "extract_keywords",
-        default=_DEFAULT_EXTRACT_KEYWORDS,
-    )
-
-    try:
-        response = await client.chat.completions.create(
-            model=KEYWORD_MODEL,
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": question},
-            ],
-            temperature=0.1,
-            max_tokens=100,
-        )
-
-        raw = response.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        keywords = json.loads(raw)
-
-        if isinstance(keywords, list) and len(keywords) > 0:
-            return keywords[:3]
-
-    except Exception as e:
-        print(f"[law-chatbot] 키워드 추출 실패: {e}")
-
-    return [_simple_keyword_extract(question)]
-
-
-def _simple_keyword_extract(question: str) -> str:
-    stopwords = {
-        "알려줘", "알려주세요", "뭐야", "어떻게", "무엇", "어떤",
-        "규정은", "내용은", "관련", "대해", "있나요", "있어",
-        "인가요", "해줘", "해주세요", "어떻게돼", "몇일이야",
-        "기준이", "기준", "구성은", "좀", "그", "이", "저",
-        "것", "수", "등", "및", "의", "에", "은", "는",
-        "가", "를", "을", "에서", "으로", "로",
+    return {
+        "candidates": all_candidates,
+        "selected_articles": selected_articles,
+        "vector_results": vector_results,
+        "detail_count": detail_count,
     }
 
-    words = question.strip().split()
-    keywords = [w for w in words if w not in stopwords and len(w) > 1]
 
-    return " ".join(keywords) if keywords else question
+async def _search_by_plan(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    target = plan.get("target", "all")
+    law_name = plan.get("law_name", "")
+    article_keywords = plan.get("article_keywords", []) or []
 
+    queries = [law_name]
 
-# =========================================================
-# 검색결과 재정렬 / 관련 조문 선별
-# =========================================================
+    # 법령명 + 핵심 조문 키워드 조합도 보조 검색
+    for kw in article_keywords[:2]:
+        if kw and kw not in law_name:
+            queries.append(f"{law_name} {kw}")
 
-def _extract_query_terms(text: str) -> list:
-    """질문에서 검색결과 재정렬에 쓸 핵심 토큰 추출"""
-    if not text:
-        return []
+    queries = list(dict.fromkeys([q.strip() for q in queries if q.strip()]))[:3]
 
-    stopwords = {
-        "알려줘", "알려주세요", "어떻게", "무엇", "뭐야", "대해",
-        "따르면", "가능해", "가능한가", "몇번까지", "몇", "번",
-        "기준", "구성", "경우", "관련", "내용", "있는지",
-        "은", "는", "이", "가", "을", "를", "에", "의", "로", "으로",
-    }
+    results: List[Dict[str, Any]] = []
 
-    cleaned = re.sub(r"[^\w가-힣]", " ", text)
-    words = [w.strip() for w in cleaned.split() if len(w.strip()) >= 2]
-    return [w for w in words if w not in stopwords]
+    for query in queries:
+        if target == "law":
+            results.extend(await _search_target("law", query, display=8))
+        elif target == "ordin":
+            results.extend(await _search_target("ordin", query, display=8))
+        elif target == "admrul":
+            results.extend(await _search_target("admrul", query, display=8))
+        else:
+            # all: 너무 많은 timeout을 막기 위해 3종 병렬
+            task_results = await asyncio.gather(
+                _safe_search_target("law", query, display=6),
+                _safe_search_target("ordin", query, display=6),
+                _safe_search_target("admrul", query, display=6),
+                return_exceptions=True,
+            )
 
+            for tr in task_results:
+                if isinstance(tr, list):
+                    results.extend(tr)
 
-def _rank_api_results(question: str, results: list) -> list:
-    """
-    검색 결과를 질문과 가까운 순서로 재정렬.
-    """
-    if not results:
-        return results
-
-    terms = _extract_query_terms(question)
-
-    def score_item(item: dict) -> int:
-        name = item.get("name", "") or ""
-        region = item.get("region", "") or ""
-        category = item.get("category", "") or ""
-        item_type = item.get("type", "") or ""
-        source = item.get("source", "") or ""
-
-        haystack = f"{name} {region} {category} {item_type} {source}"
-
-        score = 0
-
-        for term in terms:
-            if term and term in haystack:
-                score += 3
-            if term and term in name:
-                score += 5
-
-        # 자치법규 질문 보정
-        if ("충주시" in question or "충주" in question) and ("충주시" in haystack or "충주" in haystack):
-            score += 10
-
-        if "조례" in question and "조례" in name:
-            score += 8
-
-        if "위원회" in question and "위원회" in name:
-            score += 10
-
-        if "연임" in question and ("위원회" in name or "위원" in name):
-            score += 5
-
-        if ("조례" in question or "충주시" in question or "충주" in question) and item_type == "ordin":
-            score += 8
-
-        return score
-
-    return sorted(results, key=score_item, reverse=True)
-
-
-def _guess_article_keyword(question: str) -> str:
-    """
-    질문에서 조문 탐색에 유용한 키워드 추정.
-    """
-    if "연임" in question:
-        return "연임"
-    if "임기" in question:
-        return "임기"
-    if "위원" in question:
-        return "위원"
-    if "지원금" in question:
-        return "지원금"
-    if "대상" in question:
-        return "대상"
-    if "감면" in question:
-        return "감면"
-    if "위탁" in question:
-        return "위탁"
-    if "제3자" in question:
-        return "제3자"
-    return ""
-
-
-def _select_relevant_text(text: str, question: str, keywords: list, max_chars: int = 8000) -> str:
-    """
-    MCP가 반환한 본문 텍스트에서 질문 관련 부분만 선별.
-    """
-    if not text:
-        return ""
-
-    terms = set(_extract_query_terms(question))
-
-    for kw in keywords or []:
-        for word in str(kw).split():
-            if len(word) >= 2:
-                terms.add(word)
-
-    guessed = _guess_article_keyword(question)
-    if guessed:
-        terms.add(guessed)
-
-    blocks = re.split(r"\n{2,}|(?=제\d+조)", text)
-    selected = []
-
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-
-        score = 0
-        for term in terms:
-            if term and term in block:
-                score += 1
-                if term in block[:80]:
-                    score += 2
-
-        if score > 0:
-            selected.append((score, block))
-
-    selected.sort(key=lambda x: -x[0])
-
-    if selected:
-        result = "\n\n".join(block for _, block in selected[:8])
-        return result[:max_chars]
-
-    return text[:max_chars]
-
-
-def _select_relevant_articles(
-    articles: list,
-    question: str,
-    keywords: list,
-    max_chars: int = 8000,
-) -> str:
-    """
-    XML 파싱된 조문 목록에서 질문 관련 조문 선별.
-    """
-    search_terms = set(_extract_query_terms(question))
-
-    for kw in keywords or []:
-        for word in str(kw).split():
-            if len(word) >= 2:
-                search_terms.add(word)
-
-    guessed = _guess_article_keyword(question)
-    if guessed:
-        search_terms.add(guessed)
-
-    stopwords = {
-        "어떻게", "어떤", "무엇", "알려줘", "알려주세요", "규정은",
-        "기준이", "기준은", "몇일이야", "있나요", "인가요", "해줘",
-        "어떻게돼", "뭐야", "구성은", "해야해", "받을수", "있을까",
-        "경우", "했을경우", "복직했을경우", "대상사업은",
-    }
-
-    search_terms -= stopwords
-
-    scored_articles = []
-
-    for article in articles:
-        title = article.get("title", "")
-        content = article.get("content", "")
-        full_text = f"{title} {content}"
-
-        score = 0
-
-        for term in search_terms:
-            if term in full_text:
-                score += 1
-                if term in title:
-                    score += 2
-                if term in content[:120]:
-                    score += 1
-
-        if score > 0:
-            scored_articles.append((score, article))
-
-    scored_articles.sort(key=lambda x: -x[0])
-
-    selected = []
-    total_chars = 0
-
-    for score, article in scored_articles[:10]:
-        article_text = (
-            f"[{article.get('number', '')} {article.get('title', '')}]\n"
-            f"{article.get('content', '')}"
-        )
-
-        if total_chars + len(article_text) > max_chars:
+        if results:
             break
 
-        selected.append(article_text)
-        total_chars += len(article_text)
-
-    if not selected and articles:
-        for article in articles[:5]:
-            article_text = (
-                f"[{article.get('number', '')} {article.get('title', '')}]\n"
-                f"{article.get('content', '')}"
-            )
-
-            selected.append(article_text)
-            total_chars += len(article_text)
-
-            if total_chars > 5000:
-                break
-
-    return "\n\n".join(selected)
+    return _deduplicate_candidates(results)[:MAX_CANDIDATES_PER_PLAN]
 
 
-# =========================================================
-# 자치법규 벡터스토어 검색
-# =========================================================
-
-def _search_vectorstore(query: str, top_k: int = 7) -> list:
-    """Hybrid Search: dense(FAISS) + BM25 결과를 RRF로 합산"""
-    _load_vectorstore()
-    _load_embedding_model()
-
-    if _faiss_index is None or _faiss_data is None or _embedding_model is None:
+async def _safe_search_target(target: str, query: str, display: int = 8) -> List[Dict[str, Any]]:
+    try:
+        return await asyncio.wait_for(
+            _search_target(target, query, display=display),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        print(f"[law-chatbot] ⚠️ 검색 timeout: target={target}, query={query}")
+        return []
+    except Exception as e:
+        print(f"[law-chatbot] ⚠️ 검색 실패: target={target}, query={query}, error={e}")
         return []
 
-    output = _embedding_model.encode(
-        [query],
-        batch_size=1,
-        max_length=512,
-        return_dense=True,
-        return_sparse=False,
-        return_colbert_vecs=False,
-    )
 
-    query_vec = np.array(output["dense_vecs"]).astype("float32")
-    norms = np.linalg.norm(query_vec, axis=1, keepdims=True)
-    norms[norms == 0] = 1
-    query_vec = query_vec / norms
-
-    dense_k = top_k * 3
-    scores, indices = _faiss_index.search(query_vec, dense_k)
-
-    dense_results = {}
-
-    for rank, (score, idx) in enumerate(zip(scores[0], indices[0])):
-        if idx < 0 or idx >= len(_faiss_data["texts"]):
-            continue
-        if score < VECTOR_SCORE_MIN:
-            continue
-
-        dense_results[int(idx)] = {
-            "rank": rank,
-            "score": float(score),
-        }
-
-    bm25_results = {}
-
-    if _bm25_index is not None:
-        query_tokens = _tokenize_korean(query)
-
-        if query_tokens:
-            bm25_scores = _bm25_index.get_scores(query_tokens)
-            bm25_top_indices = np.argsort(bm25_scores)[::-1][:dense_k]
-
-            for rank, idx in enumerate(bm25_top_indices):
-                if bm25_scores[idx] > 0:
-                    bm25_results[int(idx)] = {
-                        "rank": rank,
-                        "score": float(bm25_scores[idx]),
-                    }
-
-    k = 60
-    rrf_scores = {}
-    all_indices = set(dense_results.keys()) | set(bm25_results.keys())
-
-    for idx in all_indices:
-        rrf = 0.0
-        if idx in dense_results:
-            rrf += 1.0 / (k + dense_results[idx]["rank"] + 1)
-        if idx in bm25_results:
-            rrf += 1.0 / (k + bm25_results[idx]["rank"] + 1)
-        rrf_scores[idx] = rrf
-
-    sorted_indices = sorted(rrf_scores.items(), key=lambda x: -x[1])
-
-    results = []
-
-    for idx, rrf_score in sorted_indices[:top_k]:
-        display_score = dense_results[idx]["score"] if idx in dense_results else rrf_score
-
-        results.append({
-            "content": _faiss_data["texts"][idx],
-            "metadata": _faiss_data["metadatas"][idx],
-            "score": float(display_score),
-            "rrf_score": float(rrf_score),
-            "sources": {
-                "dense": idx in dense_results,
-                "bm25": idx in bm25_results,
-            },
-        })
-
-    if results:
-        dense_only = sum(
-            1 for r in results if r["sources"]["dense"] and not r["sources"]["bm25"]
-        )
-        bm25_only = sum(
-            1 for r in results if r["sources"]["bm25"] and not r["sources"]["dense"]
-        )
-        both = sum(
-            1 for r in results if r["sources"]["dense"] and r["sources"]["bm25"]
-        )
-
-        print(f"[law-chatbot] Hybrid 검색: dense만={dense_only}, bm25만={bm25_only}, 둘다={both}")
-
-    return results
-
-
-def _tokenize_korean(text: str) -> list:
-    text = re.sub(r"[^\w가-힣]", " ", text)
-    tokens = text.split()
-    return [t.lower() for t in tokens if len(t) > 1]
-
-
-def _apply_dynamic_threshold(results: list) -> list:
-    if not results:
-        return results
-
-    max_score = results[0]["score"]
-    threshold = max_score * VECTOR_SCORE_RELATIVE
-
-    filtered = [r for r in results if r["score"] >= threshold]
-
-    return filtered[:5]
-
-
-# =========================================================
-# law.go.kr API 검색
-# =========================================================
-
-async def _search_law_api(query: str, targets: list) -> list:
+async def _search_target(target: str, query: str, display: int = 10) -> List[Dict[str, Any]]:
     """
-    기존 law.go.kr 직접 API fallback.
-    단, 가능하면 MCP 우선.
+    target별 검색.
+    1순위 MCP
+    2순위 기존 law.go.kr API fallback
     """
-    oc = settings.LAW_API_OC
-    all_results = []
+    mcp_results: List[Dict[str, Any]] = []
 
-    for target in targets:
+    try:
         if target == "law":
-            try:
-                mcp_results = await korean_law_mcp_service.search_law(
-                    query=query,
-                    target=target,
-                    display=10,
-                )
-
-                if mcp_results:
-                    print(f"[law-chatbot] MCP 검색 성공: query={query}, count={len(mcp_results)}")
-                    all_results.extend(mcp_results)
-                    continue
-
-            except Exception as e:
-                print(f"[law-chatbot] MCP 검색 예외, 기존 API fallback 진행: {e}")
-
-        if target == "ordin":
-            try:
-                mcp_results = await korean_law_mcp_service.search_ordinance(
-                    query=query,
-                    display=10,
-                )
-
-                if mcp_results:
-                    print(f"[law-chatbot] MCP 자치법규 검색 성공: query={query}, count={len(mcp_results)}")
-                    all_results.extend(mcp_results)
-                    continue
-
-            except Exception as e:
-                print(f"[law-chatbot] MCP 자치법규 검색 예외, 기존 API fallback 진행: {e}")
-
-        if not oc:
-            continue
-
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            try:
-                params = {
-                    "OC": oc,
-                    "target": target,
-                    "type": "XML",
-                    "query": query if target != "ordin" else f"충주시 {query}",
-                    "display": 10,
-                    "page": 1,
-                }
-
-                resp = await client.get(LAW_SEARCH_URL, params=params)
-
-                if resp.status_code != 200:
-                    continue
-
-                text = resp.content.decode("utf-8")
-
-                if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
-                    continue
-
-                items = _parse_search_xml(text, target)
-
-                for item in items:
-                    item.setdefault("source", "law.go.kr-api")
-
-                all_results.extend(items)
-
-            except Exception as e:
-                print(f"[law-chatbot] API 검색 실패 (target={target}): {e}")
-
-    return all_results
-
-
-async def _search_law_api_direct(query: str, targets: list) -> list:
-    """
-    기존 law.go.kr 직접 API 검색 전용 함수.
-    MCP 실패 시 fallback으로만 사용.
-    """
-    oc = settings.LAW_API_OC
-
-    if not oc:
-        return []
-
-    all_results = []
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for target in targets:
-            try:
-                params = {
-                    "OC": oc,
-                    "target": target,
-                    "type": "XML",
-                    "query": query if target != "ordin" else f"충주시 {query}",
-                    "display": 10,
-                    "page": 1,
-                }
-
-                resp = await client.get(LAW_SEARCH_URL, params=params)
-
-                if resp.status_code != 200:
-                    print(
-                        f"[law-chatbot] 직접 API 응답 오류: "
-                        f"target={target}, status={resp.status_code}"
-                    )
-                    continue
-
-                text = resp.content.decode("utf-8")
-
-                if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
-                    print(
-                        f"[law-chatbot] 직접 API HTML/인증 응답 감지: "
-                        f"target={target}, query={query}"
-                    )
-                    continue
-
-                items = _parse_search_xml(text, target)
-
-                for item in items:
-                    item.setdefault("source", "law.go.kr-direct-api")
-
-                all_results.extend(items)
-
-            except Exception as e:
-                print(
-                    f"[law-chatbot] 직접 API 검색 실패: "
-                    f"target={target}, query={query}, error={e}"
-                )
-
-    return all_results
-
-
-async def _call_law_search_api(target: str, query: str, page: int, display: int) -> list:
-    """
-    /api/law-chatbot/search에서 사용하는 직접 검색 API.
-    """
-    if target == "law":
-        try:
             mcp_results = await korean_law_mcp_service.search_law(
                 query=query,
-                target=target,
+                target="law",
                 display=display,
             )
-            if mcp_results:
-                return mcp_results
-        except Exception as e:
-            print(f"[law-chatbot] /search MCP 실패, 기존 API fallback 진행: {e}")
-
-    if target == "ordin":
-        try:
+        elif target == "ordin":
             mcp_results = await korean_law_mcp_service.search_ordinance(
                 query=query,
                 display=display,
             )
-            if mcp_results:
-                return mcp_results
-        except Exception as e:
-            print(f"[law-chatbot] /search MCP 자치법규 실패, 기존 API fallback 진행: {e}")
+        elif target == "admrul":
+            mcp_results = await korean_law_mcp_service.search_admin_rule(
+                query=query,
+                display=display,
+            )
 
-    oc = settings.LAW_API_OC
+        if mcp_results:
+            print(f"[law-chatbot] MCP 검색 성공: target={target}, query={query}, count={len(mcp_results)}")
+            return mcp_results
 
-    if not oc:
-        raise HTTPException(status_code=500, detail="LAW_API_OC 환경변수 미설정")
+    except Exception as e:
+        print(f"[law-chatbot] MCP 검색 예외: target={target}, query={query}, error={e}")
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        params = {
-            "OC": oc,
-            "target": target,
-            "type": "XML",
-            "query": query,
-            "display": display,
-            "page": page,
-        }
+    # admrul은 MCP 실패 시 API도 시도
+    direct_results = await _search_law_api_direct(
+        query=query,
+        targets=[target],
+        display=display,
+    )
 
-        resp = await client.get(LAW_SEARCH_URL, params=params)
-        text = resp.content.decode("utf-8")
+    if direct_results:
+        print(f"[law-chatbot] law.go.kr fallback 검색 성공: target={target}, query={query}, count={len(direct_results)}")
 
-        if text.strip().startswith("<!DOCTYPE"):
-            raise HTTPException(status_code=502, detail="법령 API 인증 실패")
-
-        results = _parse_search_xml(text, target)
-
-        for item in results:
-            item.setdefault("source", "law.go.kr-api")
-
-        return results
+    return direct_results
 
 
 # =========================================================
 # 본문 조회
 # =========================================================
 
-async def _fetch_relevant_articles(
-    mst: str,
-    target: str,
-    question: str,
-    keywords: list,
-    name: str = "",
-    source: str = "",
-) -> str:
-    """
-    법령 본문/관련 조문 조회.
+async def _get_full_text(candidate: Dict[str, Any]) -> str:
+    target = candidate.get("type", "law")
+    item_id = candidate.get("id", "")
+    name = candidate.get("name", "")
 
-    개선사항:
-    - 자치법규는 ordinSeq가 없어도 name으로 MCP get_ordinance 조회 시도
-    - MCP 본문 조회 실패 시 law.go.kr 직접 API fallback
-    - 본문 전체에서 질문 관련 부분만 선별
-    """
-
-    article_keyword = _guess_article_keyword(question)
-
-    # 1. MCP 본문 조회
-    if target == "law":
-        try:
-            mcp_text = await korean_law_mcp_service.get_law_text(
-                mst=mst,
+    # 1. MCP 상세조회
+    try:
+        if target == "law":
+            text = await korean_law_mcp_service.get_law_text(
+                mst=item_id,
                 law_name=name,
-                question=question,
             )
-
-            if mcp_text and len(mcp_text.strip()) > 20:
-                print(f"[law-chatbot] MCP 국가법령 본문 조회 성공: MST={mst}, chars={len(mcp_text)}")
-                return _select_relevant_text(mcp_text, question, keywords, max_chars=8000)
-
-        except Exception as e:
-            print(f"[law-chatbot] MCP 국가법령 본문 조회 실패, 기존 API fallback 진행: {e}")
-
-    if target == "ordin":
-        try:
-            mcp_text = await korean_law_mcp_service.get_ordinance_text(
-                ordin_seq=mst,
+        elif target == "ordin":
+            text = await korean_law_mcp_service.get_ordinance_text(
+                ordin_seq=item_id,
                 ordinance_name=name,
-                article="",
             )
-
-            if mcp_text and len(mcp_text.strip()) > 20:
-                print(
-                    f"[law-chatbot] MCP 자치법규 본문 조회 성공: "
-                    f"id={mst}, name={name}, chars={len(mcp_text)}"
-                )
-                return _select_relevant_text(mcp_text, question, keywords, max_chars=8000)
-
-        except Exception as e:
-            print(f"[law-chatbot] MCP 자치법규 본문 조회 실패, 기존 API fallback 진행: {e}")
-
-    if target == "admrul":
-        try:
-            mcp_text = await korean_law_mcp_service.get_admin_rule_text(
-                admin_rule_id=mst,
+        elif target == "admrul":
+            text = await korean_law_mcp_service.get_admin_rule_text(
+                admin_rule_id=item_id,
                 admin_rule_name=name,
-                article="",
             )
+        else:
+            text = ""
 
-            if mcp_text and len(mcp_text.strip()) > 20:
-                print(f"[law-chatbot] MCP 행정규칙 본문 조회 성공: id={mst}, chars={len(mcp_text)}")
-                return _select_relevant_text(mcp_text, question, keywords, max_chars=8000)
+        if text and len(text.strip()) > 50:
+            print(f"[law-chatbot] MCP 본문 조회 성공: target={target}, name={name}, chars={len(text)}")
+            return text
 
-        except Exception as e:
-            print(f"[law-chatbot] MCP 행정규칙 본문 조회 실패, 기존 API fallback 진행: {e}")
+    except Exception as e:
+        print(f"[law-chatbot] MCP 본문 조회 실패: target={target}, name={name}, error={e}")
 
-    # 2. 자치법규 id가 없으면 name으로 직접 API 재검색
-    if target == "ordin" and not mst and name:
-        try:
-            print(f"[law-chatbot] 자치법규 MST 없음 → name으로 직접 API 재검색: {name}")
-            search_results = await _search_law_api_direct(name, ["ordin"])
-            ranked = _rank_api_results(question, search_results)
+    # 2. 기존 law.go.kr API fallback
+    if item_id:
+        text = await _fetch_full_text_from_law_api(
+            mst=item_id,
+            target=target,
+        )
 
-            if ranked:
-                mst = ranked[0].get("id", "")
-                name = ranked[0].get("name", name)
-                print(f"[law-chatbot] 자치법규 재검색 성공: name={name}, mst={mst}")
+        if text:
+            print(f"[law-chatbot] law.go.kr 본문 조회 성공: target={target}, name={name}, chars={len(text)}")
+            return text
 
-        except Exception as e:
-            print(f"[law-chatbot] 자치법규 재검색 실패: {e}")
+    return ""
 
-    # 3. 기존 law.go.kr lawService.do fallback
+
+async def _fetch_full_text_from_law_api(mst: str, target: str) -> str:
     oc = settings.LAW_API_OC
 
-    if not oc or not mst:
+    if not oc:
         return ""
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        try:
-            params = {
-                "OC": oc,
-                "target": target,
-                "MST": mst,
-                "type": "XML",
-            }
+    if target not in ("law", "ordin", "admrul"):
+        target = "law"
 
-            resp = await client.get(LAW_SERVICE_URL, params=params)
-            text = resp.content.decode("utf-8")
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(
+                LAW_SERVICE_URL,
+                params={
+                    "OC": oc,
+                    "target": target,
+                    "MST": mst,
+                    "type": "XML",
+                },
+            )
+
+            text = resp.content.decode("utf-8", errors="ignore")
 
             if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
                 return ""
 
-        except Exception as e:
-            print(f"[law-chatbot] 본문 조회 실패 (MST={mst}, target={target}): {e}")
-            return ""
+            return text
 
-    articles = _parse_articles_from_xml(text)
-
-    if not articles:
+    except Exception as e:
+        print(f"[law-chatbot] law.go.kr 본문 조회 실패: MST={mst}, target={target}, error={e}")
         return ""
 
-    return _select_relevant_articles(
-        articles=articles,
-        question=question,
-        keywords=keywords + ([article_keyword] if article_keyword else []),
-        max_chars=8000,
+
+# =========================================================
+# 조문 분리 / 선별
+# =========================================================
+
+def _split_text_into_articles(text: str) -> List[Dict[str, Any]]:
+    """
+    XML 또는 일반 텍스트를 조문 단위로 분리
+    """
+    if not text:
+        return []
+
+    stripped = text.strip()
+
+    if stripped.startswith("<"):
+        parsed = _parse_articles_from_xml(stripped)
+        if parsed:
+            return parsed
+
+    # JSON 문자열인 경우
+    try:
+        data = json.loads(stripped)
+        json_articles = _extract_articles_from_json(data)
+        if json_articles:
+            return json_articles
+    except Exception:
+        pass
+
+    return _split_plain_text_into_articles(stripped)
+
+
+def _extract_articles_from_json(data: Any) -> List[Dict[str, Any]]:
+    articles: List[Dict[str, Any]] = []
+
+    if isinstance(data, list):
+        for item in data:
+            articles.extend(_extract_articles_from_json(item))
+        return articles
+
+    if not isinstance(data, dict):
+        return []
+
+    # 조문 리스트가 있는 경우
+    for key in ["articles", "조문", "article_list", "items", "data", "results"]:
+        value = data.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    number = _pick_first(item, ["number", "article_number", "조문번호", "조문키"])
+                    title = _pick_first(item, ["title", "article_title", "조문제목", "조제목"])
+                    content = _pick_first(item, ["content", "article_content", "조문내용", "조내용", "text"])
+                    if content:
+                        articles.append({
+                            "number": number,
+                            "title": title,
+                            "content": content,
+                        })
+            if articles:
+                return articles
+
+    # 단일 조문 형태
+    content = _pick_first(data, ["content", "article_content", "text", "본문", "조문내용", "조내용"])
+    title = _pick_first(data, ["title", "article_title", "조문제목", "조제목"])
+    number = _pick_first(data, ["number", "article_number", "조문번호", "조문키"])
+
+    if content:
+        return [{
+            "number": number,
+            "title": title,
+            "content": content,
+        }]
+
+    return []
+
+
+def _split_plain_text_into_articles(text: str) -> List[Dict[str, Any]]:
+    """
+    일반 텍스트를 제n조 패턴 기준으로 분리
+    """
+    text = text.replace("\r\n", "\n")
+
+    pattern = re.compile(
+        r"(?=(제\s*\d+\s*조(?:의\s*\d+)?\s*(?:\([^)]*\))?))"
     )
 
+    matches = list(pattern.finditer(text))
 
-def _parse_articles_from_xml(xml_text: str) -> list:
-    articles = []
+    if not matches:
+        # 조문 패턴이 없으면 전체를 하나의 문서로 처리
+        return [{
+            "number": "",
+            "title": "",
+            "content": text[:10000],
+        }]
+
+    articles: List[Dict[str, Any]] = []
+
+    for idx, match in enumerate(matches):
+        start = match.start()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+
+        block = text[start:end].strip()
+
+        if not block:
+            continue
+
+        first_line = block.split("\n", 1)[0].strip()
+
+        number = ""
+        title = ""
+
+        m = re.match(r"(제\s*\d+\s*조(?:의\s*\d+)?)(?:\s*\(([^)]*)\))?", first_line)
+
+        if m:
+            number = re.sub(r"\s+", "", m.group(1))
+            title = m.group(2) or ""
+
+        articles.append({
+            "number": number,
+            "title": title,
+            "content": block,
+        })
+
+    return articles
+
+
+def _parse_articles_from_xml(xml_text: str) -> List[Dict[str, Any]]:
+    articles: List[Dict[str, Any]] = []
 
     try:
         root = ET.fromstring(xml_text)
@@ -1354,26 +731,10 @@ def _parse_articles_from_xml(xml_text: str) -> list:
                     "content": "\n".join(content_parts),
                 })
 
-        if not articles:
-            for elem in root.iter():
-                tag = elem.tag
-                text = (elem.text or "").strip()
-
-                if not text:
-                    continue
-
-                if any(k in tag for k in ["조문내용", "조내용"]):
-                    match = re.match(r"(제\d+조(?:의\d+)?)", text)
-                    number = match.group(1) if match else ""
-                    articles.append({
-                        "number": number,
-                        "title": "",
-                        "content": text,
-                    })
-
+        # 별표
         for bt in root.iter("별표단위"):
             bt_title = bt.findtext("별표제목", "")
-            bt_content = bt.findtext("별표내용", "").strip()
+            bt_content = (bt.findtext("별표내용", "") or "").strip()
 
             if bt_title:
                 articles.append({
@@ -1388,8 +749,154 @@ def _parse_articles_from_xml(xml_text: str) -> list:
     return articles
 
 
-def _parse_search_xml(xml_text: str, target: str) -> list:
-    results = []
+def _select_relevant_articles(
+    question: str,
+    articles: List[Dict[str, Any]],
+    article_keywords: List[str],
+    law_name: str,
+    target: str,
+    source: str,
+) -> List[Dict[str, Any]]:
+    if not articles:
+        return []
+
+    question_terms = _extract_query_terms(question)
+    keyword_terms = []
+
+    for kw in article_keywords or []:
+        keyword_terms.extend(_extract_query_terms(kw))
+        if kw:
+            keyword_terms.append(kw)
+
+    all_terms = list(dict.fromkeys(question_terms + keyword_terms))
+
+    scored: List[Dict[str, Any]] = []
+
+    for article in articles:
+        title = article.get("title", "") or ""
+        number = article.get("number", "") or ""
+        content = article.get("content", "") or ""
+
+        haystack = f"{number} {title} {content}"
+
+        score = 0
+
+        for term in all_terms:
+            if not term:
+                continue
+
+            if term in title:
+                score += 8
+            if term in number:
+                score += 5
+            if term in content:
+                score += 3
+
+        # 조문번호 직접 언급 보정
+        article_no_terms = re.findall(r"제\s*\d+\s*조(?:의\s*\d+)?", question)
+        for article_no in article_no_terms:
+            normalized = re.sub(r"\s+", "", article_no)
+            if normalized and normalized in haystack.replace(" ", ""):
+                score += 20
+
+        # 자주 나오는 실무 키워드 보정
+        boosts = [
+            ("연임", ["연임", "임기"]),
+            ("임기", ["임기"]),
+            ("위원", ["위원", "위원회"]),
+            ("지원금", ["지원금", "지원대상", "지원기준"]),
+            ("제3자", ["제3자", "제공"]),
+            ("위탁", ["위탁", "위탁계약"]),
+            ("기부행위", ["기부행위", "금품", "제공"]),
+            ("경품", ["경품", "금품", "기부행위"]),
+            ("과업심의", ["과업심의", "과업심의위원회"]),
+        ]
+
+        for qkey, terms in boosts:
+            if qkey in question:
+                for t in terms:
+                    if t in haystack:
+                        score += 6
+
+        if score > 0:
+            new_article = dict(article)
+            new_article["score"] = score
+            scored.append(new_article)
+
+    scored.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+    # 관련 조문을 못 찾은 경우, 상위 몇 개라도 제공
+    if not scored:
+        fallback = []
+        for article in articles[:3]:
+            item = dict(article)
+            item["score"] = 1
+            fallback.append(item)
+        return fallback
+
+    return scored[:4]
+
+
+# =========================================================
+# 기존 law.go.kr 직접 API fallback
+# =========================================================
+
+async def _search_law_api_direct(
+    query: str,
+    targets: List[str],
+    display: int = 10,
+) -> List[Dict[str, Any]]:
+    oc = settings.LAW_API_OC
+
+    if not oc:
+        return []
+
+    all_results: List[Dict[str, Any]] = []
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for target in targets:
+            try:
+                params = {
+                    "OC": oc,
+                    "target": target,
+                    "type": "XML",
+                    "query": query if target != "ordin" else _normalize_ordin_query(query),
+                    "display": display,
+                    "page": 1,
+                }
+
+                resp = await client.get(LAW_SEARCH_URL, params=params)
+
+                if resp.status_code != 200:
+                    continue
+
+                text = resp.content.decode("utf-8", errors="ignore")
+
+                if text.strip().startswith("<!DOCTYPE") or text.strip().startswith("<html"):
+                    continue
+
+                items = _parse_search_xml(text, target)
+
+                for item in items:
+                    item.setdefault("source", "law.go.kr-direct-api")
+
+                all_results.extend(items)
+
+            except Exception as e:
+                print(f"[law-chatbot] 직접 API 검색 실패: target={target}, query={query}, error={e}")
+
+    return all_results
+
+
+def _normalize_ordin_query(query: str) -> str:
+    q = query.strip()
+    if "충주시" not in q and "충주" not in q:
+        q = f"충주시 {q}"
+    return q
+
+
+def _parse_search_xml(xml_text: str, target: str) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
 
     try:
         root = ET.fromstring(xml_text)
@@ -1401,18 +908,15 @@ def _parse_search_xml(xml_text: str, target: str) -> list:
             + list(root.findall("admrul"))
             + list(root.findall("expc"))
         ):
-            r = {
+            r: Dict[str, Any] = {
                 "type": target,
-                "total_count": int(total),
+                "total_count": int(total or 0),
             }
 
             if target == "ordin":
                 r["id"] = item.findtext("자치법규일련번호", item.findtext("법령일련번호", ""))
                 r["name"] = item.findtext("자치법규명", item.findtext("법령명한글", ""))
-                r["category"] = item.findtext(
-                    "자치법규종류",
-                    item.findtext("자치법규구분", item.findtext("법령구분명", "")),
-                )
+                r["category"] = item.findtext("자치법규종류", item.findtext("자치법규구분", item.findtext("법령구분명", "")))
                 r["region"] = item.findtext("지자체기관명", item.findtext("자치단체명", ""))
                 r["enforcement_date"] = item.findtext("시행일자", "")
 
@@ -1435,9 +939,118 @@ def _parse_search_xml(xml_text: str, target: str) -> list:
                 results.append(r)
 
     except ET.ParseError as e:
-        print(f"[law-chatbot] XML 파싱 오류: {e}")
+        print(f"[law-chatbot] XML 검색결과 파싱 오류: {e}")
 
     return results
+
+
+# =========================================================
+# 벡터스토어 fallback
+# =========================================================
+
+def _search_vectorstore(query: str, top_k: int = 7) -> List[Dict[str, Any]]:
+    _load_vectorstore()
+    _load_embedding_model()
+
+    if _faiss_index is None or _faiss_data is None or _embedding_model is None:
+        return []
+
+    output = _embedding_model.encode(
+        [query],
+        batch_size=1,
+        max_length=512,
+        return_dense=True,
+        return_sparse=False,
+        return_colbert_vecs=False,
+    )
+
+    query_vec = np.array(output["dense_vecs"]).astype("float32")
+    norms = np.linalg.norm(query_vec, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    query_vec = query_vec / norms
+
+    dense_k = top_k * 3
+    scores, indices = _faiss_index.search(query_vec, dense_k)
+
+    dense_results: Dict[int, Dict[str, Any]] = {}
+
+    for rank, (score, idx) in enumerate(zip(scores[0], indices[0])):
+        if idx < 0 or idx >= len(_faiss_data["texts"]):
+            continue
+        if score < VECTOR_SCORE_MIN:
+            continue
+
+        dense_results[int(idx)] = {
+            "rank": rank,
+            "score": float(score),
+        }
+
+    bm25_results: Dict[int, Dict[str, Any]] = {}
+
+    if _bm25_index is not None:
+        query_tokens = _tokenize_korean(query)
+
+        if query_tokens:
+            bm25_scores = _bm25_index.get_scores(query_tokens)
+            bm25_top_indices = np.argsort(bm25_scores)[::-1][:dense_k]
+
+            for rank, idx in enumerate(bm25_top_indices):
+                if bm25_scores[idx] > 0:
+                    bm25_results[int(idx)] = {
+                        "rank": rank,
+                        "score": float(bm25_scores[idx]),
+                    }
+
+    k = 60
+    rrf_scores: Dict[int, float] = {}
+    all_indices = set(dense_results.keys()) | set(bm25_results.keys())
+
+    for idx in all_indices:
+        rrf = 0.0
+
+        if idx in dense_results:
+            rrf += 1.0 / (k + dense_results[idx]["rank"] + 1)
+
+        if idx in bm25_results:
+            rrf += 1.0 / (k + bm25_results[idx]["rank"] + 1)
+
+        rrf_scores[idx] = rrf
+
+    sorted_indices = sorted(rrf_scores.items(), key=lambda x: -x[1])
+
+    results: List[Dict[str, Any]] = []
+
+    for idx, rrf_score in sorted_indices[:top_k]:
+        display_score = dense_results[idx]["score"] if idx in dense_results else rrf_score
+
+        results.append({
+            "content": _faiss_data["texts"][idx],
+            "metadata": _faiss_data["metadatas"][idx],
+            "score": float(display_score),
+            "rrf_score": float(rrf_score),
+            "sources": {
+                "dense": idx in dense_results,
+                "bm25": idx in bm25_results,
+            },
+        })
+
+    return _apply_dynamic_threshold(results)
+
+
+def _tokenize_korean(text: str) -> List[str]:
+    text = re.sub(r"[^\w가-힣]", " ", text)
+    tokens = text.split()
+    return [t.lower() for t in tokens if len(t) > 1]
+
+
+def _apply_dynamic_threshold(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not results:
+        return results
+
+    max_score = results[0]["score"]
+    threshold = max_score * VECTOR_SCORE_RELATIVE
+
+    return [r for r in results if r["score"] >= threshold][:5]
 
 
 # =========================================================
@@ -1447,69 +1060,82 @@ def _parse_search_xml(xml_text: str, target: str) -> list:
 async def _generate_answer(
     client,
     question: str,
-    vector_results: list,
-    api_results: list,
-    detail_texts: list,
-    chat_history: list = None,
-) -> dict:
-    context_parts = []
+    search_plan: Dict[str, Any],
+    search_results: Dict[str, Any],
+    chat_history: Optional[List[dict]] = None,
+) -> Dict[str, Any]:
+    selected_articles = search_results.get("selected_articles", []) or []
+    vector_results = search_results.get("vector_results", []) or []
+    candidates = search_results.get("candidates", []) or []
 
-    if vector_results:
-        context_parts.append("[충주시 자치법규 벡터스토어 검색 결과]")
+    context_parts: List[str] = []
 
+    context_parts.append("[질문]")
+    context_parts.append(question)
+
+    context_parts.append("\n[법률 쟁점 및 검색계획]")
+    context_parts.append(json.dumps(search_plan, ensure_ascii=False, indent=2))
+
+    if selected_articles:
+        context_parts.append("\n[검색된 참고자료 - 관련 조문]")
+        for i, article in enumerate(selected_articles, 1):
+            law_name = article.get("law_name", "")
+            number = article.get("number", "")
+            title = article.get("title", "")
+            content = article.get("content", "")
+            target = article.get("target", "")
+            source = article.get("source", "")
+
+            context_parts.append(
+                f"\n({i}) [{_target_label(target)}] {law_name} {number} {title}\n"
+                f"출처: {source}\n"
+                f"{content[:5000]}"
+            )
+
+    elif vector_results:
+        context_parts.append("\n[검색된 참고자료 - 자치법규 벡터스토어]")
         for i, r in enumerate(vector_results, 1):
             meta = r.get("metadata", {})
-            score = r.get("score", 0)
-
             context_parts.append(
-                f"({i}) {meta.get('law_name', '')} {meta.get('article', '')} "
-                f"(유사도: {score:.2f})\n{r.get('content', '')}\n"
+                f"\n({i}) {meta.get('law_name', '')} {meta.get('article', '')} "
+                f"(유사도: {r.get('score', 0):.2f})\n"
+                f"{r.get('content', '')[:4000]}"
             )
 
-    if api_results:
-        context_parts.append("[MCP/API 법령·자치법규 검색 결과]")
-
-        for i, r in enumerate(api_results[:10], 1):
-            ref_type = r.get("type", "")
-            label = {
-                "law": "국가법령",
-                "ordin": "자치법규",
-                "admrul": "행정규칙",
-            }.get(ref_type, "법령")
-
+    elif candidates:
+        context_parts.append("\n[검색된 참고자료 - 법령/자치법규 후보 목록]")
+        for i, c in enumerate(candidates[:10], 1):
             context_parts.append(
-                f"({i}) [{label}/{r.get('category', '')}] {r.get('name', '')} "
-                f"(시행: {r.get('enforcement_date', '')}, 출처: {r.get('source', '')})"
+                f"({i}) [{_target_label(c.get('type', ''))}/{c.get('category', '')}] "
+                f"{c.get('name', '')} "
+                f"(시행: {c.get('enforcement_date', '')}, 출처: {c.get('source', '')})"
             )
 
-    if detail_texts:
-        context_parts.append("\n[법령 본문 - 관련 조문]")
-        for dt in detail_texts:
-            context_parts.append(f"=== {dt['name']} ===\n{dt['content']}\n")
+    else:
+        context_parts.append("\n[검색된 참고자료]")
+        context_parts.append("(검색 결과 없음)")
 
-    context = "\n".join(context_parts) if context_parts else "(검색 결과 없음)"
-
-    MAX_CONTEXT_CHARS = 60000
+    context = "\n".join(context_parts)
 
     if len(context) > MAX_CONTEXT_CHARS:
         print(f"[law-chatbot] ⚠️ 컨텍스트 초과: {len(context)}자 → {MAX_CONTEXT_CHARS}자로 절삭")
         context = context[:MAX_CONTEXT_CHARS] + "\n\n... (이하 생략)"
 
-    _template = prompt_service.get(
+    template = prompt_service.get(
         "law_chatbot",
         "answer_system_prompt",
         default=_DEFAULT_ANSWER_SYSTEM,
     )
 
-    system_prompt = _template.format(context=context)
+    system_prompt = template.format(context=context)
 
     print(f"[law-chatbot] GPT 컨텍스트: {len(context)}자")
 
     messages = [{"role": "system", "content": system_prompt}]
 
     if chat_history:
-        for msg in chat_history[-10:]:
-            role = msg.get("role", "user")
+        for msg in chat_history[-8:]:
+            role = msg.get("role", "")
             content = msg.get("content", "")
 
             if role in ("user", "assistant") and content:
@@ -1536,72 +1162,158 @@ async def _generate_answer(
         print(f"[law-chatbot] GPT 답변 생성 실패: {e}")
         answer_text = "죄송합니다. 답변 생성 중 오류가 발생했습니다."
 
-    references = []
+    references = _build_references(
+        selected_articles=selected_articles,
+        vector_results=vector_results,
+        candidates=candidates,
+    )
 
-    for r in api_results[:5]:
-        ref_type = r.get("type", "")
+    return {
+        "answer": answer_text,
+        "references": references,
+        "search_info": {
+            "planner_source": search_plan.get("source", ""),
+            "candidate_count": len(candidates),
+            "article_count": len(selected_articles),
+            "vector_count": len(vector_results),
+            "api_count": len(candidates),
+            "detail_count": search_results.get("detail_count", 0),
+        },
+    }
+
+
+def _build_references(
+    selected_articles: List[Dict[str, Any]],
+    vector_results: List[Dict[str, Any]],
+    candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+
+    for article in selected_articles:
+        name = article.get("law_name", "")
+        target = article.get("target", "")
+
+        if not name:
+            continue
 
         ref = {
-            "name": r.get("name", ""),
-            "type": {
-                "law": r.get("category", "") or "국가법령",
-                "ordin": "자치법규",
-                "admrul": "행정규칙",
-            }.get(ref_type, r.get("category", "") or "법령"),
-            "enforcement_date": r.get("enforcement_date", ""),
-            "source": r.get("source", ""),
+            "name": name,
+            "type": _target_label(target),
+            "article": f"{article.get('number', '')} {article.get('title', '')}".strip(),
+            "enforcement_date": article.get("enforcement_date", ""),
+            "source": article.get("source", ""),
         }
 
-        if ref_type == "ordin":
-            ref["url"] = f"https://www.law.go.kr/자치법규/{r.get('name', '')}"
-        elif ref_type == "admrul":
-            ref["url"] = f"https://www.law.go.kr/행정규칙/{r.get('name', '')}"
-        else:
-            ref["url"] = f"https://www.law.go.kr/법령/{r.get('name', '')}"
+        ref["url"] = _make_law_url(name, target)
 
-        references.append(ref)
+        refs.append(ref)
 
     for r in vector_results[:3]:
         meta = r.get("metadata", {})
+        name = meta.get("law_name", "")
 
-        references.append({
-            "name": meta.get("law_name", ""),
+        if not name:
+            continue
+
+        refs.append({
+            "name": name,
             "type": "충주시 자치법규",
             "article": meta.get("article", ""),
             "source": "vectorstore",
         })
 
+    if not refs:
+        for c in candidates[:5]:
+            name = c.get("name", "")
+            target = c.get("type", "")
+
+            if not name:
+                continue
+
+            refs.append({
+                "name": name,
+                "type": _target_label(target),
+                "enforcement_date": c.get("enforcement_date", ""),
+                "source": c.get("source", ""),
+                "url": _make_law_url(name, target),
+            })
+
     seen = set()
     unique_refs = []
 
-    for ref in references:
-        key = f"{ref.get('name', '')}::{ref.get('type', '')}"
+    for ref in refs:
+        key = f"{ref.get('name', '')}::{ref.get('article', '')}::{ref.get('type', '')}"
 
-        if key and key not in seen:
+        if key not in seen:
             seen.add(key)
             unique_refs.append(ref)
 
-    return {
-        "answer": answer_text,
-        "references": unique_refs,
-        "search_info": {
-            "vector_count": len(vector_results),
-            "api_count": len(api_results),
-            "detail_count": len(detail_texts),
-        },
-    }
+    return unique_refs[:8]
 
 
 # =========================================================
 # 유틸
 # =========================================================
 
-def _deduplicate_api_results(results: list) -> list:
+def _target_label(target: str) -> str:
+    return {
+        "law": "국가법령",
+        "ordin": "자치법규",
+        "admrul": "행정규칙",
+    }.get(target, "법령")
+
+
+def _make_law_url(name: str, target: str) -> str:
+    if not name:
+        return ""
+
+    if target == "ordin":
+        return f"https://www.law.go.kr/자치법규/{name}"
+    if target == "admrul":
+        return f"https://www.law.go.kr/행정규칙/{name}"
+    return f"https://www.law.go.kr/법령/{name}"
+
+
+def _pick_first(item: Dict[str, Any], keys: List[str], default: str = "") -> str:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return default
+
+
+def _extract_query_terms(text: str) -> List[str]:
+    if not text:
+        return []
+
+    stopwords = {
+        "알려줘", "알려주세요", "어떻게", "무엇", "뭐야", "대해",
+        "따르면", "가능해", "가능한가", "몇번까지", "몇", "번",
+        "기준", "구성", "경우", "관련", "내용", "있는지",
+        "은", "는", "이", "가", "을", "를", "에", "의", "로", "으로",
+        "그리고", "또는", "혹은", "무슨",
+    }
+
+    cleaned = re.sub(r"[^\w가-힣]", " ", text)
+    words = [w.strip() for w in cleaned.split() if len(w.strip()) >= 2]
+
+    return [w for w in words if w not in stopwords]
+
+
+def _looks_like_local_question(question: str) -> bool:
+    return any(x in question for x in ["충주시", "충주", "조례", "자치법규", "시행규칙"])
+
+
+def _deduplicate_candidates(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     unique = []
 
     for r in results:
-        key = r.get("id", "") or f"{r.get('type', '')}::{r.get('name', '')}"
+        name = r.get("name", "")
+        target = r.get("type", "")
+        item_id = r.get("id", "")
+
+        key = item_id or f"{target}::{name}"
 
         if key and key not in seen:
             seen.add(key)
@@ -1610,7 +1322,72 @@ def _deduplicate_api_results(results: list) -> list:
     return unique
 
 
-async def _check_api_connection() -> dict:
+def _rank_candidates(question: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not results:
+        return results
+
+    terms = _extract_query_terms(question)
+
+    def score_item(item: Dict[str, Any]) -> int:
+        name = item.get("name", "") or ""
+        category = item.get("category", "") or ""
+        region = item.get("region", "") or ""
+        target = item.get("type", "") or ""
+        source = item.get("source", "") or ""
+
+        haystack = f"{name} {category} {region} {target} {source}"
+
+        score = 0
+
+        for term in terms:
+            if term in name:
+                score += 8
+            elif term in haystack:
+                score += 3
+
+        if "충주" in question and ("충주" in name or "충주" in region):
+            score += 15
+
+        if "조례" in question and "조례" in name:
+            score += 10
+
+        if "위원회" in question and "위원회" in name:
+            score += 10
+
+        if "소프트웨어" in question and "소프트웨어" in name:
+            score += 10
+
+        if "개인정보" in question and "개인정보" in name:
+            score += 10
+
+        if ("충주" in question or "조례" in question) and target == "ordin":
+            score += 8
+
+        return score
+
+    return sorted(results, key=score_item, reverse=True)
+
+
+def _deduplicate_articles(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set()
+    unique = []
+
+    for a in articles:
+        key = (
+            a.get("law_name", ""),
+            a.get("number", ""),
+            a.get("title", ""),
+            a.get("content", "")[:80],
+        )
+
+        if key not in seen:
+            seen.add(key)
+            unique.append(a)
+
+    return unique
+
+
+async def _check_api_connection() -> Dict[str, Any]:
     result = {
         "mcp": {
             "enabled": False,
@@ -1653,7 +1430,7 @@ async def _check_api_connection() -> dict:
                     },
                 )
 
-                text = resp.content.decode("utf-8")
+                text = resp.content.decode("utf-8", errors="ignore")
                 is_xml = not text.strip().startswith("<!DOCTYPE")
 
                 result["law_api"] = {

@@ -1,732 +1,528 @@
 """
-korean-law-mcp CLI 연동 서비스
+Korean Law MCP CLI 연동 서비스
 
-목표:
-- Python mcp 패키지 없이 동작
-- Dockerfile에서 npm install -g korean-law-mcp 설치된 CLI를 subprocess로 호출
-- 국가법령 / 자치법규 / 행정규칙 검색 지원
-- 실패 시 law_chatbot.py의 기존 law.go.kr 직접 API fallback이 작동하도록 [] 또는 "" 반환
+역할:
+- korean-law CLI를 통해 국가법령/자치법규/행정규칙 검색
+- 검색 결과를 law_chatbot.py에서 쓰기 쉬운 공통 dict 형식으로 정규화
+- CLI 실패 시 빈 배열 반환하여 기존 law.go.kr API fallback 가능하게 함
 
 전제:
-- Dockerfile에 npm install -g korean-law-mcp 추가
-- LAW_API_OC 환경변수는 기존 그대로 사용
-- korean-law-mcp 패키지가 제공하는 CLI 명령어는 korean-law 기준으로 호출
+- Dockerfile에서 npm install -g korean-law-mcp 설치
+- CLI 명령어는 기본값 korean-law
 """
 
 import asyncio
 import json
-import logging
-import os
-import re
+import shlex
 from typing import Any, Dict, List, Optional
 
 from config import settings
 
-logger = logging.getLogger(__name__)
-
 
 class KoreanLawMCPService:
-    """korean-law-mcp CLI 래퍼 서비스"""
-
     def __init__(self):
-        self.enabled = str(getattr(settings, "KOREAN_LAW_MCP_ENABLED", "true")).lower() == "true"
-        self.timeout = int(getattr(settings, "KOREAN_LAW_MCP_TIMEOUT", 25))
+        self.enabled = bool(getattr(settings, "KOREAN_LAW_MCP_ENABLED", True))
+        self.command = getattr(settings, "KOREAN_LAW_MCP_COMMAND", "korean-law") or "korean-law"
+        self.timeout = int(getattr(settings, "KOREAN_LAW_MCP_TIMEOUT", 15) or 15)
 
-        # npm install -g korean-law-mcp 시 생성되는 CLI
-        self.cli_command = getattr(settings, "KOREAN_LAW_MCP_CLI_COMMAND", "korean-law")
+    # =====================================================
+    # 공통 CLI 실행
+    # =====================================================
 
-        # 국가법령
-        self.search_tool = getattr(settings, "KOREAN_LAW_MCP_SEARCH_TOOL", "search_law")
-        self.text_tool = getattr(settings, "KOREAN_LAW_MCP_TEXT_TOOL", "get_law_text")
-
-        # 통합검색
-        self.all_search_tool = getattr(settings, "KOREAN_LAW_MCP_ALL_SEARCH_TOOL", "search_all")
-
-        # 자치법규
-        self.ordinance_search_tool = getattr(
-            settings,
-            "KOREAN_LAW_MCP_ORDINANCE_SEARCH_TOOL",
-            "search_ordinance",
-        )
-        self.ordinance_text_tool = getattr(
-            settings,
-            "KOREAN_LAW_MCP_ORDINANCE_TEXT_TOOL",
-            "get_ordinance",
-        )
-
-        # 행정규칙: 훈령·예규·고시·공고
-        self.admin_rule_search_tool = getattr(
-            settings,
-            "KOREAN_LAW_MCP_ADMIN_RULE_SEARCH_TOOL",
-            "search_admin_rule",
-        )
-        self.admin_rule_text_tool = getattr(
-            settings,
-            "KOREAN_LAW_MCP_ADMIN_RULE_TEXT_TOOL",
-            "get_admin_rule",
-        )
-
-    def _law_oc(self) -> str:
-        """
-        korean-law-mcp는 LAW_OC 환경변수를 사용.
-        기존 프로젝트는 LAW_API_OC를 사용하므로 같은 값을 LAW_OC로 넘김.
-        """
-        return getattr(settings, "LAW_API_OC", "") or os.getenv("LAW_OC", "")
-
-    async def _run_cli(self, args: List[str]) -> Optional[str]:
+    async def _run_cli(self, args: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
         """
         korean-law CLI 실행.
-        실패하면 None 반환하여 기존 law.go.kr API fallback이 작동하도록 함.
+        self.command가 "node /path/index.js"처럼 공백 포함 명령일 수도 있어 shlex.split 처리.
         """
         if not self.enabled:
-            logger.info("[korean-law-mcp] disabled")
-            return None
+            return {"ok": False, "stdout": "", "stderr": "MCP disabled", "returncode": -1}
 
-        law_oc = self._law_oc()
-        if not law_oc:
-            logger.warning("[korean-law-mcp] LAW_API_OC/LAW_OC 미설정")
-            return None
+        timeout = timeout or self.timeout
 
-        env = os.environ.copy()
-        env["LAW_OC"] = law_oc
-
-        cmd = [self.cli_command] + args
+        base_cmd = shlex.split(self.command)
+        cmd = base_cmd + args
 
         try:
-            logger.info(f"[korean-law-mcp] CLI 호출: {' '.join(cmd)}")
-
-            proc = await asyncio.create_subprocess_exec(
+            process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env,
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout)
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout,
+                )
             except asyncio.TimeoutError:
-                proc.kill()
-                await proc.communicate()
-                logger.warning(f"[korean-law-mcp] CLI timeout: {' '.join(cmd)}")
-                return None
+                process.kill()
+                await process.communicate()
+                print(f"[korean-law-mcp] CLI timeout: {' '.join(cmd)}")
+                return {
+                    "ok": False,
+                    "stdout": "",
+                    "stderr": "timeout",
+                    "returncode": -999,
+                    "cmd": " ".join(cmd),
+                }
 
             out = stdout.decode("utf-8", errors="ignore").strip()
             err = stderr.decode("utf-8", errors="ignore").strip()
 
-            if proc.returncode != 0:
-                logger.warning(
-                    f"[korean-law-mcp] CLI 실패 rc={proc.returncode} | "
-                    f"cmd={' '.join(cmd)} | stderr={err[:500]}"
+            if process.returncode != 0:
+                print(
+                    f"[korean-law-mcp] CLI 실패 rc={process.returncode} | "
+                    f"cmd={' '.join(cmd)} | stderr={err}"
                 )
-                return None
+                return {
+                    "ok": False,
+                    "stdout": out,
+                    "stderr": err,
+                    "returncode": process.returncode,
+                    "cmd": " ".join(cmd),
+                }
 
-            if not out:
-                logger.warning(f"[korean-law-mcp] CLI stdout 비어있음 | stderr={err[:500]}")
-                return None
-
-            return out
+            return {
+                "ok": True,
+                "stdout": out,
+                "stderr": err,
+                "returncode": process.returncode,
+                "cmd": " ".join(cmd),
+            }
 
         except FileNotFoundError:
-            logger.warning(
-                f"[korean-law-mcp] CLI 명령어를 찾을 수 없음: {self.cli_command}. "
-                f"Dockerfile에 npm install -g korean-law-mcp 설치 필요"
+            print(
+                f"[korean-law-mcp] CLI 명령어를 찾을 수 없음: {self.command}. "
+                "Dockerfile에 npm install -g korean-law-mcp 설치 필요"
             )
-            return None
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "command not found",
+                "returncode": -404,
+                "cmd": " ".join(cmd),
+            }
+
         except Exception as e:
-            logger.warning(f"[korean-law-mcp] CLI 실행 예외: {e}")
+            print(f"[korean-law-mcp] CLI 실행 예외: {e}")
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": str(e),
+                "returncode": -1,
+                "cmd": " ".join(cmd),
+            }
+
+    def _parse_stdout_json(self, stdout: str) -> Any:
+        if not stdout:
             return None
 
-    def _try_parse_json(self, text: str) -> Any:
-        """
-        CLI 출력에서 JSON 추출 시도.
-        """
-        if not text:
-            return None
-
-        cleaned = text.strip()
-        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+        text = stdout.strip()
 
         try:
-            return json.loads(cleaned)
+            return json.loads(text)
         except Exception:
             pass
 
-        array_match = re.search(r"(\[[\s\S]*\])", cleaned)
-        if array_match:
+        # stdout 안에 JSON이 섞여 나오는 경우 대비
+        start_obj = text.find("{")
+        end_obj = text.rfind("}")
+        start_arr = text.find("[")
+        end_arr = text.rfind("]")
+
+        candidates = []
+
+        if start_obj >= 0 and end_obj > start_obj:
+            candidates.append(text[start_obj:end_obj + 1])
+
+        if start_arr >= 0 and end_arr > start_arr:
+            candidates.append(text[start_arr:end_arr + 1])
+
+        for c in candidates:
             try:
-                return json.loads(array_match.group(1))
+                return json.loads(c)
             except Exception:
-                pass
+                continue
 
-        obj_match = re.search(r"(\{[\s\S]*\})", cleaned)
-        if obj_match:
-            try:
-                return json.loads(obj_match.group(1))
-            except Exception:
-                pass
+        return None
 
-        return cleaned
-
-    def _extract_items(self, raw: Any) -> List[Dict[str, Any]]:
+    def _unwrap_items(self, data: Any) -> List[Dict[str, Any]]:
         """
-        CLI/MCP 검색 결과 구조가 버전에 따라 다를 수 있으므로 방어적으로 list[dict] 추출.
+        MCP/CLI 응답 형태가 다양할 수 있어 최대한 유연하게 list[dict]로 변환
         """
-        if raw is None:
+        if data is None:
             return []
 
-        if isinstance(raw, list):
-            return [x for x in raw if isinstance(x, dict)]
+        if isinstance(data, list):
+            return [x for x in data if isinstance(x, dict)]
 
-        if isinstance(raw, dict):
+        if isinstance(data, dict):
             for key in [
-                "results",
                 "items",
+                "results",
                 "laws",
                 "ordinances",
-                "adminRules",
                 "admin_rules",
                 "data",
+                "list",
                 "documents",
-                "law",
-                "result",
             ]:
-                value = raw.get(key)
+                value = data.get(key)
                 if isinstance(value, list):
                     return [x for x in value if isinstance(x, dict)]
 
-            if any(
-                k in raw
-                for k in [
-                    "lawName",
-                    "ordinanceName",
-                    "adminRuleName",
-                    "법령명",
-                    "자치법규명",
-                    "행정규칙명",
-                    "name",
-                    "title",
-                    "mst",
-                    "MST",
-                    "ordinSeq",
-                    "법령일련번호",
-                    "자치법규일련번호",
-                ]
-            ):
-                return [raw]
+            # 단일 객체가 결과처럼 보이면 1개짜리 list로 반환
+            if any(k in data for k in ["name", "law_name", "법령명한글", "자치법규명", "행정규칙명"]):
+                return [data]
 
         return []
 
-    def _pick(self, data: Dict[str, Any], *keys: str, default: str = "") -> str:
-        """여러 후보 키 중 첫 번째 유효값 반환"""
+    def _pick_first(self, item: Dict[str, Any], keys: List[str], default: str = "") -> str:
         for key in keys:
-            value = data.get(key)
+            value = item.get(key)
             if value is not None and str(value).strip():
                 return str(value).strip()
         return default
 
-    def _normalize_search_item(self, item: Dict[str, Any], target: str = "law") -> Optional[Dict[str, Any]]:
-        """
-        korean-law 검색 결과를 기존 law_chatbot.py의 api_results 형식으로 맞춤.
-        """
-        mst = self._pick(
-            item,
-            "mst",
-            "MST",
-            "id",
-            "lawId",
-            "law_id",
-            "ordinSeq",
-            "ordin_seq",
-            "adminRuleId",
-            "admin_rule_id",
-            "법령일련번호",
-            "법령ID",
-            "자치법규일련번호",
-            "행정규칙일련번호",
-        )
+    def _normalize_search_items(self, raw_items: List[Dict[str, Any]], target: str) -> List[Dict[str, Any]]:
+        normalized = []
 
-        name = self._pick(
-            item,
-            "lawName",
-            "law_name",
-            "ordinanceName",
-            "ordinance_name",
-            "adminRuleName",
-            "admin_rule_name",
-            "name",
-            "title",
-            "법령명",
-            "법령명한글",
-            "자치법규명",
-            "행정규칙명",
-        )
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
 
-        if not name:
-            return None
+            if target == "ordin":
+                name = self._pick_first(item, [
+                    "name",
+                    "ordinance_name",
+                    "자치법규명",
+                    "law_name",
+                    "법령명한글",
+                    "title",
+                ])
+                item_id = self._pick_first(item, [
+                    "id",
+                    "ordin_seq",
+                    "ordinance_id",
+                    "자치법규일련번호",
+                    "MST",
+                    "mst",
+                    "law_id",
+                ])
+                category = self._pick_first(item, [
+                    "category",
+                    "자치법규종류",
+                    "자치법규구분",
+                    "법령구분명",
+                ], "자치법규")
+                region = self._pick_first(item, [
+                    "region",
+                    "지자체기관명",
+                    "자치단체명",
+                ], "충주시")
 
-        return {
-            "id": mst,
-            "name": name,
-            "type": target,
-            "category": self._pick(
-                item,
-                "lawType",
-                "law_type",
-                "category",
-                "type",
-                "법령구분명",
-                "자치법규종류",
-                "행정규칙종류",
-            ),
-            "ministry": self._pick(item, "ministry", "소관부처명"),
-            "region": self._pick(item, "region", "localGov", "지자체기관명", "자치단체명"),
-            "enforcement_date": self._pick(
-                item,
-                "enforcementDate",
+            elif target == "admrul":
+                name = self._pick_first(item, [
+                    "name",
+                    "admin_rule_name",
+                    "행정규칙명",
+                    "law_name",
+                    "법령명한글",
+                    "title",
+                ])
+                item_id = self._pick_first(item, [
+                    "id",
+                    "admin_rule_id",
+                    "행정규칙일련번호",
+                    "MST",
+                    "mst",
+                    "law_id",
+                ])
+                category = self._pick_first(item, [
+                    "category",
+                    "행정규칙종류",
+                    "법령구분명",
+                ], "행정규칙")
+                region = ""
+
+            else:
+                name = self._pick_first(item, [
+                    "name",
+                    "law_name",
+                    "법령명한글",
+                    "title",
+                ])
+                item_id = self._pick_first(item, [
+                    "id",
+                    "mst",
+                    "MST",
+                    "law_id",
+                    "법령일련번호",
+                ])
+                category = self._pick_first(item, [
+                    "category",
+                    "법령구분명",
+                    "type_name",
+                ], "법령")
+                region = ""
+
+            if not name:
+                continue
+
+            enforcement_date = self._pick_first(item, [
                 "enforcement_date",
-                "effectiveDate",
                 "시행일자",
-            ),
-            "status": self._pick(item, "status", "현행연혁코드"),
-            "source": "korean-law-mcp-cli",
-            "raw": item,
-        }
+                "effective_date",
+            ])
 
-    def _text_to_fallback_items(self, text: str, target: str = "law") -> List[Dict[str, Any]]:
-        """
-        CLI가 JSON이 아니라 표/텍스트로 출력하는 경우 최소한의 검색 결과로 변환.
-        """
-        if not text:
+            content = self._pick_first(item, [
+                "content",
+                "article_content",
+                "text",
+                "본문",
+                "조문내용",
+            ])
+
+            normalized.append({
+                "id": item_id,
+                "name": name,
+                "type": target,
+                "category": category,
+                "region": region,
+                "enforcement_date": enforcement_date,
+                "source": "korean-law-mcp",
+                "raw": item,
+                "content": content,
+            })
+
+        return normalized
+
+    async def _search(self, tool_name: str, query: str, target: str, display: int = 10) -> List[Dict[str, Any]]:
+        args = [
+            tool_name,
+            "--query",
+            query,
+        ]
+
+        if display:
+            args.extend(["--display", str(display)])
+
+        result = await self._run_cli(args)
+
+        if not result.get("ok"):
             return []
 
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        items: List[Dict[str, Any]] = []
+        data = self._parse_stdout_json(result.get("stdout", ""))
+        raw_items = self._unwrap_items(data)
 
-        for line in lines:
-            if len(items) >= 10:
-                break
+        return self._normalize_search_items(raw_items, target=target)
 
-            if line.startswith("[") or line.startswith("{"):
-                continue
-            if "검색" in line and "결과" in line:
-                continue
-
-            name = line
-            name = re.sub(r"^\d+[\.\)]\s*", "", name).strip()
-            name = re.sub(r"\s{2,}.*$", "", name).strip()
-
-            if 2 <= len(name) <= 100:
-                items.append({
-                    "id": "",
-                    "name": name,
-                    "type": target,
-                    "category": "",
-                    "ministry": "",
-                    "region": "",
-                    "enforcement_date": "",
-                    "status": "",
-                    "source": "korean-law-mcp-cli-text",
-                    "raw": {"line": line},
-                })
-
-        return items
+    # =====================================================
+    # 검색 함수
+    # =====================================================
 
     async def search_law(self, query: str, target: str = "law", display: int = 10) -> List[Dict[str, Any]]:
         """
-        국가법령 검색.
-        공식 MCP 도구명: search_law
+        국가법령 검색
         """
-        if target == "ordin":
-            return []
-
-        if not query or not query.strip():
-            return []
-
-        text = await self._run_cli([
-            self.search_tool,
-            "--query",
-            query.strip(),
-        ])
-
-        if not text:
-            return []
-
-        raw = self._try_parse_json(text)
-        items = self._extract_items(raw)
-
-        normalized: List[Dict[str, Any]] = []
-
-        if items:
-            for item in items[:display]:
-                row = self._normalize_search_item(item, target="law")
-                if row:
-                    row["source"] = "korean-law-mcp-law"
-                    normalized.append(row)
-        else:
-            normalized = self._text_to_fallback_items(text, target="law")[:display]
-            for row in normalized:
-                row["source"] = "korean-law-mcp-law-text"
-
-        return normalized
+        return await self._search(
+            tool_name="search_law",
+            query=query,
+            target="law",
+            display=display,
+        )
 
     async def search_ordinance(self, query: str, display: int = 10) -> List[Dict[str, Any]]:
         """
         자치법규 검색.
-        공식 MCP 도구명: search_ordinance
+        korean-law-mcp는 자치법규 검색 시 지자체명이 들어가야 결과가 잘 나오는 경우가 있어
+        충주시가 없으면 자동으로 붙임.
         """
-        if not query or not query.strip():
-            return []
-
         q = query.strip()
 
-        # 충주시 플랫폼이므로 자치법규 질문은 충주시를 보강
-        if "충주" not in q:
+        if "충주시" not in q and "충주" not in q:
             q = f"충주시 {q}"
 
-        text = await self._run_cli([
-            self.ordinance_search_tool,
-            "--query",
-            q,
-        ])
-
-        if not text:
-            return []
-
-        raw = self._try_parse_json(text)
-        items = self._extract_items(raw)
-
-        normalized: List[Dict[str, Any]] = []
-
-        if items:
-            for item in items[:display]:
-                row = self._normalize_search_item(item, target="ordin")
-                if row:
-                    row["source"] = "korean-law-mcp-ordinance"
-                    normalized.append(row)
-        else:
-            normalized = self._text_to_fallback_items(text, target="ordin")[:display]
-            for row in normalized:
-                row["source"] = "korean-law-mcp-ordinance-text"
-
-        return normalized
+        return await self._search(
+            tool_name="search_ordinance",
+            query=q,
+            target="ordin",
+            display=display,
+        )
 
     async def search_admin_rule(self, query: str, display: int = 10) -> List[Dict[str, Any]]:
         """
-        행정규칙 검색: 훈령·예규·고시·공고
-        공식 MCP 도구명: search_admin_rule
+        행정규칙·훈령·예규 검색
         """
-        if not query or not query.strip():
-            return []
+        return await self._search(
+            tool_name="search_admin_rule",
+            query=query,
+            target="admrul",
+            display=display,
+        )
 
-        text = await self._run_cli([
-            self.admin_rule_search_tool,
-            "--query",
-            query.strip(),
-        ])
+    # =====================================================
+    # 본문 조회 함수
+    # =====================================================
 
-        if not text:
-            return []
-
-        raw = self._try_parse_json(text)
-        items = self._extract_items(raw)
-
-        normalized: List[Dict[str, Any]] = []
-
-        if items:
-            for item in items[:display]:
-                row = self._normalize_search_item(item, target="admrul")
-                if row:
-                    row["source"] = "korean-law-mcp-admin-rule"
-                    normalized.append(row)
-        else:
-            normalized = self._text_to_fallback_items(text, target="admrul")[:display]
-            for row in normalized:
-                row["source"] = "korean-law-mcp-admin-rule-text"
-
-        return normalized
-
-    async def search_all(self, query: str, display: int = 10) -> List[Dict[str, Any]]:
+    async def _get_text_by_candidates(self, candidates: List[List[str]]) -> str:
         """
-        통합 검색.
-        공식 MCP 도구명: search_all
+        MCP CLI의 상세조회 명령명이 버전별로 다를 수 있어 후보를 순차 시도.
+        성공한 stdout을 그대로 반환.
         """
-        if not query or not query.strip():
-            return []
+        for args in candidates:
+            result = await self._run_cli(args, timeout=self.timeout)
 
-        text = await self._run_cli([
-            self.all_search_tool,
-            "--query",
-            query.strip(),
-        ])
+            if not result.get("ok"):
+                continue
 
-        if not text:
-            return []
+            stdout = result.get("stdout", "").strip()
 
-        raw = self._try_parse_json(text)
-        items = self._extract_items(raw)
+            if not stdout:
+                continue
 
-        normalized: List[Dict[str, Any]] = []
-        for item in items[:display]:
-            row = self._normalize_search_item(item, target="law")
-            if row:
-                row["source"] = "korean-law-mcp-all"
-                normalized.append(row)
+            data = self._parse_stdout_json(stdout)
 
-        return normalized
+            if isinstance(data, dict):
+                for key in [
+                    "text",
+                    "content",
+                    "law_text",
+                    "ordinance_text",
+                    "admin_rule_text",
+                    "article_content",
+                    "본문",
+                    "조문내용",
+                ]:
+                    value = data.get(key)
+                    if value and len(str(value).strip()) > 20:
+                        return str(value).strip()
 
-async def search_unified(self, query: str, display: int = 15) -> List[Dict[str, Any]]:
-    """
-    통합검색용 함수.
+                # dict 전체를 문자열로라도 제공
+                return json.dumps(data, ensure_ascii=False)
 
-    핵심 정책:
-    - 자치법규 의심 질문이면 search_ordinance만 호출하고 종료
-      ※ search_all/search_law로 넘어가지 않음
-    - 행정규칙 의심 질문이면 search_admin_rule만 우선 호출
-    - 일반 국가법령 질문만 search_all → search_law 순서로 검색
-    """
-    if not query or not query.strip():
-        return []
+            if isinstance(data, list):
+                return json.dumps(data, ensure_ascii=False)
 
-    q = query.strip()
+            if len(stdout) > 20:
+                return stdout
 
-    local_hint_words = [
-        "충주시", "충주", "조례", "규칙", "자치법규",
-        "지원금", "출산", "보조금", "위원회", "시행규칙",
-        "주차장", "주차요금", "감면", "수수료",
-    ]
-
-    admin_rule_hint_words = [
-        "훈령", "예규", "고시", "공고", "지침", "행정규칙",
-    ]
-
-    is_local_question = any(word in q for word in local_hint_words)
-    is_admin_rule_question = any(word in q for word in admin_rule_hint_words)
-
-    # 1. 자치법규 의심 질문은 자치법규 전용 검색만 수행
-    #    search_all/search_law로 넘어가면 불필요한 timeout이 발생하므로 여기서 종료
-    if is_local_question:
-        try:
-            results = await self.search_ordinance(query=q, display=display)
-            if results:
-                logger.info(
-                    f"[korean-law-mcp] 자치법규 검색 성공: query={q}, count={len(results)}"
-                )
-                return results[:display]
-
-            logger.info(
-                f"[korean-law-mcp] 자치법규 검색 결과 없음: query={q}"
-            )
-            return []
-
-        except Exception as e:
-            logger.warning(
-                f"[korean-law-mcp] 자치법규 검색 실패: query={q}, error={e}"
-            )
-            return []
-
-    # 2. 행정규칙 의심 질문은 행정규칙 전용 검색 우선
-    if is_admin_rule_question:
-        try:
-            results = await self.search_admin_rule(query=q, display=display)
-            if results:
-                logger.info(
-                    f"[korean-law-mcp] 행정규칙 검색 성공: query={q}, count={len(results)}"
-                )
-                return results[:display]
-
-            logger.info(
-                f"[korean-law-mcp] 행정규칙 검색 결과 없음: query={q}"
-            )
-            # 행정규칙 결과가 없으면 일반 법령으로도 이어서 검색 가능
-        except Exception as e:
-            logger.warning(
-                f"[korean-law-mcp] 행정규칙 검색 실패: query={q}, error={e}"
-            )
-
-    # 3. 일반 통합검색
-    try:
-        results = await self.search_all(query=q, display=display)
-        if results:
-            logger.info(
-                f"[korean-law-mcp] 통합검색 성공: query={q}, count={len(results)}"
-            )
-            return results[:display]
-    except Exception as e:
-        logger.warning(f"[korean-law-mcp] 통합검색 실패: query={q}, error={e}")
-
-    # 4. 국가법령 검색
-    try:
-        results = await self.search_law(query=q, target="law", display=display)
-        if results:
-            logger.info(
-                f"[korean-law-mcp] 법령검색 성공: query={q}, count={len(results)}"
-            )
-            return results[:display]
-    except Exception as e:
-        logger.warning(f"[korean-law-mcp] 법령검색 실패: query={q}, error={e}")
-
-    return []
+        return ""
 
     async def get_law_text(
         self,
         mst: str = "",
         law_name: str = "",
-        article: str = "",
         question: str = "",
     ) -> str:
         """
-        국가법령 본문/조문 조회.
-        공식 MCP 도구명: get_law_text
+        국가법령 전문 조회
         """
-        if not mst and not law_name:
-            return ""
-
-        args = [self.text_tool]
+        candidates: List[List[str]] = []
 
         if mst:
-            args.extend(["--mst", str(mst)])
-        elif law_name:
-            args.extend(["--law", law_name])
+            candidates.extend([
+                ["get_law_text", "--mst", mst],
+                ["get_law", "--mst", mst],
+                ["get_law_detail", "--mst", mst],
+            ])
 
-        if article:
-            args.extend(["--jo", article])
+        if law_name:
+            candidates.extend([
+                ["get_law_text", "--query", law_name],
+                ["get_law", "--query", law_name],
+                ["get_law_detail", "--query", law_name],
+                ["get_law_text", "--law", law_name],
+                ["get_law_detail", "--law", law_name],
+            ])
 
-        text = await self._run_cli(args)
-        return self._normalize_text_result(text)
+        return await self._get_text_by_candidates(candidates)
 
     async def get_ordinance_text(
         self,
         ordin_seq: str = "",
         ordinance_name: str = "",
-        article: str = "",
     ) -> str:
         """
-        자치법규 전문/조문 조회.
-        공식 MCP 도구명: get_ordinance
+        자치법규 전문 조회
         """
-        if not ordin_seq and not ordinance_name:
-            return ""
-
-        args = [self.ordinance_text_tool]
+        candidates: List[List[str]] = []
 
         if ordin_seq:
-            args.extend(["--ordinSeq", str(ordin_seq)])
-        elif ordinance_name:
-            args.extend(["--name", ordinance_name])
+            candidates.extend([
+                ["get_ordinance_text", "--id", ordin_seq],
+                ["get_ordinance", "--id", ordin_seq],
+                ["get_ordinance_detail", "--id", ordin_seq],
+                ["get_ordinance_text", "--ordin_seq", ordin_seq],
+                ["get_ordinance", "--ordin_seq", ordin_seq],
+            ])
 
-        if article:
-            args.extend(["--jo", article])
+        if ordinance_name:
+            name = ordinance_name
+            if "충주시" not in name and "충주" not in name:
+                name = f"충주시 {name}"
 
-        text = await self._run_cli(args)
-        return self._normalize_text_result(text)
+            candidates.extend([
+                ["get_ordinance_text", "--query", name],
+                ["get_ordinance", "--query", name],
+                ["get_ordinance_detail", "--query", name],
+                ["get_ordinance_text", "--name", name],
+                ["get_ordinance", "--name", name],
+            ])
+
+        return await self._get_text_by_candidates(candidates)
 
     async def get_admin_rule_text(
         self,
         admin_rule_id: str = "",
         admin_rule_name: str = "",
-        article: str = "",
     ) -> str:
         """
-        행정규칙 전문/조문 조회.
-        공식 MCP 도구명: get_admin_rule
+        행정규칙 전문 조회
         """
-        if not admin_rule_id and not admin_rule_name:
-            return ""
-
-        args = [self.admin_rule_text_tool]
+        candidates: List[List[str]] = []
 
         if admin_rule_id:
-            args.extend(["--id", str(admin_rule_id)])
-        elif admin_rule_name:
-            args.extend(["--name", admin_rule_name])
+            candidates.extend([
+                ["get_admin_rule_text", "--id", admin_rule_id],
+                ["get_admin_rule", "--id", admin_rule_id],
+                ["get_admin_rule_detail", "--id", admin_rule_id],
+            ])
 
-        if article:
-            args.extend(["--jo", article])
+        if admin_rule_name:
+            candidates.extend([
+                ["get_admin_rule_text", "--query", admin_rule_name],
+                ["get_admin_rule", "--query", admin_rule_name],
+                ["get_admin_rule_detail", "--query", admin_rule_name],
+                ["get_admin_rule_text", "--name", admin_rule_name],
+                ["get_admin_rule", "--name", admin_rule_name],
+            ])
 
-        text = await self._run_cli(args)
-        return self._normalize_text_result(text)
+        return await self._get_text_by_candidates(candidates)
 
-    def _normalize_text_result(self, text: Optional[str]) -> str:
-        """본문 조회 결과 정규화"""
-        if not text:
-            return ""
-
-        raw = self._try_parse_json(text)
-
-        if isinstance(raw, dict):
-            for key in [
-                "text",
-                "content",
-                "body",
-                "lawText",
-                "ordinanceText",
-                "adminRuleText",
-                "articleText",
-                "조문내용",
-                "본문",
-            ]:
-                value = raw.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()[:12000]
-
-            try:
-                return json.dumps(raw, ensure_ascii=False, indent=2)[:12000]
-            except Exception:
-                return str(raw)[:12000]
-
-        if isinstance(raw, list):
-            try:
-                return json.dumps(raw, ensure_ascii=False, indent=2)[:12000]
-            except Exception:
-                return str(raw)[:12000]
-
-        if isinstance(raw, str):
-            return raw[:12000]
-
-        return str(raw)[:12000]
+    # =====================================================
+    # 상태 확인
+    # =====================================================
 
     async def check_connection(self) -> Dict[str, Any]:
-        """
-        MCP CLI 연결 상태 확인.
-        실패해도 기존 law.go.kr API fallback이 있으므로 fatal 아님.
-        """
         if not self.enabled:
             return {
                 "enabled": False,
                 "connected": False,
-                "reason": "KOREAN_LAW_MCP_ENABLED=false",
+                "reason": "disabled",
                 "mode": "cli",
-                "command": self.cli_command,
-            }
-
-        if not self._law_oc():
-            return {
-                "enabled": True,
-                "connected": False,
-                "reason": "LAW_API_OC/LAW_OC 미설정",
-                "mode": "cli",
-                "command": self.cli_command,
+                "command": self.command,
             }
 
         try:
-            results = await self.search_law("헌법", display=1)
-
-            if results:
-                return {
-                    "enabled": True,
-                    "connected": True,
-                    "result_count": len(results),
-                    "mode": "cli",
-                    "command": self.cli_command,
-                }
+            items = await self.search_law("헌법", display=1)
 
             return {
                 "enabled": True,
-                "connected": False,
-                "reason": "CLI는 실행되었으나 search_law 검색 결과를 파싱하지 못함",
-                "result_count": 0,
+                "connected": len(items) > 0,
+                "result_count": len(items),
                 "mode": "cli",
-                "command": self.cli_command,
+                "command": self.command,
             }
 
         except Exception as e:
@@ -735,7 +531,7 @@ async def search_unified(self, query: str, display: int = 15) -> List[Dict[str, 
                 "connected": False,
                 "reason": str(e),
                 "mode": "cli",
-                "command": self.cli_command,
+                "command": self.command,
             }
 
 
