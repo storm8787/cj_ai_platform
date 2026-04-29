@@ -9,8 +9,10 @@
    - 자치법규
    - 행정규칙
 4. MCP 실패 시 기존 law.go.kr API fallback
-5. 자치법규 벡터스토어는 충주/조례/자치법규성 질문일 때만 보조검색
-6. 기존 응답 형식(answer, references, search_info)은 유지
+5. 자치법규 벡터스토어는 충주/조례/자치법규성 질문이면서,
+   MCP/API 자치법규 결과가 없을 때만 보조검색
+6. 본문 조회는 timeout을 적용하여 답변 생성을 막지 않도록 처리
+7. 기존 응답 형식(answer, references, search_info)은 유지
 """
 
 import os
@@ -211,6 +213,8 @@ async def ask_question(req: AskRequest):
     )
 
     detail_texts = []
+
+    # 본문 조회는 전체 답변을 막지 않도록 timeout 적용
     for r in api_results[:3]:
         mst = r.get("id", "")
         target = r.get("type", "law")
@@ -218,20 +222,39 @@ async def ask_question(req: AskRequest):
         if target not in ("law", "ordin", "admrul"):
             target = "law"
 
-        if mst:
-            relevant = await _fetch_relevant_articles(
-                mst=mst,
-                target=target,
-                question=req.question,
-                keywords=search_keywords,
-                name=r.get("name", ""),
-                source=r.get("source", ""),
+        if not mst:
+            continue
+
+        try:
+            relevant = await asyncio.wait_for(
+                _fetch_relevant_articles(
+                    mst=mst,
+                    target=target,
+                    question=req.question,
+                    keywords=search_keywords,
+                    name=r.get("name", ""),
+                    source=r.get("source", ""),
+                ),
+                timeout=10.0,
             )
+
             if relevant:
                 detail_texts.append({
                     "name": r.get("name", ""),
                     "content": relevant,
                 })
+
+        except asyncio.TimeoutError:
+            print(
+                f"[law-chatbot] ⚠️ 본문 조회 timeout, 검색결과만으로 답변 진행: "
+                f"name={r.get('name', '')}, target={target}"
+            )
+
+        except Exception as e:
+            print(
+                f"[law-chatbot] ⚠️ 본문 조회 실패, 검색결과만으로 답변 진행: "
+                f"name={r.get('name', '')}, target={target}, error={e}"
+            )
 
     print(
         f"[law-chatbot] 최종 결과: "
@@ -290,10 +313,6 @@ async def get_categories():
 async def _safe_search_task(label: str, coro, timeout: float = 8.0) -> dict:
     """
     병렬검색용 안전 실행 래퍼.
-
-    - 각 검색은 독립적으로 timeout 적용
-    - 하나가 실패해도 전체 검색은 계속 진행
-    - 결과 형식은 {"label": ..., "items": [...]} 로 통일
     """
     try:
         print(f"[law-chatbot] {label} 시작")
@@ -328,9 +347,10 @@ async def _agentic_search(
        - 국가법령
        - 자치법규
        - 행정규칙
-    3. MCP가 실패하면 즉시 기존 law.go.kr API fallback
-    4. 벡터스토어는 모든 질문에 돌리지 않고,
-       충주/조례/자치법규가 명시된 경우에만 보조검색
+    3. MCP가 실패하면 기존 law.go.kr API fallback
+    4. 자치법규 벡터스토어는 다음 경우에만 실행
+       - 충주/조례/자치법규성 질문이고
+       - MCP/API 자치법규 결과가 없을 때
     """
 
     all_api_results = []
@@ -359,7 +379,6 @@ async def _agentic_search(
     if not search_terms:
         search_terms = [_simple_keyword_extract(question)]
 
-    # MCP는 대표 검색어 1개만 사용
     primary_term = search_terms[0]
 
     print(f"[law-chatbot] 경량 통합검색 시작: primary={primary_term}, terms={search_terms}")
@@ -455,7 +474,7 @@ async def _agentic_search(
                 print(f"[law-chatbot] 기존 API fallback 성공: count={len(all_api_results)}")
                 break
 
-    # 4. 자치법규 벡터스토어 보조검색
+    # 4. 자치법규 벡터스토어 보조검색 여부 판단
     vector_hint_words = [
         "충주시",
         "충주",
@@ -464,10 +483,22 @@ async def _agentic_search(
         "시행규칙",
     ]
 
-    should_search_vector = any(word in question for word in vector_hint_words)
+    should_search_vector_by_question = any(word in question for word in vector_hint_words)
+
+    has_ordinance_result = any(
+        r.get("type") == "ordin" or "자치법규" in str(r.get("type", ""))
+        for r in all_api_results
+    )
+
+    # 핵심:
+    # MCP/API에서 자치법규 결과가 이미 있으면 벡터스토어를 돌리지 않음
+    should_search_vector = should_search_vector_by_question and not has_ordinance_result
 
     if should_search_vector:
-        print("[law-chatbot] 자치법규 벡터스토어 보조검색 시작")
+        print(
+            "[law-chatbot] 자치법규 벡터스토어 보조검색 시작 "
+            f"(reason=local_question_without_ordinance_result)"
+        )
 
         try:
             vector_results = await asyncio.wait_for(
@@ -484,8 +515,12 @@ async def _agentic_search(
         except Exception as e:
             print(f"[law-chatbot] 자치법규 벡터스토어 보조검색 실패: {e}")
             all_vector_results = []
+
     else:
-        print("[law-chatbot] 자치법규 벡터스토어 보조검색 생략")
+        if should_search_vector_by_question and has_ordinance_result:
+            print("[law-chatbot] 자치법규 MCP/API 결과 존재 → 벡터스토어 보조검색 생략")
+        else:
+            print("[law-chatbot] 자치법규 벡터스토어 보조검색 생략")
 
     all_api_results = _deduplicate_api_results(all_api_results)
 
@@ -617,7 +652,10 @@ def _search_vectorstore(query: str, top_k: int = 7) -> list:
         if score < VECTOR_SCORE_MIN:
             continue
 
-        dense_results[int(idx)] = {"rank": rank, "score": float(score)}
+        dense_results[int(idx)] = {
+            "rank": rank,
+            "score": float(score),
+        }
 
     bm25_results = {}
 
