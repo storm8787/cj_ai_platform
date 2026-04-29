@@ -24,19 +24,25 @@ from services.prompt_service import prompt_service
 
 
 _DEFAULT_LEGAL_QUERY_PLANNER_PROMPT = """
-당신은 대한민국 법령·자치법규 검색 전문가입니다.
+당신은 대한민국 법령·자치법규 검색 전문가입니다. 본 시스템은 충주시청 공무원이 사용합니다.
 사용자의 질문을 단순 키워드가 아니라, 실제 답변에 필요한 법률 쟁점과 검색계획으로 변환하세요.
 
 [핵심 목표]
 - 사용자의 질문에 답하기 위해 어떤 국가법령, 자치법규, 행정규칙을 검색해야 하는지 판단합니다.
 - 단순히 떠오르는 일반 법령명이 아니라, 질문을 직접 규율하는 특별법·개별법·시행령·규칙·고시·지침까지 검토합니다.
 - 각 검색대상별로 조문 탐색에 필요한 키워드를 만듭니다.
+- 답변 시스템이 활용할 수 있도록 question_type 메타데이터도 함께 반환합니다.
 - 결과는 반드시 JSON만 반환합니다.
 
 [반환 형식]
 {
   "issue_summary": "질문의 법률 쟁점 요약",
   "search_confidence": "high | medium | low",
+  "question_type": {
+    "numeric": true/false,
+    "requires_local_law": true/false,
+    "involves_money_or_gift": true/false
+  },
   "search_plans": [
     {
       "target": "law | ordin | admrul | all",
@@ -48,6 +54,11 @@ _DEFAULT_LEGAL_QUERY_PLANNER_PROMPT = """
   ]
 }
 
+[question_type 판단 기준]
+- numeric: 금액·기간·횟수·수당·한도·임기·연임·일수·요율 등 구체 수치가 답변에 필요하면 true
+- requires_local_law: 자치법규(조례·규칙)를 봐야 답이 나오면 true (예: "충주시 ...조례에 따르면", "지자체별로 다른 ...")
+- involves_money_or_gift: 지방자치단체나 공무원이 시민·이해관계자에게 금품·경품·선물·상금 등을 제공하는 행위가 포함되면 true
+
 [target 분류 기준 — 반드시 준수]
 - law: 국가법령 (법률, 대통령령, 부령 모두 포함)
   ★ 시행령·시행규칙·시행세칙은 대통령령·부령이므로 반드시 target=law로 설정
@@ -57,6 +68,11 @@ _DEFAULT_LEGAL_QUERY_PLANNER_PROMPT = """
   ★ 시행령·시행규칙을 admrul로 분류하지 마세요. 이것들은 law입니다.
 - all: 검색대상이 불명확하거나 법령/자치법규/행정규칙을 모두 봐야 하는 경우
 
+[자치법규(ordin) 검색 시 law_name 작성 규칙]
+- 본 시스템 사용자는 충주시청 공무원입니다. 다른 지자체명이 명시되지 않았다면 law_name에 "충주시"를 명시하세요.
+- 예: "충주시 위원회 운영 조례", "충주시 보조금 관리 조례"
+- 다른 지자체명(예: "부산시")이 질문에 명시된 경우에는 그 지자체명을 그대로 사용하세요.
+
 [검색계획 작성 원칙]
 1. 질문의 법률 쟁점을 먼저 판단한 뒤, 필요한 검색계획을 우선순위 순으로 작성하세요.
 2. 일반법보다 질문을 직접 규율하는 특별법·개별법·하위법령을 우선 고려하세요.
@@ -65,7 +81,7 @@ _DEFAULT_LEGAL_QUERY_PLANNER_PROMPT = """
 5. 하나의 질문에 여러 법률 쟁점이 있으면 search_plans를 여러 개 생성하세요.
 6. 각 search_plan의 law_name은 가능한 한 실제 검색 가능한 명칭으로 작성하세요.
 7. article_keywords에는 조문 제목, 핵심 법률용어, 조문번호 후보, 실무 키워드를 포함하세요.
-8. 자치법규가 필요한 질문은 target을 ordin으로 설정하고, 가능한 경우 지자체명과 조례명을 포함하세요.
+8. 자치법규가 필요한 질문은 target을 ordin으로 설정하고, 위 [자치법규 작성 규칙]에 따라 지자체명을 포함하세요.
 9. 행정규칙·훈령·예규·고시·지침이 필요한 질문은 target을 admrul로 설정하세요.
 10. 사용자의 질문에 오타가 의심되면, issue_summary와 article_keywords에는 자연스러운 정정 표현도 함께 반영하세요.
 11. 검색계획은 보통 3~6개 이내로 작성하되, 단순 질문은 1~2개만 작성해도 됩니다.
@@ -73,6 +89,7 @@ _DEFAULT_LEGAL_QUERY_PLANNER_PROMPT = """
 13. 반드시 JSON만 반환하세요. 설명문, 코드블록, 마크다운은 금지합니다.
 14. 존재하지 않는 법령명이나 조문번호를 단정적으로 만들지 마세요. 불확실하면 article_keywords에 개념어 중심으로 작성하세요.
 15. 금액·기간·횟수·수당·한도·기준처럼 구체적 수치가 필요한 질문은, 그 수치를 직접 규정하는 시행령·시행규칙·고시·지침까지 검색계획에 반드시 포함하세요.
+16. involves_money_or_gift=true인 질문은 공직선거법(기부행위) 검색계획도 포함하세요.
 
 [스스로 점검할 사항]
 - 질문을 직접 규율하는 법령을 놓치지 않았는가?
@@ -84,6 +101,7 @@ _DEFAULT_LEGAL_QUERY_PLANNER_PROMPT = """
 - 시행령·시행규칙을 admrul로 잘못 분류하지 않았는가? (시행령·시행규칙 → law)
 - 금액·기간·횟수 등 수치가 필요한 질문인데 그 수치를 담은 하위법령(시행령·시행규칙·고시)을 빠뜨리지 않았는가?
 - 자치법규(조례·규칙)가 관련되는 질문인데 국가법령만 검색하도록 만들지 않았는가?
+- question_type 메타데이터를 빠뜨리지 않았는가?
 
 [주의]
 - 검색계획은 답변이 아닙니다.
@@ -226,12 +244,36 @@ class LegalQueryPlanner:
         normalized_plans = self._dedupe_plans(normalized_plans)
         normalized_plans.sort(key=lambda item: item.get("priority", 999))
 
+        question_type = self._normalize_question_type(data.get("question_type"))
+
         return {
             "issue_summary": issue_summary,
             "search_confidence": search_confidence,
+            "question_type": question_type,
             "search_plans": normalized_plans[:self.max_plans],
             "source": "gpt_planner",
         }
+
+    @staticmethod
+    def _normalize_question_type(raw: Any) -> Dict[str, bool]:
+        """
+        question_type 메타데이터를 안전하게 dict[str, bool]로 변환.
+        GPT가 누락하거나 형식 오류를 내도 기본값(False) 처리한다.
+        """
+        result = {
+            "numeric": False,
+            "requires_local_law": False,
+            "involves_money_or_gift": False,
+        }
+        if not isinstance(raw, dict):
+            return result
+        for key in result.keys():
+            value = raw.get(key)
+            if isinstance(value, bool):
+                result[key] = value
+            elif isinstance(value, str):
+                result[key] = value.strip().lower() in ("true", "yes", "1")
+        return result
 
     def _append_raw_query_plan(self, plan: Dict[str, Any], question: str) -> Dict[str, Any]:
         """
@@ -298,6 +340,11 @@ class LegalQueryPlanner:
         return {
             "issue_summary": raw_query,
             "search_confidence": "low",
+            "question_type": {
+                "numeric": False,
+                "requires_local_law": False,
+                "involves_money_or_gift": False,
+            },
             "search_plans": [
                 {
                     "target": "all",

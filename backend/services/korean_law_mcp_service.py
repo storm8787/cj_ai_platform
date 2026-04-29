@@ -14,16 +14,25 @@ Korean Law MCP CLI 연동 서비스
 import asyncio
 import json
 import shlex
+import time
 from typing import Any, Dict, List, Optional
 
 from config import settings
 
 
 class KoreanLawMCPService:
+    # MCP CLI가 연속 N회 실패하면 일정 시간 동안 호출을 skip한다.
+    # 현재 korean-law-mcp는 MCP 서버(JSON-RPC stdio) 프로토콜이라
+    # CLI 형태 호출이 작동하지 않을 수 있는데, 매 검색마다 timeout을 기다리는 비용을 줄이기 위함.
+    _FAIL_THRESHOLD = 3
+    _FAIL_BACKOFF_SEC = 300  # 5분간 호출 skip
+
     def __init__(self):
         self.enabled = bool(getattr(settings, "KOREAN_LAW_MCP_ENABLED", True))
         self.command = getattr(settings, "KOREAN_LAW_MCP_COMMAND", "korean-law") or "korean-law"
         self.timeout = int(getattr(settings, "KOREAN_LAW_MCP_TIMEOUT", 15) or 15)
+        self._fail_count = 0
+        self._skip_until = 0.0
 
     # =====================================================
     # 공통 CLI 실행
@@ -33,9 +42,19 @@ class KoreanLawMCPService:
         """
         korean-law CLI 실행.
         self.command가 "node /path/index.js"처럼 공백 포함 명령일 수도 있어 shlex.split 처리.
+        연속 실패가 임계치를 넘으면 backoff 기간 동안 호출을 skip해 응답 속도를 보호한다.
         """
         if not self.enabled:
             return {"ok": False, "stdout": "", "stderr": "MCP disabled", "returncode": -1}
+
+        now = time.monotonic()
+        if now < self._skip_until:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "MCP skipped (in backoff after consecutive failures)",
+                "returncode": -2,
+            }
 
         timeout = timeout or self.timeout
 
@@ -74,6 +93,7 @@ class KoreanLawMCPService:
                     f"[korean-law-mcp] CLI 실패 rc={process.returncode} | "
                     f"cmd={' '.join(cmd)} | stderr={err}"
                 )
+                self._record_failure()
                 return {
                     "ok": False,
                     "stdout": out,
@@ -82,6 +102,8 @@ class KoreanLawMCPService:
                     "cmd": " ".join(cmd),
                 }
 
+            self._fail_count = 0
+            self._skip_until = 0.0
             return {
                 "ok": True,
                 "stdout": out,
@@ -95,6 +117,7 @@ class KoreanLawMCPService:
                 f"[korean-law-mcp] CLI 명령어를 찾을 수 없음: {self.command}. "
                 "Dockerfile에 npm install -g korean-law-mcp 설치 필요"
             )
+            self._record_failure()
             return {
                 "ok": False,
                 "stdout": "",
@@ -105,6 +128,7 @@ class KoreanLawMCPService:
 
         except Exception as e:
             print(f"[korean-law-mcp] CLI 실행 예외: {e}")
+            self._record_failure()
             return {
                 "ok": False,
                 "stdout": "",
@@ -112,6 +136,15 @@ class KoreanLawMCPService:
                 "returncode": -1,
                 "cmd": " ".join(cmd),
             }
+
+    def _record_failure(self) -> None:
+        self._fail_count += 1
+        if self._fail_count >= self._FAIL_THRESHOLD:
+            self._skip_until = time.monotonic() + self._FAIL_BACKOFF_SEC
+            print(
+                f"[korean-law-mcp] 연속 {self._fail_count}회 실패 → "
+                f"{self._FAIL_BACKOFF_SEC}초간 호출 skip"
+            )
 
     def _parse_stdout_json(self, stdout: str) -> Any:
         if not stdout:
@@ -335,17 +368,11 @@ class KoreanLawMCPService:
     async def search_ordinance(self, query: str, display: int = 10) -> List[Dict[str, Any]]:
         """
         자치법규 검색.
-        korean-law-mcp는 자치법규 검색 시 지자체명이 들어가야 결과가 잘 나오는 경우가 있어
-        충주시가 없으면 자동으로 붙임.
+        지자체명은 GPT planner가 law_name에 직접 명시하도록 위임 (강제 prefix 제거).
         """
-        q = query.strip()
-
-        if "충주시" not in q and "충주" not in q:
-            q = f"충주시 {q}"
-
         return await self._search(
             tool_name="search_ordinance",
-            query=q,
+            query=query,
             target="ordin",
             display=display,
         )
@@ -453,13 +480,9 @@ class KoreanLawMCPService:
             ])
 
         if ordinance_name:
-            name = ordinance_name
-            if "충주시" not in name and "충주" not in name:
-                name = f"충주시 {name}"
-
             candidates.extend([
-                ["get_ordinance_text", "--query", name],
-                ["get_ordinance_text", "--name", name],
+                ["get_ordinance_text", "--query", ordinance_name],
+                ["get_ordinance_text", "--name", ordinance_name],
             ])
 
         return await self._get_text_by_candidates(candidates)
