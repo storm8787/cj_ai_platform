@@ -65,6 +65,21 @@ MAX_DETAIL_DOCS = 5
 MAX_ARTICLES_FOR_ANSWER = 12
 MAX_CONTEXT_CHARS = 60000
 
+# 수치형 질문 판별 키워드 — 금액·기간·횟수·수당·한도 등 구체 수치가 필요한 질문
+_NUMERIC_Q_KEYWORDS = frozenset([
+    "금액", "기준", "한도", "상한", "하한", "수당", "여비", "수의계약",
+    "과태료", "벌금", "지급", "임기", "연임", "횟수", "얼마", "몇",
+    "기간", "일수", "가액", "금품", "상한액", "한도액", "이상", "이하",
+    "원까지", "만원", "억원",
+])
+
+# 조문 내 수치 표현 패턴
+_NUMERIC_VALUE_RE = re.compile(
+    r'\d[\d,]*\s*(?:원|만원|억원|천원|개월|일|년|회|명|퍼센트|%|배|이하|이상|미만|초과)'
+    r'|\d+\s*(?:일간|년간|주일|분의\s*\d+)',
+    re.UNICODE,
+)
+
 _faiss_index = None
 _faiss_data = None
 _embedding_model = None
@@ -86,6 +101,9 @@ _DEFAULT_ANSWER_SYSTEM = """당신은 충주시청 공무원을 위한 법령·�
 6. 자치법규 질문이면 국가법령만으로 답하지 말고, 자치법규 검색 결과를 우선 확인하세요.
 7. 지방자치단체의 금품·경품·물품 제공 질문은 공직선거법상 기부행위 가능성을 반드시 유의사항으로 검토하세요.
 8. 실무 적용 시 담당부서, 법제팀, 선관위, 개인정보보호 담당자 등 확인이 필요한 경우 명확히 표시하세요.
+9. 금액·기간·횟수·수당·한도·임기 등 수치가 필요한 질문은, [검색된 참고자료]에 수치(원·만원·개월·일·회 등)가 있으면 반드시 그 수치를 구체적으로 제시하세요.
+10. [검색된 참고자료]에 수치가 있음에도 "기관마다 다를 수 있음", "규정에 따라 다름", "별도 확인 필요"로만 회피하지 마세요.
+11. [검색된 참고자료]에 관련 수치가 전혀 없는 경우에만 "별도 확인 필요"라고 명시하세요.
 
 [답변 형식]
 1. 결론
@@ -770,6 +788,8 @@ def _select_relevant_articles(
 
     all_terms = list(dict.fromkeys(question_terms + keyword_terms))
 
+    numeric_q = _is_numeric_question(question)
+
     scored: List[Dict[str, Any]] = []
 
     for article in articles:
@@ -817,6 +837,11 @@ def _select_relevant_articles(
                 for t in terms:
                     if t in haystack:
                         score += 6
+
+        # 수치형 질문: 조문에 실제 수치(원·만원·개월·일·회 등)가 있으면 가점
+        # → 금액·기간 등을 직접 규정한 조문을 우선 선별
+        if numeric_q and _NUMERIC_VALUE_RE.search(content):
+            score += 10
 
         if score > 0:
             new_article = dict(article)
@@ -1304,6 +1329,11 @@ def _looks_like_local_question(question: str) -> bool:
     return any(x in question for x in ["충주시", "충주", "조례", "자치법규", "시행규칙"])
 
 
+def _is_numeric_question(question: str) -> bool:
+    """금액·기간·횟수·수당·한도 등 수치가 필요한 질문 여부 판별"""
+    return any(kw in question for kw in _NUMERIC_Q_KEYWORDS)
+
+
 def _deduplicate_candidates(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     unique = []
@@ -1334,6 +1364,9 @@ def _rank_candidates(question: str, results: List[Dict[str, Any]]) -> List[Dict[
         region = item.get("region", "") or ""
         target = item.get("type", "") or ""
         source = item.get("source", "") or ""
+        plan = item.get("_plan") or {}
+        plan_target = str(plan.get("target", "all"))
+        plan_law_name = str(plan.get("law_name", ""))
 
         haystack = f"{name} {category} {region} {target} {source}"
 
@@ -1362,6 +1395,23 @@ def _rank_candidates(question: str, results: List[Dict[str, Any]]) -> List[Dict[
 
         if ("충주" in question or "조례" in question) and target == "ordin":
             score += 8
+
+        # 검색계획 law_name과 후보 법령명 일치 가점
+        if plan_law_name:
+            if plan_law_name == name:
+                score += 25
+            elif plan_law_name in name or name in plan_law_name:
+                score += 12
+            else:
+                # 부분 단어 매칭
+                for word in plan_law_name.split():
+                    if len(word) >= 2 and word in name:
+                        score += 4
+
+        # 검색계획이 law/ordin을 의도했는데 admrul이 잡힌 경우 감점
+        # (일반 질문에서 특정 기관 내부규정이 먼저 올라오는 것 방지)
+        if target == "admrul" and plan_target in ("law", "ordin"):
+            score -= 5
 
         return score
 

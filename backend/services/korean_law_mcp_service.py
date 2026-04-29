@@ -416,24 +416,21 @@ class KoreanLawMCPService:
         question: str = "",
     ) -> str:
         """
-        국가법령 전문 조회
+        국가법령 전문 조회.
+        MST(일련번호) 우선 시도 → law_name 기반 시도 순으로 fallback.
         """
         candidates: List[List[str]] = []
 
         if mst:
             candidates.extend([
                 ["get_law_text", "--mst", mst],
-                ["get_law", "--mst", mst],
-                ["get_law_detail", "--mst", mst],
+                ["get_law_text", "--id", mst],
             ])
 
         if law_name:
             candidates.extend([
                 ["get_law_text", "--query", law_name],
-                ["get_law", "--query", law_name],
-                ["get_law_detail", "--query", law_name],
-                ["get_law_text", "--law", law_name],
-                ["get_law_detail", "--law", law_name],
+                ["get_law_text", "--name", law_name],
             ])
 
         return await self._get_text_by_candidates(candidates)
@@ -444,17 +441,15 @@ class KoreanLawMCPService:
         ordinance_name: str = "",
     ) -> str:
         """
-        자치법규 전문 조회
+        자치법규 전문 조회.
+        ID 우선 → 이름 기반 순으로 fallback.
         """
         candidates: List[List[str]] = []
 
         if ordin_seq:
             candidates.extend([
                 ["get_ordinance_text", "--id", ordin_seq],
-                ["get_ordinance", "--id", ordin_seq],
-                ["get_ordinance_detail", "--id", ordin_seq],
                 ["get_ordinance_text", "--ordin_seq", ordin_seq],
-                ["get_ordinance", "--ordin_seq", ordin_seq],
             ])
 
         if ordinance_name:
@@ -464,10 +459,7 @@ class KoreanLawMCPService:
 
             candidates.extend([
                 ["get_ordinance_text", "--query", name],
-                ["get_ordinance", "--query", name],
-                ["get_ordinance_detail", "--query", name],
                 ["get_ordinance_text", "--name", name],
-                ["get_ordinance", "--name", name],
             ])
 
         return await self._get_text_by_candidates(candidates)
@@ -478,24 +470,20 @@ class KoreanLawMCPService:
         admin_rule_name: str = "",
     ) -> str:
         """
-        행정규칙 전문 조회
+        행정규칙 전문 조회.
+        ID 우선 → 이름 기반 순으로 fallback.
         """
         candidates: List[List[str]] = []
 
         if admin_rule_id:
             candidates.extend([
                 ["get_admin_rule_text", "--id", admin_rule_id],
-                ["get_admin_rule", "--id", admin_rule_id],
-                ["get_admin_rule_detail", "--id", admin_rule_id],
             ])
 
         if admin_rule_name:
             candidates.extend([
                 ["get_admin_rule_text", "--query", admin_rule_name],
-                ["get_admin_rule", "--query", admin_rule_name],
-                ["get_admin_rule_detail", "--query", admin_rule_name],
                 ["get_admin_rule_text", "--name", admin_rule_name],
-                ["get_admin_rule", "--name", admin_rule_name],
             ])
 
         return await self._get_text_by_candidates(candidates)

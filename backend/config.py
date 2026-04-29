@@ -35,12 +35,6 @@ class Settings(BaseSettings):
     # 국가법령정보센터 API (법령·자치법규 챗봇용)
     LAW_API_OC: str = ""
 
-    # korean-law-mcp 설정
-    # korean-law-mcp 설정
-    KOREAN_LAW_MCP_ENABLED: str = "true"
-    KOREAN_LAW_MCP_CLI_COMMAND: str = "korean-law"
-    KOREAN_LAW_MCP_TIMEOUT: int = 25
-
     # Korean Law MCP
     KOREAN_LAW_MCP_ENABLED: bool = True
     KOREAN_LAW_MCP_COMMAND: str = "korean-law"
