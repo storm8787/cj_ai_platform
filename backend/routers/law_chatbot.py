@@ -273,34 +273,30 @@ async def get_categories():
             {"id": "all", "name": "통합검색", "icon": "📚"},
         ]
     }
+
 async def _agentic_search(
     client, question: str, initial_keywords: list, search_scope: str,
 ) -> tuple:
     """
-    병렬검색 기반 통합검색 버전.
+    경량 병렬검색 기반 통합검색 버전.
 
     핵심 정책:
-    1. 사전기반 분기 제거
-       - "위원회", "지원금", "감면" 같은 단어로 자치법규/국가법령을 판단하지 않음
-
-    2. MCP 검색을 병렬 수행
-       - 국가법령: search_law
-       - 자치법규: search_ordinance
-       - 행정규칙: search_admin_rule
-
-    3. 기존 자치법규 벡터스토어도 병렬 보조검색
-       - 다만 timeout을 걸어 전체 답변을 막지 않음
-
-    4. MCP 결과가 없으면 기존 law.go.kr API fallback 수행
-       - 국가법령 API
-       - 자치법규 API
-
-    5. 최종적으로 검색 결과를 병합하여 GPT에 전달
+    1. 사전기반으로 국가/자치법규를 단정하지 않음
+    2. MCP는 대표 검색어 1개만 사용해 3종 병렬검색
+       - 국가법령
+       - 자치법규
+       - 행정규칙
+    3. MCP가 실패하면 즉시 기존 law.go.kr API fallback
+    4. 벡터스토어는 모든 질문에 돌리지 않고,
+       충주/조례/자치법규가 명시된 경우에만 보조검색
     """
+
+    all_api_results = []
+    all_vector_results = []
 
     # ─────────────────────────────────────────────
     # 1. 검색어 구성
-    #    짧고 명확한 GPT 추출 키워드를 우선 사용
+    #    GPT 추출 키워드를 우선 사용하고, 없으면 질문 원문 사용
     # ─────────────────────────────────────────────
     search_terms = []
 
@@ -311,7 +307,6 @@ async def _agentic_search(
     if question and question.strip():
         search_terms.append(question.strip())
 
-    # 중복 제거
     deduped_terms = []
     seen_terms = set()
 
@@ -320,111 +315,77 @@ async def _agentic_search(
             seen_terms.add(term)
             deduped_terms.append(term)
 
-    # 너무 많이 돌리면 느리므로 대표 검색어 3개까지만 사용
     search_terms = deduped_terms[:3]
 
-    print(f"[law-chatbot] 병렬 통합검색 시작: terms={search_terms}")
+    if not search_terms:
+        search_terms = [_simple_keyword_extract(question)]
 
-    all_api_results = []
-    all_vector_results = []
+    # MCP는 대표 검색어 1개만 사용
+    primary_term = search_terms[0]
 
-    # ─────────────────────────────────────────────
-    # 2. MCP 병렬검색
-    # ─────────────────────────────────────────────
-    mcp_tasks = []
-
-    for term in search_terms:
-        mcp_tasks.append(
-            _safe_search_task(
-                label=f"MCP 국가법령 검색: {term}",
-                coro=korean_law_mcp_service.search_law(
-                    query=term,
-                    target="law",
-                    display=8,
-                ),
-                timeout=8.0,
-            )
-        )
-
-        mcp_tasks.append(
-            _safe_search_task(
-                label=f"MCP 자치법규 검색: {term}",
-                coro=korean_law_mcp_service.search_ordinance(
-                    query=term,
-                    display=8,
-                ),
-                timeout=8.0,
-            )
-        )
-
-        mcp_tasks.append(
-            _safe_search_task(
-                label=f"MCP 행정규칙 검색: {term}",
-                coro=korean_law_mcp_service.search_admin_rule(
-                    query=term,
-                    display=8,
-                ),
-                timeout=8.0,
-            )
-        )
-
-    # 자치법규 벡터스토어도 병렬 보조검색
-    vector_task = _safe_search_task(
-        label="자치법규 벡터스토어 검색",
-        coro=asyncio.to_thread(_search_vectorstore, question, 7),
-        timeout=15.0,
-    )
-
-    all_tasks = mcp_tasks + [vector_task]
-
-    task_results = await asyncio.gather(*all_tasks, return_exceptions=True)
+    print(f"[law-chatbot] 경량 통합검색 시작: primary={primary_term}, terms={search_terms}")
 
     # ─────────────────────────────────────────────
-    # 3. 결과 병합
+    # 2. MCP 3종 병렬검색
+    #    Node CLI 부하를 줄이기 위해 대표 검색어 1개만 사용
     # ─────────────────────────────────────────────
+    mcp_tasks = [
+        _safe_search_task(
+            label=f"MCP 국가법령 검색: {primary_term}",
+            coro=korean_law_mcp_service.search_law(
+                query=primary_term,
+                target="law",
+                display=8,
+            ),
+            timeout=8.0,
+        ),
+        _safe_search_task(
+            label=f"MCP 자치법규 검색: {primary_term}",
+            coro=korean_law_mcp_service.search_ordinance(
+                query=primary_term,
+                display=8,
+            ),
+            timeout=8.0,
+        ),
+        _safe_search_task(
+            label=f"MCP 행정규칙 검색: {primary_term}",
+            coro=korean_law_mcp_service.search_admin_rule(
+                query=primary_term,
+                display=8,
+            ),
+            timeout=8.0,
+        ),
+    ]
+
+    task_results = await asyncio.gather(*mcp_tasks, return_exceptions=True)
+
     for result in task_results:
         if isinstance(result, Exception):
-            print(f"[law-chatbot] 병렬검색 task 예외 무시: {result}")
+            print(f"[law-chatbot] MCP task 예외 무시: {result}")
             continue
 
         if not result:
             continue
 
-        source_label = result.get("label", "")
         items = result.get("items", [])
-
-        if not items:
-            continue
-
-        if source_label == "자치법규 벡터스토어 검색":
-            all_vector_results.extend(items)
-        else:
+        if items:
             all_api_results.extend(items)
 
     all_api_results = _deduplicate_api_results(all_api_results)
 
-    # 벡터스토어 결과는 너무 많이 넣지 않음
-    # 자치법규 질문 여부를 사전판단하지 않기 위해 threshold를 강하게 걸지 않고 상위 5개만 사용
-    all_vector_results = all_vector_results[:5]
-
-    print(
-        f"[law-chatbot] MCP/벡터 병렬검색 결과: "
-        f"api={len(all_api_results)}, vector={len(all_vector_results)}"
-    )
+    print(f"[law-chatbot] MCP 경량검색 결과: api={len(all_api_results)}")
 
     # ─────────────────────────────────────────────
-    # 4. MCP 결과가 하나도 없으면 기존 law.go.kr API fallback
+    # 3. MCP 결과가 없으면 기존 law.go.kr API fallback
+    #    fallback은 빠르므로 검색어 2개까지 시도
     # ─────────────────────────────────────────────
     if not all_api_results:
         print("[law-chatbot] MCP 결과 없음, 기존 law.go.kr API fallback 시작")
 
-        fallback_keywords = initial_keywords or [_simple_keyword_extract(question)]
-
-        for kw in fallback_keywords[:3]:
+        for kw in search_terms[:2]:
             if not kw:
                 continue
 
-            # 국가법령 직접 API
             try:
                 print(f"[law-chatbot] 기존 국가법령 API 직접검색 시작: keyword={kw}")
                 law_results = await _search_law_api_direct(
@@ -439,7 +400,6 @@ async def _agentic_search(
             except Exception as e:
                 print(f"[law-chatbot] 기존 국가법령 API 직접검색 예외: {e}")
 
-            # 자치법규 직접 API
             try:
                 print(f"[law-chatbot] 기존 자치법규 API 직접검색 시작: keyword={kw}")
                 ordin_results = await _search_law_api_direct(
@@ -457,65 +417,52 @@ async def _agentic_search(
             all_api_results = _deduplicate_api_results(all_api_results)
 
             if all_api_results:
-                print(
-                    f"[law-chatbot] 기존 API fallback 성공: "
-                    f"count={len(all_api_results)}"
-                )
+                print(f"[law-chatbot] 기존 API fallback 성공: count={len(all_api_results)}")
                 break
 
     # ─────────────────────────────────────────────
-    # 5. 벡터스토어도 결과가 없고, 아직 한 번도 제대로 못 찾은 경우 재시도
+    # 4. 자치법규 벡터스토어 보조검색
+    #    무조건 돌리지 않고, 충주/조례/자치법규 명시 질문만 수행
     # ─────────────────────────────────────────────
-    if not all_vector_results:
+    vector_hint_words = [
+        "충주시",
+        "충주",
+        "조례",
+        "자치법규",
+        "시행규칙",
+    ]
+
+    should_search_vector = any(word in question for word in vector_hint_words)
+
+    if should_search_vector:
+        print("[law-chatbot] 자치법규 벡터스토어 보조검색 시작")
+
         try:
-            print("[law-chatbot] 자치법규 벡터스토어 재검색 시작")
             vector_results = await asyncio.wait_for(
                 asyncio.to_thread(_search_vectorstore, question, 7),
-                timeout=15.0,
+                timeout=20.0,
             )
             all_vector_results = (vector_results or [])[:5]
-            print(f"[law-chatbot] 자치법규 벡터스토어 재검색 종료: count={len(all_vector_results)}")
+            print(f"[law-chatbot] 자치법규 벡터스토어 보조검색 종료: count={len(all_vector_results)}")
+
         except asyncio.TimeoutError:
-            print("[law-chatbot] 자치법규 벡터스토어 재검색 timeout")
+            print("[law-chatbot] 자치법규 벡터스토어 보조검색 timeout")
+            all_vector_results = []
+
         except Exception as e:
-            print(f"[law-chatbot] 자치법규 벡터스토어 재검색 실패: {e}")
+            print(f"[law-chatbot] 자치법규 벡터스토어 보조검색 실패: {e}")
+            all_vector_results = []
+    else:
+        print("[law-chatbot] 자치법규 벡터스토어 보조검색 생략")
 
     all_api_results = _deduplicate_api_results(all_api_results)
 
     print(
-        f"[law-chatbot] 병렬 통합검색 최종결과: "
+        f"[law-chatbot] 경량 통합검색 최종결과: "
         f"api={len(all_api_results)}, vector={len(all_vector_results)}"
     )
 
     return all_vector_results, all_api_results
-
-async def _safe_search_task(label: str, coro, timeout: float = 8.0) -> dict:
-    """
-    병렬검색용 안전 실행 래퍼.
-
-    - 각 검색은 독립적으로 timeout 적용
-    - 하나가 실패해도 전체 검색은 계속 진행
-    - 결과 형식은 {"label": ..., "items": [...]} 로 통일
-    """
-    try:
-        print(f"[law-chatbot] {label} 시작")
-
-        items = await asyncio.wait_for(coro, timeout=timeout)
-
-        if not items:
-            print(f"[law-chatbot] {label} 종료: count=0")
-            return {"label": label, "items": []}
-
-        print(f"[law-chatbot] {label} 종료: count={len(items)}")
-        return {"label": label, "items": items}
-
-    except asyncio.TimeoutError:
-        print(f"[law-chatbot] ⚠️ {label} timeout")
-        return {"label": label, "items": []}
-
-    except Exception as e:
-        print(f"[law-chatbot] ⚠️ {label} 실패: {e}")
-        return {"label": label, "items": []}
 
 async def _generate_alternative_keywords(
     client, question: str, tried_keywords: list
