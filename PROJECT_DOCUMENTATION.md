@@ -1,6 +1,44 @@
-# 충주시 AI 플랫폼 - 완전한 기술 명세서 (Version 7.1)
+# 충주시 AI 플랫폼 - 완전한 기술 명세서 (Version 9.0)
 
 > **목적**: 다른 AI 에이전트가 이 프로젝트를 완벽히 이해하고 작업할 수 있도록 작성된 상세 문서
+
+---
+
+## 🆕 최신 변경사항 (v9.0 — 2026-04)
+
+> 상세 문서는 `docs/` 디렉토리를 참고하세요.
+> - 아키텍처: `docs/ARCHITECTURE.md`
+> - 배포: `docs/DEPLOYMENT.md`
+> - 환경변수: `docs/ENVIRONMENT_VARIABLES.md`
+> - 기능 맵: `docs/FEATURE_MAP.md`
+> - 법령 챗봇 심화: `docs/LAW_CHATBOT_GUIDE.md`
+> - AI 작업지침서: `docs/AI_WORKING_GUIDE.md`
+> - Claude Code 지침: `CLAUDE.md`
+
+### 법령 챗봇 v9 핵심 변경사항
+
+**이전(v8)**: 키워드 사전 기반 분기 + Agentic 재검색 루프
+**현재(v9)**: GPT planner 단일 신뢰 + 조문 단위 검색 구조
+
+변경 내용:
+1. **키워드 사전 매핑 전면 제거**
+   - `_NUMERIC_Q_KEYWORDS` frozenset 삭제
+   - 법령명 → 분류 매핑 dict 삭제
+   - "충주", "조례", "위원회" 등 지역/기관 하드코딩 boost 삭제
+2. **GPT planner(`legal_query_planner.py`) 아키텍처 도입**
+   - 질문 → `search_plans[]` + `question_type` 메타데이터 생성
+   - `question_type.numeric/requires_local_law/involves_money_or_gift` 필드로 코드 동작 제어
+3. **MCP fast-fail 설계 추가**
+   - 연속 3회 실패 → 5분간 MCP 호출 skip
+   - law.go.kr 직접 API가 실질적 검색 경로
+4. **충주시 자치법규 prefix 강제 제거**
+   - planner 시스템 프롬프트에서 "충주시" 명시 규칙으로 대체
+5. **자동 평가 시스템 신설**
+   - `backend/tests/evaluate_law_chatbot.py`
+   - `backend/tests/law_chatbot_eval_cases.json` (10개 케이스)
+   - `.github/workflows/law-chatbot-eval.yml`
+
+---
 
 ## 📋 목차
 
@@ -509,14 +547,16 @@ GPT-4o 프롬프트 생성
 ### 4-2. 법령·자치법규 챗봇 (LawChatbot)
 **경로**: `/law-chatbot`
 **페이지**: `LawChatbot.jsx`
-**라우터**: `routers/law_chatbot.py` (v8)
+**라우터**: `routers/law_chatbot.py` (v9 — GPT Planner 기반)
+
+> ⚠️ v9에서 아키텍처가 전면 교체되었습니다. 심화 내용은 `docs/LAW_CHATBOT_GUIDE.md` 참고.
 
 **기능**:
 1. 국가법령 + 충주시 자치법규 통합 질의응답
-2. Hybrid Search (Dense + BM25) 기반 자치법규 검색
-3. 국가법령정보센터 API 실시간 법령 검색
-4. Agentic 재검색 루프 (검색 실패 시 자동 키워드 변경)
-5. GPT-4o 자체 법률 지식 + 검색 결과 하이브리드 답변
+2. GPT(gpt-4o-mini) planner가 검색계획 수립 → 조문 단위 검색 → GPT(gpt-4o) 답변
+3. law.go.kr 직접 API로 국가법령·자치법규·행정규칙 검색
+4. 자치법규 fallback: FAISS + BM25 하이브리드 벡터스토어
+5. 조문 근거 기반 구체적 수치 답변 (금액·기간·횟수 등)
 
 **API 엔드포인트**:
 | 메서드 | 경로 | 설명 |
@@ -526,59 +566,36 @@ GPT-4o 프롬프트 생성
 | GET | `/api/law-chatbot/status` | 시스템 상태 (벡터스토어 + API) |
 | GET | `/api/law-chatbot/categories` | 검색 범위 목록 |
 
-**검색 범위**:
-| 범위 | 설명 | 검색 소스 |
-|------|------|----------|
-| all | 전체 (법령+자치법규) | FAISS + BM25 + law.go.kr API |
-| national | 국가법령 | law.go.kr API |
-| local | 충주시 자치법규 | FAISS + BM25 벡터스토어 |
-
-**벡터스토어 정보**:
-- 임베딩 모델: `BAAI/bge-m3` (1024차원, dense+sparse)
-- 문서 수: 12,002개 청크 (자치법규 716건, 별표/서식 252건)
-- 검색 방식: Hybrid Search (Dense FAISS + BM25 RRF 합산)
-- 청크 구조: 컨텍스트 보강 (법령명+조문제목 prefix)
-- 저장 위치: `/backend/data/law_chatbot/vectorstores/`
-
-**Hybrid Search 동작 원리**:
+**처리 흐름 (v9)**:
 ```
 사용자 질문
     ↓
-┌────────────────────┐    ┌────────────────────┐
-│  Dense 검색 (FAISS) │    │  BM25 검색 (키워드) │
-│  의미적 유사도 기반  │    │  정확한 단어 매칭    │
-└────────┬───────────┘    └────────┬───────────┘
-         │                         │
-         └────────┬────────────────┘
-                  ▼
-         RRF (Reciprocal Rank Fusion)
-         두 결과 순위를 합산하여 최종 순위 결정
-                  ↓
-         동적 threshold 필터링
-         (절대 0.30 + 상대 85%)
+[1] GPT Planner (gpt-4o-mini)
+    legal_query_planner.py
+    → search_plans[] 생성 (target, law_name, article_keywords)
+    → question_type 메타데이터 (numeric, requires_local_law, involves_money_or_gift)
+    ↓
+[2] 검색 실행 (검색계획 기반)
+    각 plan → MCP 시도 → 실패 시 law.go.kr 직접 API
+    자치법규 결과 없으면 FAISS 벡터스토어 fallback
+    ↓
+[3] 조문 선별 (_select_relevant_articles)
+    질문 토큰 + article_keywords + 조문번호 + 수치 패턴
+    사전 매핑 없음 — planner 결과만 신뢰
+    ↓
+[4] 답변 생성 (gpt-4o)
+    조문 컨텍스트를 system prompt에 삽입
 ```
 
-**답변 전략 (3단계)**:
-```
-1단계: 검색 결과에 답이 있으면 → 조문 인용 답변
-2단계: 검색 결과 없지만 GPT가 알면 → 답변 + 💡 AI 지식 기반 표시
-3단계: 둘 다 모르면 → 법제팀 확인 권장
-```
+**핵심 설계 원칙 (절대 변경 금지)**:
+- 키워드 사전 매핑(if 분기) 절대 금지
+- 법령명 boost dict 추가 금지
+- 코드는 GPT planner 결과의 형식 검증·정규화만 수행
 
-**Agentic 재검색 루프**:
-```
-키워드 추출 (GPT-4o)
-    ↓
-1차 검색 → 결과 충분? → Yes → 답변 생성
-                        ↓ No
-GPT에게 대안 키워드 요청 (gpt-4o-mini)
-    ↓
-2차 검색 → 결과 충분? → Yes → 답변 생성
-                        ↓ No
-GPT에게 대안 키워드 요청
-    ↓
-3차 검색 → 답변 생성 (결과 유무 관계없이)
-```
+**벡터스토어 정보 (충주시 자치법규)**:
+- 임베딩 모델: `BAAI/bge-m3` (1024차원)
+- 검색 방식: Dense (FAISS) + Sparse (BM25) → RRF 결합
+- 저장 위치: `backend/data/law_chatbot/vectorstores/`
 
 **국가법령 API (law.go.kr)**:
 - 인증: OC 코드 방식 (`LAW_API_OC` 환경변수)
