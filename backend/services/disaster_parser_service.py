@@ -120,7 +120,7 @@ INCIDENT_TYPE_RULES = [
     (re.compile(r"침수|범람|월류|수위상승|수위.*상승|도로침수|유실된 제방|배수불량으로 침수|하상도로.*침수|침수 우려"), "flood"),
     (re.compile(r"싱크홀|씽크홀|노면 파손|웅덩이"), "sinkhole"),
     (re.compile(r"실종|수색|인명구조"), "rescue"),
-    (re.compile(r"유실|시설|공사현장|절개지|오수|정전|반파|파손"), "facility"),
+    (re.compile(r"유실|시설|공사현장|절개지|오수|정전|반파|파손|균열|교량손상|시설파손|제방파손"), "facility"),
     (re.compile(r"통제|출입 통제|통행제한|차단|통행차단|통제 유지|출입 통제 유지"), "road_control"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다|현황.*없습니다|상황관리|점검결과 이상없습니다"), "inspection"),
 ]
@@ -128,7 +128,7 @@ INCIDENT_TYPE_RULES = [
 # 상태 규칙: 예정 계열은 reported로, 진행 계열만 in_progress
 # '설치 완료'는 임시 안전시설(안전봉, 차단봉) 설치이므로 completed에서 제외 → monitoring으로 처리
 STATUS_RULES = [
-    (re.compile(r"해제|통행재개|개통"), "closed"),
+    (re.compile(r"해제(?!\s*예정)|통행\s*재개(?!\s*가능)|개통|상황\s*종료"), "closed"),
     (re.compile(r"복구 완료|처리 완료|긴급조치 완료|제거 완료|응급복구 완료|양수 작업 완료|조치 완료|조치완료|완료했습니다|완료하였습니다"), "completed"),
     (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|처리중|처리 중|수색중"), "in_progress"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다"), "no_issue"),
@@ -222,13 +222,19 @@ def _clean_location_text(text: str) -> str:
 _LOCATION_TAIL_STOPS = [
     "조치", "완료", "입니다", "발생", "신고", "긴급", "처리",
     "나무", "낙석", "토사", "침수", "정전", "사고", "현장", "작업",
+    # 추가: 관리/행정 동사구 (예: "도로관리사업소"의 "관리"가 지번 '리'로 오매칭)
+    "관리", "통제", "차단", "수위", "협조", "요청", "확인", "현장",
+    "정리", "마무리",  # "재난상황 최종 정리" 등 행정 요약 문구 방지
 ]
 
 
 def _trim_location_tail(loc: str) -> str:
-    """위치 문자열 뒤에 붙은 재난 상황 동사구를 제거."""
+    """위치 문자열 뒤에 붙은 재난 상황 동사구를 제거. 3자 미만이면 빈 문자열 반환."""
     for stop in _LOCATION_TAIL_STOPS:
         loc = loc.split(stop)[0].strip()
+    # 너무 짧은 결과는 의미 없는 오매칭으로 간주
+    if len(loc.replace(" ", "")) < 3:
+        return ""
     return loc
 
 
@@ -249,17 +255,16 @@ def extract_location_raw(text: str) -> Optional[str]:
     # 텍스트에 실제 쓰인 emd 표현(별칭 포함) 찾기
     emd_text = _find_emd_text_form(text, emd) if emd else None
 
-    # 1. 읍면동 뒤 장소명 조합 방식
+    # 1. 읍면동 뒤 장소명 조합 방식 (첫 문장 안에서만 탐색)
     if emd_text and emd_text in text:
         after_emd = text.split(emd_text, 1)[1].strip()
+        # 문장 경계(마침표/쉼표/개행)에서 첫 문장만 사용
+        first_sentence = re.split(r"[.,。\n]", after_emd)[0].strip()
 
         for keyword in sorted(LOCATION_KEYWORDS, key=len, reverse=True):
-            if keyword in after_emd:
-                idx = after_emd.find(keyword)
-                candidate = after_emd[: idx + len(keyword)].strip()
-
-                # 너무 긴 문장 방지
-                candidate = candidate.split("조치")[0].split("완료")[0].split("입니다")[0].strip()
+            if keyword in first_sentence:
+                idx = first_sentence.find(keyword)
+                candidate = first_sentence[: idx + len(keyword)].strip()
                 candidate = _clean_location_text(candidate)
 
                 if candidate:

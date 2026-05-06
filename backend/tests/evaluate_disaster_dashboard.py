@@ -102,8 +102,8 @@ def test_parsing(content):
 
     print(f"  전체 메시지: {len(messages)}개  |  일반: {len(normal)}개  |  사진: {len(photo)}개  |  시스템: {len(system)}개")
 
-    r = PASS if len(normal) >= 30 else FAIL
-    print(f"  일반 메시지 30개 이상 파싱: {result_str(r)} ({len(normal)}개)")
+    r = PASS if len(normal) >= 80 else FAIL
+    print(f"  일반 메시지 80개 이상 파싱: {result_str(r)} ({len(normal)}개)")
 
     r2 = PASS if len(photo) >= 10 else WARN
     print(f"  사진 메시지 파싱: {result_str(r2)} ({len(photo)}개)")
@@ -148,15 +148,22 @@ def test_emd_extraction(messages):
 
     # 샘플 문장 기반 검증
     cases = [
-        ("호암동 천변산책로 도로 침수 신고 접수", None),   # 읍면동 목록에 '호암직동' 포함 여부에 따라 달라짐
+        ("호암동 천변산책로 도로 침수 신고 접수", None),   # 별칭 호암동 → 호암직동
         ("연수동 남산등산로 입구 쪽 나무 쓰러짐", "연수동"),
-        ("교현동 교현천 산책로 일부 구간 침수", None),
-        ("칠금동 금릉로 도로 싱크홀 발생", None),
+        ("교현동 교현천 산책로 일부 구간 침수", None),     # 별칭 교현동 → 교현안림동
+        ("칠금동 금릉로 도로 싱크홀 발생", None),          # 별칭 칠금동 → 칠금금릉동
         ("수안보면 수안보로 산사태 발생", "수안보면"),
         ("중앙탑면 탑평리 낙석 발생", "중앙탑면"),
         ("앙성면 마을안길 나무 쓰러짐", "앙성면"),
         ("대소원면 황정리 정전 발생", "대소원면"),
         ("달천동 참샘골 마을안길 도로 파손", "달천동"),
+        # 확장 케이스 (새 지역)
+        ("주덕읍 삼탄천 수위 급격히 상승 중", "주덕읍"),
+        ("살미면 동아교 교량 균열 발생", "살미면"),
+        ("소태면 용교리 진입도로 낙석 발생", "소태면"),
+        ("신니면 백현리 절개지 토사유출", "신니면"),
+        ("가금면 창동교 진입로 침수 신고", "가금면"),
+        ("노은면 노은로 현장 점검 완료", "노은면"),
     ]
 
     passed = 0
@@ -171,7 +178,7 @@ def test_emd_extraction(messages):
         if ok:
             passed += 1
 
-    r = PASS if passed >= 6 else FAIL
+    r = PASS if passed >= len(cases) - 2 else FAIL
     print(f"  총 {passed}/{len(cases)} 통과 → {result_str(r)}")
     return r == PASS
 
@@ -180,6 +187,7 @@ def test_emd_extraction(messages):
 # 검증 3: 사고 유형 분류
 # ─────────────────────────────────────────────────────────────────────────────
 TYPE_CASES = [
+    # 기존 케이스
     ("호암동 천변산책로 도로 침수 신고 접수되었습니다. 수위 약 30cm 가량 올라온 상태", "flood"),
     ("연수동 남산등산로 입구 쪽 나무 쓰러짐 신고", "tree_fall"),
     ("아카시아나무 쓰러짐 발생. 도로 차단 상태입니다", "tree_fall"),
@@ -191,6 +199,15 @@ TYPE_CASES = [
     ("지현동 주민센터 앞 맨홀 역류 신고. 오수맨홀 역류로 주변 침수", "drainage"),
     ("달천동 참샘골 마을안길 도로 파손 발생 신고. 집중 호우로 노면 웅덩이", "sinkhole"),
     ("피해목제거 완료하였습니다. 통행 재개 가능합니다", "tree_fall"),
+    # 추가 케이스
+    ("호암동 충주천 하천변 실종자 수색 중. 자율방재단 투입되어 수색중입니다", "rescue"),
+    ("살미면 동아교 교량 균열 발생 신고 접수. 상판 균열 확인. 하중 제한 조치 필요", "facility"),
+    ("주덕읍 삼탄천 수위 급격히 상승 중. 제방 월류 위험 수위 도달", "flood"),
+    ("신니면 백현리 절개지 토사유출 발생. 도로 일부 토사 유입", "landslide"),
+    ("소태면 용교리 진입도로 낙석 발생. 통행 차단 조치 완료", "landslide"),
+    ("배수로 막혀 주변 침수 발생. 양수펌프 투입 요청합니다", "drainage"),
+    ("가금면 창동교 진입로 도로 침수 신고. 집중호우로 인근 하천 범람", "flood"),
+    ("노은면 노은로 현장 점검 완료. 도로 이상없음 확인", "inspection"),
 ]
 
 def test_incident_type(messages=None):
@@ -204,7 +221,7 @@ def test_incident_type(messages=None):
         if ok:
             passed += 1
 
-    r = PASS if passed >= 9 else FAIL
+    r = PASS if passed >= len(TYPE_CASES) - 2 else FAIL
     print(f"  총 {passed}/{len(TYPE_CASES)} 통과 → {result_str(r)}")
     return r == PASS, passed
 
@@ -223,6 +240,14 @@ STATUS_CASES = [
     ("통행재개합니다. 해제합니다", "closed"),
     ("이상없음 확인하였습니다", "no_issue"),
     ("모니터링 지속합니다", "monitoring"),
+    # 추가: '해제 예정'은 closed가 아닌 reported 여야 함
+    ("안전 확인 시 통행 제한 해제 예정입니다", "reported"),
+    # 추가: 수색 진행중
+    ("실종자 수색중입니다. 자율방재단 투입 완료", "in_progress"),
+    # 추가: 야간 모니터링
+    ("야간 모니터링 지속합니다. 수위 경계 유지", "monitoring"),
+    # 추가: 응급복구 완료
+    ("토사유출 응급복구 완료하였습니다. 통행 재개합니다", "closed"),
 ]
 
 def test_status_classification():
@@ -236,7 +261,7 @@ def test_status_classification():
         if ok:
             passed += 1
 
-    r = PASS if passed >= 8 else FAIL
+    r = PASS if passed >= len(STATUS_CASES) - 1 else FAIL
     print(f"  총 {passed}/{len(STATUS_CASES)} 통과 → {result_str(r)}")
     return r == PASS, passed
 
@@ -252,10 +277,10 @@ def test_incident_merging(messages):
     print(f"  정상 메시지: {len(normal_msgs)}개")
     print(f"  재구성된 사고 건수: {len(incidents)}개")
 
-    # 샘플 기준 기대 건수: 약 9~11건 (10개 사고)
-    count_ok = 8 <= len(incidents) <= 14
+    # 샘플 기준 기대 건수: 약 15~22건 (확장 샘플 18개 사고)
+    count_ok = 15 <= len(incidents) <= 22
     r = PASS if count_ok else WARN
-    print(f"  사고 건수 8~14건 범위: {result_str(r)} ({len(incidents)}건)")
+    print(f"  사고 건수 15~22건 범위: {result_str(r)} ({len(incidents)}건)")
 
     # 각 사고별 message_count 확인 (후속 메시지 병합 여부)
     multi_msg = [inc for inc in incidents if inc.get("message_count", 0) >= 2]
@@ -282,6 +307,42 @@ def test_incident_merging(messages):
 # ─────────────────────────────────────────────────────────────────────────────
 # 검증 6: overview 통계 구조
 # ─────────────────────────────────────────────────────────────────────────────
+def test_incident_type_coverage(incidents):
+    """확장 샘플에서 기대하는 유형/지역이 실제로 나타나는지 확인."""
+    print("\n[5b] 유형·지역 커버리지 검증")
+    found_types = {inc.get("incident_type") for inc in incidents}
+    found_emds = {inc.get("emd") for inc in incidents}
+
+    expected_types = {"flood", "landslide", "tree_fall", "sinkhole", "drainage", "facility", "rescue"}
+    expected_emds = {"주덕읍", "살미면", "소태면", "신니면", "가금면"}
+
+    missing_types = expected_types - found_types
+    missing_emds = expected_emds - found_emds
+
+    r1 = PASS if not missing_types else WARN
+    print(f"  기대 유형 모두 등장: {result_str(r1)} (누락={missing_types or '없음'})")
+
+    r2 = PASS if not missing_emds else WARN
+    print(f"  신규 읍면동 모두 등장: {result_str(r2)} (누락={missing_emds or '없음'})")
+
+    # 살미면이 facility로 분류되었는지
+    salmi = [i for i in incidents if i.get("emd") == "살미면" and i.get("incident_type") == "facility"]
+    r3 = PASS if salmi else WARN
+    print(f"  살미면 교량→facility 분류: {result_str(r3)}")
+
+    # 호암직동 침수(flood)와 실종(rescue) 분리 확인
+    hoam_types = [i.get("incident_type") for i in incidents if i.get("emd") == "호암직동"]
+    r4 = PASS if "flood" in hoam_types and "rescue" in hoam_types else WARN
+    print(f"  호암직동 flood·rescue 분리: {result_str(r4)} (유형={hoam_types})")
+
+    # 주덕읍 사건이 Day 1+2에 걸쳐 하나로 병합됐는지
+    jukdeok = [i for i in incidents if i.get("emd") == "주덕읍"]
+    r5 = PASS if len(jukdeok) == 1 and jukdeok[0].get("message_count", 0) >= 6 else WARN
+    print(f"  주덕읍 Day1→Day2 병합 (1건): {result_str(r5)} ({len(jukdeok)}건, 메시지 {jukdeok[0].get('message_count',0) if jukdeok else 0}개)")
+
+    return r1 == PASS and r2 == PASS
+
+
 def test_overview_structure(incidents):
     print("\n[6] Overview 통계 구조 검증")
 
@@ -374,6 +435,9 @@ def main():
 
     incidents, r_merge = test_incident_merging(messages)
     results["사고 병합"] = PASS if r_merge else WARN
+
+    r_coverage = test_incident_type_coverage(incidents)
+    results["유형·지역 커버리지"] = PASS if r_coverage else WARN
 
     r_overview = test_overview_structure(incidents)
     results["Overview 통계"] = PASS if r_overview else FAIL

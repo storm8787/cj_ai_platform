@@ -144,11 +144,37 @@ def _find_active_incident(
         else:
             na = _normalize_location(inc_loc)
             nb = _normalize_location(msg_loc) if msg_loc else ""
+            emd_n = _normalize_location(inc_emd)
             # 한쪽이 다른 쪽의 접두어인 경우 (예: "목행용탄동" vs "목행용탄동 용탄교 진입로")
             if nb and (na.startswith(nb) or nb.startswith(na)):
                 score = 0.85
             else:
                 score = _location_similarity(msg_loc, inc_loc)
+                # EMD 제거 후 본문 비교: 같은 랜드마크(3자↑ 공통접두어) 또는 suffix 일치
+                if score < LOCATION_SIMILARITY_THRESHOLD and nb:
+                    na_body = na[len(emd_n):] if na.startswith(emd_n) else na
+                    nb_body = nb[len(emd_n):] if nb.startswith(emd_n) else nb
+                    if na_body and nb_body:
+                        # 공통 접두어 3자 이상 (예: "용탄교진입로" vs "용탄교하상도로")
+                        common = sum(
+                            1 for a, b in zip(na_body, nb_body) if a == b
+                            # zip stops at shorter → these are only leading matches
+                        )
+                        # zip 결과는 대응 위치별 일치이므로 첫 불일치까지만 카운트
+                        common_prefix = 0
+                        for ca, cb in zip(na_body, nb_body):
+                            if ca == cb:
+                                common_prefix += 1
+                            else:
+                                break
+                        if common_prefix >= 3:
+                            score = max(score, 0.82)
+                        # suffix 일치 2자 이상 (예: "주민센터앞맨홀" vs "맨홀")
+                        elif len(na_body) >= 2 and len(nb_body) >= 2:
+                            shorter = na_body if len(na_body) <= len(nb_body) else nb_body
+                            longer = nb_body if len(na_body) <= len(nb_body) else na_body
+                            if len(shorter) >= 2 and longer.endswith(shorter):
+                                score = max(score, 0.82)
 
         if score >= LOCATION_SIMILARITY_THRESHOLD and score > best_score:
             best_idx = idx
@@ -203,6 +229,27 @@ def _resolve_final_status(statuses: List[str]) -> str:
     return "reported"
 
 
+def _find_incident_by_location_text(active_incidents: List[Dict], text: str) -> Optional[int]:
+    """emd 없는 메시지 텍스트에 활성 사건의 위치명/emd가 포함되면 해당 사건 인덱스 반환.
+    최근 사건부터 역순으로 탐색."""
+    for idx in reversed(range(len(active_incidents))):
+        incident = active_incidents[idx]
+        if incident.get("_closed"):
+            continue
+        inc_emd = (incident.get("emd") or "").strip()
+        inc_loc = (incident.get("location_raw") or "").strip()
+
+        if inc_emd and inc_emd in text:
+            return idx
+
+        if inc_loc:
+            loc_body = inc_loc.replace(inc_emd, "").strip()
+            for token in loc_body.split():
+                if len(token) >= 3 and token in text:
+                    return idx
+    return None
+
+
 def build_incidents(parsed_messages: List[Dict]) -> List[Dict]:
     """
     메시지 리스트로부터 사건 목록을 재구성.
@@ -249,13 +296,15 @@ def build_incidents(parsed_messages: List[Dict]) -> List[Dict]:
             text = (msg.get("raw_text") or "").strip()
 
             # emd 없는 메시지는 재난 핵심 키워드가 없으면 새 사건을 만들지 않음
-            # → 직전 활성 사건에 첨부하거나 무시
+            # → 위치 텍스트 매칭 우선, 그 다음 직전 활성 사건에 첨부하거나 무시
             if not msg_emd:
                 if _DISASTER_CONTENT_RE.search(text):
-                    # 재난 내용은 있지만 위치 불명: 직전 활성 사건에 첨부
-                    if last_active_idx is not None and last_active_idx < len(active_incidents):
-                        if not active_incidents[last_active_idx].get("_closed"):
-                            active_incidents[last_active_idx]["_messages"].append(msg)
+                    # 활성 사건 위치명/emd가 텍스트에 포함된 사건 우선 선택
+                    loc_match_idx = _find_incident_by_location_text(active_incidents, text)
+                    target_idx = loc_match_idx if loc_match_idx is not None else last_active_idx
+                    if target_idx is not None and target_idx < len(active_incidents):
+                        if not active_incidents[target_idx].get("_closed"):
+                            active_incidents[target_idx]["_messages"].append(msg)
                 # emd 없는 단순 조율/응답 메시지는 버림
                 continue
 
