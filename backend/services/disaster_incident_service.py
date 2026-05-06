@@ -10,12 +10,45 @@
 - 사진 메시지는 직전 활성 사건에 부착 (기존 유지)
 """
 
+import re
 from collections import Counter
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Tuple
 
+# 재난 내용 최소 키워드 - emd 없는 메시지가 새 사건을 생성할지 판단하는 기준
+_DISASTER_CONTENT_RE = re.compile(
+    r"침수|산사태|낙석|나무|싱크홀|정전|통제|복구|조치|사고|파손|유실|"
+    r"피해|붕괴|역류|수위|배수|토사|실종|수색|구조|정전|사상|부상"
+)
+
 
 LOCATION_SIMILARITY_THRESHOLD = 0.80
+
+# 서로 같은 사고로 볼 수 있는 유형 호환 그룹
+# flood+drainage는 같은 침수 사고의 다른 단계, road_control은 원인 사고의 결과
+_TYPE_COMPAT: dict = {
+    "flood":        {"flood", "drainage", "road_control"},
+    "drainage":     {"flood", "drainage", "road_control"},
+    "landslide":    {"landslide", "road_control"},
+    "tree_fall":    {"tree_fall", "road_control"},
+    "sinkhole":     {"sinkhole", "road_control"},
+    "road_control": {"flood", "drainage", "landslide", "tree_fall", "sinkhole", "road_control"},
+    "rescue":       {"rescue"},
+    "facility":     {"facility"},
+    "inspection":   None,  # wildcard — 어떤 유형과도 호환
+}
+
+
+def _types_compatible(type_a: str, type_b: str) -> bool:
+    """두 사고 유형이 같은 사건으로 병합 가능한지 판단."""
+    if type_a == "inspection" or type_b == "inspection":
+        return True
+    if type_a == type_b:
+        return True
+    compat_a = _TYPE_COMPAT.get(type_a)
+    if compat_a is None:  # wildcard
+        return True
+    return type_b in compat_a
 
 
 def _normalize_location(text: str) -> str:
@@ -41,8 +74,6 @@ def _location_similarity(a: str, b: str) -> float:
 
 def should_include_as_incident(msg: Dict) -> bool:
     """사건 후보로 볼 메시지인지 판정"""
-    import re
-
     message_type = msg.get("message_type")
 
     if message_type in ["system_invite", "deleted", "video"]:
@@ -53,15 +84,15 @@ def should_include_as_incident(msg: Dict) -> bool:
 
     text = (msg.get("raw_text") or "").strip()
 
+    if not text:
+        return False
+
     # 짧은 단순 응답 메시지 필터 (정규식 기반)
-    if len(text) <= 8 and re.match(
-        r"^(네\.?|넵\.?|확인\.?|확인했습니다\.?|감사|고맙|수고|굿|ㅇㅋ|ok)",
+    if len(text) <= 12 and re.match(
+        r"^(네\.?|넵\.?|확인\.?|확인했습니다\.?|감사|고맙|수고|굿|ㅇㅋ|ok|알겠습니다|네\.?\s*확인)",
         text,
         re.IGNORECASE,
     ):
-        return False
-
-    if not text:
         return False
 
     return True
@@ -103,14 +134,25 @@ def _find_active_incident(
         if inc_emd != msg_emd:
             continue
 
-        # inspection은 와일드카드로 허용 (나중에 재계산됨)
-        if msg_type != inc_type and msg_type != "inspection" and inc_type != "inspection":
+        # 유형 호환성 확인 (inspection 와일드카드 포함)
+        if not _types_compatible(msg_type, inc_type):
             continue
 
-        sim = _location_similarity(msg_loc, inc_loc)
-        if sim >= LOCATION_SIMILARITY_THRESHOLD and sim > best_score:
+        # 위치 미특정 사건(loc == emd 또는 비어있음)
+        if not inc_loc or inc_loc == inc_emd:
+            score = 0.81
+        else:
+            na = _normalize_location(inc_loc)
+            nb = _normalize_location(msg_loc) if msg_loc else ""
+            # 한쪽이 다른 쪽의 접두어인 경우 (예: "목행용탄동" vs "목행용탄동 용탄교 진입로")
+            if nb and (na.startswith(nb) or nb.startswith(na)):
+                score = 0.85
+            else:
+                score = _location_similarity(msg_loc, inc_loc)
+
+        if score >= LOCATION_SIMILARITY_THRESHOLD and score > best_score:
             best_idx = idx
-            best_score = sim
+            best_score = score
 
     return best_idx
 
@@ -203,9 +245,23 @@ def build_incidents(parsed_messages: List[Dict]) -> List[Dict]:
 
             last_active_idx = match_idx
         else:
-            # 새 사건 생성
+            msg_emd = (msg.get("emd") or "").strip()
+            text = (msg.get("raw_text") or "").strip()
+
+            # emd 없는 메시지는 재난 핵심 키워드가 없으면 새 사건을 만들지 않음
+            # → 직전 활성 사건에 첨부하거나 무시
+            if not msg_emd:
+                if _DISASTER_CONTENT_RE.search(text):
+                    # 재난 내용은 있지만 위치 불명: 직전 활성 사건에 첨부
+                    if last_active_idx is not None and last_active_idx < len(active_incidents):
+                        if not active_incidents[last_active_idx].get("_closed"):
+                            active_incidents[last_active_idx]["_messages"].append(msg)
+                # emd 없는 단순 조율/응답 메시지는 버림
+                continue
+
+            # 새 사건 생성 (emd 있는 경우만)
             new_incident = {
-                "emd": msg.get("emd"),
+                "emd": msg_emd,
                 "location_raw": msg.get("location_raw"),
                 "incident_type": msg.get("incident_type") or "inspection",
                 "_messages": [msg],

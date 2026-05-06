@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-05 — 재난상황 대시보드 분류기·UI 개선 (v7.1)
+
+**배경**: 기존 분류기 정확도 미흡 (EMD 별칭 미인식, 사건 과분리 44건, rescue 유형 미지원), 대시보드 UI가 단순 표/카드 수준이었음.
+
+**변경 내용**:
+
+### 분류기 개선 (`backend/services/`)
+
+- `disaster_constants.py`
+  - `EMD_ALIASES`: 카카오톡 줄임 표기 → 공식 행정동 코드 매핑 (호암동→호암직동 등 10개)
+  - `EMD_FALLBACK_BLACKLIST`: 비지명 한자어 fallback 매칭 오탐 방지
+  - `INCIDENT_TYPE_LABELS`에 `rescue: "수색·구조"` 추가
+- `disaster_parser_service.py`
+  - EMD 추출 3단계: EMD_LIST → EMD_ALIASES → fallback regex (최소 2글자 제약)
+  - `rescue` 유형 분류 규칙 추가 (실종·수색·인명구조)
+  - `tree_fall` 패턴 확장 (`나무.*쓰러|수목.*쓰러|쓰러진.*나무`)
+  - `drainage` 규칙을 `flood` 앞으로 이동 (맨홀역류→drainage 정확 분류)
+  - `monitoring` 상태: "설치 완료" 포함 (안전봉 설치 후 completed 오분류 방지)
+  - `in_progress` 상태: "수색중" 추가
+  - `_trim_location_tail()`: 위치 문자열 말미 조치 단어 제거 ("긴급", "처리" 등)
+  - `_find_emd_text_form()`: 별칭 포함 EMD 텍스트 형태 역탐색 헬퍼
+- `disaster_incident_service.py`
+  - 유형 호환 그룹 `_TYPE_COMPAT` 도입 (flood↔drainage↔road_control 등)
+  - 위치 매칭 3단계: 빈 위치(0.81)→접두어 매칭(0.85)→SequenceMatcher(≥0.80)
+  - EMD 없는 메시지: 재난 키워드 있으면 직전 사건에 부착, 없으면 버림 (사건 과분리 방지)
+
+### 백엔드 API 확장 (`backend/routers/disaster_dashboard.py`)
+
+- `GET /api/disaster/dashboard/overview` 응답에 신규 필드 추가:
+  - `active_count`, `done_count`, `affected_emd_count`, `top_type`, `top_type_label`
+  - `by_type_labeled`, `by_status_labeled` (한글 라벨 키)
+  - `recent_incidents` (최근 10건, type_label·status_label 포함)
+  - `emd_map_data` (읍면동별 위경도·사건수·진행중 수)
+  - `EMD_COORDS` 충주시 25개 읍면동 위경도 좌표 내장
+
+### 프론트엔드 UI 개편 (`frontend/src/`)
+
+- `pages/DisasterDashboard.jsx` 전면 재설계:
+  - 요약 카드 5개 (총 사건·진행중·완료종결·발생읍면동·최다유형)
+  - 지도 영역: 카카오맵(VITE_KAKAO_MAP_KEY 있을 때) / EMD 도트맵 fallback
+  - 최근 사건 카드 (유형·상태 필터)
+  - 유형별·상태별·읍면동별 수평 바 차트 (외부 라이브러리 미사용)
+- `constants/disaster.js`: `rescue: "수색·구조"` 추가
+
+### 테스트 및 검증 (`backend/tests/`)
+
+- `fixtures/disaster_sample_kakao.txt` 신규 작성 (75메시지, 9유형, 12개 EMD)
+- `evaluate_disaster_dashboard.py` 신규 작성 (7개 항목 자동 검증, PASS:6/WARN:1/FAIL:0)
+
+---
+
 ## 2026-04 — 문서 체계 전면 개편 (v9)
 
 - `PROJECT_DOCUMENTATION.md` deprecated → `docs/INDEX.md` 중심 구조로 전환

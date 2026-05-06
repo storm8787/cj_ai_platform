@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .disaster_constants import EMD_ALIASES, EMD_FALLBACK_BLACKLIST
+
 
 # =========================
 # 파일 경로 / 읍면동 목록 로드
@@ -87,8 +89,8 @@ PHOTO_RE = re.compile(r"^사진(?:\s*(\d+)장)?$")
 VIDEO_RE = re.compile(r"^동영상$")
 DELETED_RE = re.compile(r"삭제된 메시지입니다")
 
-# fallback용 읍면동 정규식
-EMD_PATTERN = re.compile(r"([가-힣]{1,12}(?:읍|면|동))")
+# fallback용 읍면동 정규식 (2자 이상 한글 + 읍/면/동 - "출동" 등 비지명 단어 방지)
+EMD_PATTERN = re.compile(r"([가-힣]{2,12}(?:읍|면|동))")
 
 # 주소/지번/시설형 위치
 LOCATION_HINT_PATTERNS = [
@@ -113,22 +115,24 @@ BRACKET_CHARS_RE = re.compile(r"[\[\]【】『』()〔〕「」《》]")
 # 원인형 재난 먼저, 통제는 뒤로
 INCIDENT_TYPE_RULES = [
     (re.compile(r"산사태|토사유출|토사유실|사면|붕괴|낙석|석축이 무너|임야 사태"), "landslide"),
-    (re.compile(r"나무전도|수목전도|쓰러진 나무|전도된 나무|고목.*전도|아카시아나무.*쓰러|피해목제거"), "tree_fall"),
-    (re.compile(r"침수|범람|월류|수위상승|도로침수|유실된 제방|맨홀역류|배수불량으로 침수"), "flood"),
+    (re.compile(r"나무전도|수목전도|쓰러진 나무|전도된 나무|고목.*전도|아카시아나무.*쓰러|피해목제거|나무.*쓰러|수목.*쓰러|쓰러진.*나무"), "tree_fall"),
+    (re.compile(r"배수로|맨홀|양수|펌프장|역류|준설|배수 안됨|오수맨홀|맨홀역류"), "drainage"),
+    (re.compile(r"침수|범람|월류|수위상승|수위.*상승|도로침수|유실된 제방|배수불량으로 침수|하상도로.*침수|침수 우려"), "flood"),
     (re.compile(r"싱크홀|씽크홀|노면 파손|웅덩이"), "sinkhole"),
-    (re.compile(r"배수로|맨홀|양수|펌프장|역류|준설|배수 안됨|오수맨홀"), "drainage"),
+    (re.compile(r"실종|수색|인명구조"), "rescue"),
     (re.compile(r"유실|시설|공사현장|절개지|오수|정전|반파|파손"), "facility"),
     (re.compile(r"통제|출입 통제|통행제한|차단|통행차단|통제 유지|출입 통제 유지"), "road_control"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다|현황.*없습니다|상황관리|점검결과 이상없습니다"), "inspection"),
 ]
 
 # 상태 규칙: 예정 계열은 reported로, 진행 계열만 in_progress
+# '설치 완료'는 임시 안전시설(안전봉, 차단봉) 설치이므로 completed에서 제외 → monitoring으로 처리
 STATUS_RULES = [
     (re.compile(r"해제|통행재개|개통"), "closed"),
-    (re.compile(r"복구 완료|처리 완료|긴급조치 완료|제거 완료|설치 완료|응급복구 완료|양수 작업 완료|조치 완료|조치완료|완료했습니다|완료하였습니다"), "completed"),
-    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|처리중|처리 중"), "in_progress"),
+    (re.compile(r"복구 완료|처리 완료|긴급조치 완료|제거 완료|응급복구 완료|양수 작업 완료|조치 완료|조치완료|완료했습니다|완료하였습니다"), "completed"),
+    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|처리중|처리 중|수색중"), "in_progress"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다"), "no_issue"),
-    (re.compile(r"모니터링|상황관리|지속적으로 확인|관찰지역|통제 유지|예찰강화|예찰 강화"), "monitoring"),
+    (re.compile(r"모니터링|상황관리|지속적으로 확인|관찰지역|통제 유지|설치 완료|예찰강화|예찰 강화"), "monitoring"),
     # '~예정'은 아직 시작 안 함 → reported 유지 (명시적 패턴이지만 마지막에 배치)
     (re.compile(r"예정"), "reported"),
 ]
@@ -189,14 +193,23 @@ def infer_status(text: str, incident_type: str) -> str:
 def extract_emd(text: str) -> Optional[str]:
     text = text or ""
 
-    # 1순위: 읍면동 목록 파일 기준
+    # 1순위: 읍면동 목록 파일 기준 (공식 행정동명)
     for emd in EMD_LIST:
         if emd in text:
             return emd
 
-    # 2순위: fallback regex
-    match = EMD_PATTERN.search(text)
-    return match.group(1) if match else None
+    # 2순위: 별칭 매핑 (충주시 줄임 표기 → 공식 행정동)
+    for alias, canonical in EMD_ALIASES.items():
+        if alias in text:
+            return canonical
+
+    # 3순위: fallback regex (비지명 단어 블랙리스트 적용)
+    for match in EMD_PATTERN.finditer(text):
+        candidate = match.group(1)
+        if candidate not in EMD_FALLBACK_BLACKLIST:
+            return candidate
+
+    return None
 
 
 def _clean_location_text(text: str) -> str:
@@ -205,13 +218,40 @@ def _clean_location_text(text: str) -> str:
     return " ".join(cleaned.split()).strip()
 
 
+# 위치명 뒤에 오면 안 되는 상황/동사 키워드 (LOCATION_HINT_PATTERNS fallback 후처리)
+_LOCATION_TAIL_STOPS = [
+    "조치", "완료", "입니다", "발생", "신고", "긴급", "처리",
+    "나무", "낙석", "토사", "침수", "정전", "사고", "현장", "작업",
+]
+
+
+def _trim_location_tail(loc: str) -> str:
+    """위치 문자열 뒤에 붙은 재난 상황 동사구를 제거."""
+    for stop in _LOCATION_TAIL_STOPS:
+        loc = loc.split(stop)[0].strip()
+    return loc
+
+
+def _find_emd_text_form(text: str, emd: str) -> Optional[str]:
+    """텍스트에서 emd에 해당하는 실제 표기(별칭 포함)를 찾아 반환."""
+    if emd in text:
+        return emd
+    for alias, canonical in EMD_ALIASES.items():
+        if canonical == emd and alias in text:
+            return alias
+    return None
+
+
 def extract_location_raw(text: str) -> Optional[str]:
     text = text or ""
     emd = extract_emd(text)
 
+    # 텍스트에 실제 쓰인 emd 표현(별칭 포함) 찾기
+    emd_text = _find_emd_text_form(text, emd) if emd else None
+
     # 1. 읍면동 뒤 장소명 조합 방식
-    if emd and emd in text:
-        after_emd = text.split(emd, 1)[1].strip()
+    if emd_text and emd_text in text:
+        after_emd = text.split(emd_text, 1)[1].strip()
 
         for keyword in sorted(LOCATION_KEYWORDS, key=len, reverse=True):
             if keyword in after_emd:
@@ -225,11 +265,13 @@ def extract_location_raw(text: str) -> Optional[str]:
                 if candidate:
                     return f"{emd} {candidate}".strip()
 
-    # 2. 정규식 기반 fallback
+    # 2. 정규식 기반 fallback (리(里) 등이 동사구와 오매칭될 수 있어 tail 정리 필수)
     for pattern in LOCATION_HINT_PATTERNS:
         match = pattern.search(text)
         if match:
-            loc = _clean_location_text(match.group(1))
+            loc = _clean_location_text(_trim_location_tail(match.group(1)))
+            if not loc:
+                continue
             if emd and emd not in loc:
                 return f"{emd} {loc}".strip()
             return loc

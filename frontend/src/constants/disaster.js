@@ -14,6 +14,7 @@ export const INCIDENT_TYPE_LABELS = {
   sinkhole: "싱크홀·노면파손",
   drainage: "배수·맨홀·양수",
   facility: "시설물 이상",
+  rescue: "수색·구조",
   inspection: "기타/미분류",
 };
 
