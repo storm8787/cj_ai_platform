@@ -48,7 +48,7 @@
 | `services/disaster_incident_service.py` | `disaster_dashboard.py` | 재난 사고 데이터 처리 |
 | `services/disaster_report_service.py` | `disaster_dashboard.py` | 재난일보 생성 |
 | `services/disaster_parser_service.py` | `disaster_dashboard.py` | 재난 데이터 파싱 |
-| `services/kordoc_service.py` | (확인 필요) | kordoc 문서 변환 서비스 |
+| `services/kordoc_service.py` | `hwpx_converter.py` | HWPX → Markdown 변환 (kordoc 엔진) |
 | `services/disaster_constants.py` | `disaster_dashboard.py` | 재난 상수 정의 |
 
 ---

@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-05 — 재난상황 대시보드 위치 추출 정확도 개선 + 일일보고서 표 형식 (v12)
+
+**배경**: 위치 추출 오탐(행정기관 컨텍스트 이후 도로명 오인, trailing 비위치 단어 포함, 별칭 EMD 중복) 및 일일보고서 Markdown 표 호환성 문제.
+
+**변경 내용**:
+
+### 위치 추출 개선 (`backend/services/disaster_parser_service.py`)
+
+- `_NATURAL_GEO_PATTERN` 추가: `^([가-힣]{2,8}(?:천|강|저수지|호수|봉))` — 문두 자연지명(천·강·봉 등) 즉시 캡처
+- `LOCATION_HINT_PATTERNS` 공백-단어 그룹 최솟값 `{1,15}` → `{2,15}` (단일 글자 가짜 매칭 방지)
+- `_LOCATION_TAIL_STOPS` 확장: `"수위", "상승", "하강", "지속", "급격히"` 추가
+- `_fmt_loc(emd, emd_text, loc)` 헬퍼 추가: 별칭 EMD 중복 방지 (칠금동→칠금금릉동 공식명 기준 단일 표기)
+- `extract_location_raw()` 재작성:
+  - 1a. 복합 패턴 + `_trim_location_tail` 적용
+  - 1b. 키워드 prefix → `_trim_location_tail(prefix)` 클린징 후 사용
+  - 1c. `_NATURAL_GEO_PATTERN` (자연지명 문두 매칭)
+  - 1d. `RI_PATTERN` + `RI_TO_EMD` 검증 (리(里) 단위 역조회)
+
+### 일일보고서 표 형식 개선 (`backend/services/disaster_report_service.py`)
+
+- `_md_table()`: `|---|---|` → `| --- | --- |` (공백 포함 표준 Markdown 형식으로 변경)
+
+### 테스트 추가 (`backend/tests/`)
+
+- `evaluate_location_extraction.py` 신규: 28개 케이스 전용 위치 추출 정확도 평가 (28/28 PASS)
+- `fixtures/disaster_location_test_kakao.txt` 신규: 다양한 위치 표현 패턴 포함 120개 샘플 메시지
+- `evaluate_disaster_dashboard.py` 업데이트: 테스트 항목 9→10개
+
+---
+
 ## 2026-05 — 재난상황 대시보드 분류기·UI 개선 (v7.1)
 
 **배경**: 기존 분류기 정확도 미흡 (EMD 별칭 미인식, 사건 과분리 44건, rescue 유형 미지원), 대시보드 UI가 단순 표/카드 수준이었음.

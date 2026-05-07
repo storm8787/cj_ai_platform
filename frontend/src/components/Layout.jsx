@@ -26,6 +26,7 @@ const aiServiceCategories = [
       { icon: '✅', title: '공공데이터 검증기', path: '/data-validator' },
       { icon: '📍', title: '주소-좌표 변환기', path: '/address-geocoder' },
       { icon: '📑', title: '엑셀 취합기', path: '/excel-merger' },
+      { icon: '📝', title: 'HWPX 변환기', path: '/hwpx-converter' },
       { icon: '📅', title: '사업 타임라인', path: '/timeline' },
       { icon: '🚨', title: '재난상황 대시보드', path: '/disaster-dashboard' }
     ]

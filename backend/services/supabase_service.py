@@ -78,6 +78,70 @@ class SupabaseService:
             print(f"❌ 파일 업로드 실패: {e}")
             return None
 
+    async def log_press_release(
+        self,
+        file_bytes: bytes,
+        file_name: str,
+        metadata: Optional[Dict] = None
+    ) -> Optional[Dict]:
+        """보도자료 생성 로그 (파일 업로드 + DB 저장)"""
+        import uuid
+        if not self.client:
+            return None
+        try:
+            unique_id = uuid.uuid4().hex[:8]
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            ext = file_name.split(".")[-1] if "." in file_name else "txt"
+            storage_path = f"downloads/{date_str}/{unique_id}.{ext}"
+            self.client.storage.from_("files").upload(
+                storage_path,
+                file_bytes,
+                {"content-type": "text/plain"},
+            )
+        except Exception:
+            storage_path = None
+
+        try:
+            data = {
+                "feature_name": "보도자료 생성기",
+                "file_type": "download",
+                "original_name": file_name,
+                "file_size": len(file_bytes),
+                "storage_path": storage_path,
+                "status": "success",
+                "metadata": metadata or {},
+                "created_at": datetime.now().isoformat(),
+            }
+            result = self.client.table("file_logs").insert(data).execute()
+            return result.data[0] if result.data else {}
+        except Exception as e:
+            print(f"❌ 보도자료 로그 저장 실패: {e}")
+            return None
+
+    async def log_error(
+        self,
+        feature_name: str,
+        error_message: str,
+        metadata: Optional[Dict] = None
+    ) -> Optional[Dict]:
+        """에러 로그"""
+        if not self.client:
+            return None
+        try:
+            data = {
+                "feature_name": feature_name,
+                "file_type": "error",
+                "status": "fail",
+                "error_msg": error_message,
+                "metadata": metadata or {},
+                "created_at": datetime.now().isoformat(),
+            }
+            result = self.client.table("file_logs").insert(data).execute()
+            return result.data[0] if result.data else {}
+        except Exception as e:
+            print(f"❌ 에러 로그 저장 실패: {e}")
+            return None
+
     async def get_usage_stats(
         self,
         start_date: Optional[str] = None,
