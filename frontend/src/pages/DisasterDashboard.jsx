@@ -93,19 +93,13 @@ function HBar({ label, value, max, color }) {
 }
 
 function EmdDotMap({ emdMapData }) {
-  if (!emdMapData || emdMapData.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-        지도 데이터 없음
-      </div>
-    );
-  }
+  // 좌표 있는 항목만 렌더링. 백엔드가 25개 전체 EMD를 항상 전달하므로 항상 지도 표시됨.
+  const withCoords = (emdMapData || []).filter((d) => d.lat && d.lng);
 
-  const withCoords = emdMapData.filter((d) => d.lat && d.lng);
   if (withCoords.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-        좌표 데이터 없음
+        데이터 불러오는 중...
       </div>
     );
   }
@@ -116,7 +110,7 @@ function EmdDotMap({ emdMapData }) {
   const maxLat = Math.max(...lats) + 0.025;
   const minLng = Math.min(...lngs) - 0.025;
   const maxLng = Math.max(...lngs) + 0.025;
-  const maxCount = Math.max(...emdMapData.map((d) => d.count), 1);
+  const maxCount = Math.max(...withCoords.map((d) => d.count), 1);
 
   return (
     <div className="relative w-full h-full bg-slate-800/50 rounded-xl overflow-hidden border border-slate-700/50">
@@ -132,8 +126,7 @@ function EmdDotMap({ emdMapData }) {
         충주시 읍면동 현황
       </div>
 
-      {emdMapData.map((d) => {
-        if (!d.lat || !d.lng) return null;
+      {withCoords.map((d) => {
         const x = ((d.lng - minLng) / (maxLng - minLng)) * 100;
         const y = ((maxLat - d.lat) / (maxLat - minLat)) * 100;
         const r = 7 + Math.min(d.count / maxCount, 1) * 14;

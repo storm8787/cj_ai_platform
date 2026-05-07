@@ -505,20 +505,23 @@ def get_dashboard_overview(upload_id: str):
         for r in recent_incidents
     ]
 
-    # 지도용 읍면동 데이터 (좌표 포함)
+    # 지도용 읍면동 데이터: EMD_COORDS의 25개 전체를 항상 포함
+    # (사건이 없는 읍면동도 지도에 표시 → 파서 EMD 추출 실패 시에도 지도 항상 렌더링)
     emd_map_data = []
-    for emd, count in sorted(emd_counter.items(), key=lambda x: -x[1]):
-        coord = EMD_COORDS.get(emd, {})
-        emd_rows = [r for r in rows if (r.get("emd") or "미분류") == emd]
+    for emd_name, coords in EMD_COORDS.items():
+        count = emd_counter.get(emd_name, 0)
+        emd_rows = [r for r in rows if r.get("emd") == emd_name]
         active_in_emd = sum(1 for r in emd_rows if r.get("status") in active_statuses)
         emd_map_data.append({
-            "emd": emd,
+            "emd": emd_name,
             "count": count,
             "active_count": active_in_emd,
-            "lat": coord.get("lat"),
-            "lng": coord.get("lng"),
-            "has_coords": bool(coord),
+            "lat": coords["lat"],
+            "lng": coords["lng"],
+            "has_coords": True,
         })
+    # 사건 수 기준 정렬 (많은 것 먼저)
+    emd_map_data.sort(key=lambda x: -x["count"])
 
     # 유형별 라벨 포함 통계
     by_type_labeled = {
