@@ -197,7 +197,7 @@ function EmdRankTable({ emdMapData }) {
   const maxCount = withIncidents[0]?.count || 1;
 
   return (
-    <div className="overflow-y-auto max-h-72">
+    <div className="overflow-y-auto">
       <table className="w-full text-xs">
         <thead className="sticky top-0 bg-slate-900">
           <tr className="text-slate-500 border-b border-slate-800">
@@ -453,11 +453,13 @@ export default function DisasterDashboard() {
               </div>
 
               {/* 읍면동별 현황 (1/3) */}
-              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 flex flex-col">
-                <h2 className="text-sm font-semibold text-slate-200 mb-3">
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 flex flex-col min-h-[300px]">
+                <h2 className="text-sm font-semibold text-slate-200 mb-3 shrink-0">
                   읍면동별 현황
                 </h2>
-                <EmdRankTable emdMapData={overview.emd_map_data || []} />
+                <div className="flex-1 overflow-y-auto min-h-0">
+                  <EmdRankTable emdMapData={overview.emd_map_data || []} />
+                </div>
               </div>
             </div>
 

@@ -4,6 +4,40 @@
 
 ---
 
+## 2026-05 — 재난상황 대시보드 v13: MD 표 렌더링 수정 + GPT 위치 보완 + UI 개선
+
+**배경**: 3가지 사용자 불만 해결 — (1) 일일보고서 Markdown 표가 화면에 표시되지 않음, (2) 위치 추출 정확도 부족, (3) 읍면동별 현황 테이블이 너무 짧아 불필요한 스크롤 발생.
+
+**변경 내용**:
+
+### 1. 일일보고서 Markdown 렌더러 전면 재작성 (`frontend/src/pages/DisasterDailyReport.jsx`)
+
+- `isTableSep(line)`: 공백 제거 후 `|`, `-`, `:` 만 남으면 구분선 판별 — 모든 Markdown 표 형식 처리
+- `parseRow(line)`: `|`로 분할 후 1:-1 슬라이스 + trim
+- `renderInline(text)`: `**굵게**`, `` `인라인코드` `` 지원
+- 블록 단위 파싱: 표 내 빈 줄 1개 허용 (GPT 출력 특성 대응)
+- 코드 펜스(` ``` `), 순서 있는 리스트(`1. 2.`), 구분선(`---`) 추가 지원
+
+### 2. GPT 배치 위치 보완 (`backend/services/disaster_parser_service.py`, `backend/routers/disaster_dashboard.py`)
+
+- `enrich_locations_with_gpt()`: `gpt-4o-mini` 단일 배치 호출로 `location_raw == emd`인 사건들의 위치 보완
+- `_enrich_incident_locations_gpt()`: 분석 완료 후 비동기 호출, 실패해도 결과에 영향 없음
+- `LOCATION_KEYWORDS` 확장: 병원, 학교, 주민센터, 아파트, 저수지, 터널, 나들목 등 15개 추가
+- `LOCATION_HINT_PATTERNS` terminal 키워드 확장
+
+### 3. 읍면동 현황 테이블 레이아웃 수정 (`frontend/src/pages/DisasterDashboard.jsx`)
+
+- `EmdRankTable` 내부 `max-h-72` 제거 → `flex-1 overflow-y-auto min-h-0` 래퍼 적용
+- 카드에 `min-h-[300px]` 추가 — 인접 카드 높이에 맞게 자동 늘어남
+
+### 4. 신규 문서 추가
+
+- `docs/features/disaster_location_extraction.md`: 위치 추출 2단계 파이프라인 상세 문서 (규칙 기반 + GPT 보완)
+
+**테스트**: `python3 backend/tests/evaluate_location_extraction.py` → 28/28 PASS
+
+---
+
 ## 2026-05 — 재난상황 대시보드 위치 추출 정확도 개선 + 일일보고서 표 형식 (v12)
 
 **배경**: 위치 추출 오탐(행정기관 컨텍스트 이후 도로명 오인, trailing 비위치 단어 포함, 별칭 EMD 중복) 및 일일보고서 Markdown 표 호환성 문제.

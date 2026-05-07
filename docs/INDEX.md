@@ -80,6 +80,7 @@ docs/features/law_chatbot.md → docs/evaluations/law_chatbot_eval.md
 | `auth.md` | 인증 시스템 | `/login` |
 | `board.md` | 게시판 시스템 | `/board/*` |
 | `disaster_dashboard.md` | 재난상황 대시보드 | `/disaster-*` |
+| `disaster_location_extraction.md` | 재난 위치 추출 시스템 (규칙+GPT 2단계) | — |
 
 ### 평가 문서 (docs/evaluations/)
 | 파일 | 내용 |

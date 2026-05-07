@@ -23,6 +23,7 @@ from services.disaster_parser_service import (
     infer_status,
     normalize_summary,
     parse_kakao_txt,
+    enrich_locations_with_gpt,
 )
 from services.disaster_constants import INCIDENT_TYPE_LABELS, STATUS_LABELS
 from services.disaster_report_service import generate_daily_report
@@ -195,7 +196,19 @@ async def analyze_disaster_chat(upload_id: str):
     ).eq("id", upload_id).execute()
 
     try:
-        return _run_analysis(supabase, upload_id)
+        result = _run_analysis(supabase, upload_id)
+
+        # GPT 위치 보완: 읍면동만 추출된 사건의 세부 위치를 GPT로 보완
+        # 실패해도 분석 결과에 영향 없음 (non-blocking)
+        try:
+            await _enrich_incident_locations_gpt(supabase, upload_id)
+        except Exception as gpt_e:
+            logger.warning(
+                "GPT location enrichment failed (non-fatal): upload_id=%s, err=%s",
+                upload_id, gpt_e,
+            )
+
+        return result
     except HTTPException:
         # 404 등 명시적 예외는 상태만 되돌리고 그대로 전파
         supabase.table("disaster_uploads").update(
@@ -209,6 +222,45 @@ async def analyze_disaster_chat(upload_id: str):
         ).eq("id", upload_id).execute()
         raise HTTPException(
             status_code=500, detail=f"분석 실패: {type(e).__name__}"
+        )
+
+
+async def _enrich_incident_locations_gpt(supabase, upload_id: str) -> None:
+    """
+    분석 완료 후 GPT로 위치 세부 정보 보완.
+    DB에서 location_raw == emd인 사건들을 읽어 GPT 배치 호출 후 DB 업데이트.
+    """
+    try:
+        from services.openai_service import OpenAIService
+        openai_service = OpenAIService()
+    except Exception:
+        return
+
+    res = (
+        supabase.table("disaster_incidents")
+        .select("id, emd, location_raw, summary")
+        .eq("upload_id", upload_id)
+        .execute()
+    )
+    incidents = res.data or []
+    if not incidents:
+        return
+
+    enriched_incidents = await enrich_locations_with_gpt(incidents, openai_service)
+
+    # 변경된 항목만 DB 업데이트
+    updates = 0
+    for orig, enriched in zip(incidents, enriched_incidents):
+        if enriched.get("location_raw") != orig.get("location_raw"):
+            supabase.table("disaster_incidents").update(
+                {"location_raw": enriched["location_raw"]}
+            ).eq("id", orig["id"]).execute()
+            updates += 1
+
+    if updates:
+        logger.info(
+            "GPT location enrichment DB update: upload_id=%s, updated=%d",
+            upload_id, updates,
         )
 
 
