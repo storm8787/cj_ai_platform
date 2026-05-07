@@ -35,11 +35,14 @@ REPORT_MODEL = "gpt-4o"
 _DEFAULT_SYSTEM_PROMPT = """당신은 충주시청 재난안전 담당 공무원의 일일보고서 작성을 돕는 AI 비서입니다.
 
 다음 원칙을 반드시 지키세요:
-1. 공문서 문체 사용. 경어체(~합니다, ~입니다) 금지. 단어형 종결 사용(예: "발생", "완료", "조치 중").
-2. 개인정보(보고자 이름) 노출 금지. 부서명/기관명은 그대로 사용 가능.
-3. 객관적 사실만 기술. 추측/과장 표현 금지.
-4. 주어진 사건 데이터 외의 내용을 창작하지 말 것.
-5. 숫자는 정확히 반영. 카운트가 0인 항목은 "해당없음"으로 표기.
+1. 출력 형식은 반드시 **Markdown(.md)** 형식으로 작성.
+2. 공문서 문체 사용. 경어체(~합니다, ~입니다) 금지. 단어형 종결 사용(예: "발생", "완료", "조치 중").
+3. 개인정보(보고자 이름) 노출 금지. 부서명/기관명은 그대로 사용 가능.
+4. 객관적 사실만 기술. 추측/과장 표현 금지.
+5. 주어진 사건 데이터 외의 내용을 창작하지 말 것.
+6. 숫자는 정확히 반영. 카운트가 0인 항목은 "해당없음"으로 표기.
+7. 유형별 발생현황, 조치상황은 반드시 Markdown 표 형식으로 작성.
+8. 주요 사건은 읍면동별로 묶어 Markdown 표(읍면동|재난유형|상태|요약)로 작성.
 """
 
 
@@ -69,18 +72,40 @@ _DEFAULT_BODY_PROMPT = """다음은 {report_date} 기준 충주시 재난상황 
 [주요 사건 목록]
 {incident_list}
 
-위 데이터를 바탕으로 다음 5개 섹션으로 구성된 일일보고서 본문을 작성하세요:
+위 데이터를 바탕으로 아래 형식의 Markdown 일일보고서를 작성하세요.
+공문서 문체(단어형 종결). 경어체 금지.
 
-1. 재난상황 총괄
-2. 유형별 발생현황
-3. 조치상황
-4. 주요 사건
-5. 향후 조치계획
+---
 
-각 섹션은 번호(1., 2., 3., 4., 5.)를 포함하고, 항목은 ◦ 기호로 시작하세요.
-공문서 문체 사용(단어형 종결). 경어체 금지.
-주요 사건 섹션은 사건 목록의 모든 항목을 포함하되 간결하게 한 줄씩 작성하세요.
-향후 조치계획은 실제 데이터에 기반한 현실적 내용으로만 작성하세요.
+# {report_date} 재난상황 일일보고
+
+## 1. 재난상황 총괄
+(총괄 요약 2~3줄. 총 사건 수, 주요 유형, 주요 지역 포함)
+
+## 2. 유형별 발생현황
+
+| 재난유형 | 건수 | 비고 |
+|---------|------|------|
+| (유형명) | N건 | |
+
+## 3. 조치상황
+
+| 상태 | 건수 |
+|------|------|
+| (상태명) | N건 |
+
+## 4. 주요 사건
+
+| 읍면동 | 재난유형 | 상태 | 요약 |
+|-------|---------|------|------|
+| (읍면동) | (유형) | (상태) | (요약 30자 이내) |
+
+## 5. 향후 조치계획
+- (실제 데이터에 기반한 조치 계획 2~3항목)
+
+---
+
+주의: 표는 반드시 Markdown 표 문법(| col | col |)을 사용하고, 데이터는 제공된 사건 목록 기반으로만 작성하세요.
 """
 
 
@@ -215,6 +240,14 @@ def _generate_fallback_summary(report_date: str, agg: Dict) -> str:
     )
 
 
+def _md_table(headers: List[str], rows: List[List[str]]) -> str:
+    """간단한 Markdown 표 생성."""
+    sep = "|" + "|".join(["---"] * len(headers)) + "|"
+    head = "|" + "|".join(headers) + "|"
+    body = "\n".join("|" + "|".join(r) + "|" for r in rows)
+    return f"{head}\n{sep}\n{body}"
+
+
 def _generate_fallback_body(
     report_date: str,
     agg: Dict,
@@ -223,50 +256,53 @@ def _generate_fallback_body(
     type_counter = agg["type_counter"]
     status_counter = agg["status_counter"]
 
-    # 섹션 1: 총괄
     top3 = (
         ", ".join([f"{incident_label(k)} {v}건" for k, v in type_counter.most_common(3)])
         if type_counter else "해당없음"
     )
 
-    # 섹션 2: 유형별
-    type_lines = [
-        f"  ◦ {incident_label(code)} : {count}건"
+    # 유형별 표
+    type_rows = [
+        [incident_label(code), f"{count}건", ""]
         for code, count in type_counter.most_common()
-    ] or ["  ◦ 해당없음"]
+    ] or [["해당없음", "0건", ""]]
+    type_table = _md_table(["재난유형", "건수", "비고"], type_rows)
 
-    # 섹션 3: 상태별
-    status_lines = [
-        f"  ◦ {status_label(code)} : {count}건"
+    # 상태별 표
+    status_rows = [
+        [status_label(code), f"{count}건"]
         for code, count in status_counter.most_common()
-    ] or ["  ◦ 해당없음"]
+    ] or [["해당없음", "0건"]]
+    status_table = _md_table(["상태", "건수"], status_rows)
 
-    # 섹션 4: 주요 사건 (보고자 이름 제외)
-    major_items = []
-    for inc in incidents[:15]:
-        emd = inc.get("emd") or ""
-        loc = inc.get("location_raw") or ""
+    # 주요 사건 표 (읍면동별 정렬)
+    inc_sorted = sorted(incidents[:20], key=lambda x: x.get("emd") or "")
+    incident_rows = []
+    for inc in inc_sorted:
+        emd = inc.get("emd") or "미분류"
         itype = incident_label(inc.get("incident_type"))
         stat = status_label(inc.get("status"))
-        summary = inc.get("summary") or ""
-        line = f"  ◦ {emd} {loc} / {itype} / {stat} / {summary}".strip()
-        major_items.append(line)
-    if not major_items:
-        major_items = ["  ◦ 해당없음"]
+        summary = (inc.get("summary") or "")[:40].replace("|", "│")
+        incident_rows.append([emd, itype, stat, summary])
+    if not incident_rows:
+        incident_rows = [["해당없음", "", "", ""]]
+    incident_table = _md_table(["읍면동", "재난유형", "상태", "요약"], incident_rows)
 
     return (
-        f"1. 재난상황 총괄\n"
-        f"  ◦ {report_date} 기준 카카오톡 상황보고 분석 결과, 총 {agg['total']}건의 유효 사건이 확인되었음\n"
-        f"  ◦ 주요 유형은 {top3}으로 분석되었음\n\n"
-        f"2. 유형별 발생현황\n"
-        f"{chr(10).join(type_lines)}\n\n"
-        f"3. 조치상황\n"
-        f"{chr(10).join(status_lines)}\n\n"
-        f"4. 주요 사건\n"
-        f"{chr(10).join(major_items)}\n\n"
-        f"5. 향후 조치계획\n"
-        f"  ◦ 조치중 및 모니터링 상태 사건에 대하여 지속적인 현장 예찰 및 후속조치 추진\n"
-        f"  ◦ 반복 발생 지역에 대해서는 원인분석 및 항구복구 필요성 검토\n"
+        f"# {report_date} 재난상황 일일보고\n\n"
+        f"## 1. 재난상황 총괄\n\n"
+        f"- {report_date} 기준 카카오톡 상황보고 분석 결과, 총 **{agg['total']}건** 유효 사건 확인\n"
+        f"- 주요 유형: {top3}\n"
+        f"- 조치완료·해제: {agg['completed']}건 / 조치중: {agg['in_progress']}건\n\n"
+        f"## 2. 유형별 발생현황\n\n"
+        f"{type_table}\n\n"
+        f"## 3. 조치상황\n\n"
+        f"{status_table}\n\n"
+        f"## 4. 주요 사건\n\n"
+        f"{incident_table}\n\n"
+        f"## 5. 향후 조치계획\n\n"
+        f"- 조치중·모니터링 사건 지속 현장 예찰 및 후속조치 추진\n"
+        f"- 반복 발생 지역 원인분석 및 항구복구 필요성 검토\n"
     )
 
 
