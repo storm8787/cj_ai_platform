@@ -114,7 +114,8 @@ LOCATION_HINT_PATTERNS = [
         r"([가-힣a-zA-Z0-9\-]{2,20}(?:\s+[가-힣a-zA-Z0-9\-]{2,15}){0,3}"
         r"(?:로|길|번지|사거리|굴다리|삼거리|교차로|마을|공원|산책로|등산로|하천변|천변산책로|"
         r"지하차도|통로박스|경로당|고개길|제방|펌프장|진입로|출입구|진출입로|계곡|세월교|"
-        r"교량|다리|하상도로|파크골프장|공사현장|맨홀|급경사지))"
+        r"교량|다리|하상도로|파크골프장|공사현장|맨홀|급경사지|"
+        r"아파트|학교|병원|주민센터|파출소|소방서|저수지|터널|고개|광장|나들목))"
     ),
 ]
 
@@ -136,12 +137,26 @@ _ORG_CTX_PATTERN = re.compile(
 
 # 읍면동 뒤에 자주 붙는 장소 키워드
 LOCATION_KEYWORDS = [
+    # 산책로·등산로·공원
     "천변산책로", "산책로", "등산로", "하천변", "하천변도로",
-    "진입로", "출입구", "진출입로", "주차장", "공원", "교량", "다리",
-    "세월교", "제방", "통로박스", "파크골프장", "휴양림", "계곡",
-    "하상도로", "굴다리", "삼거리", "사거리", "공사현장", "펌프장",
-    "요양병원", "문화원", "경기장", "화장실", "맨홀", "급경사지",
-    "교현천 산책로", "충주천 하천변 산책로", "남산등산로", "참샘골 마을안길"
+    # 도로·교통 시설
+    "진입로", "출입구", "진출입로", "하상도로", "굴다리",
+    "삼거리", "사거리", "교차로", "통로박스", "지하차도",
+    # 수리·수문 시설
+    "주차장", "공원", "교량", "다리", "세월교", "제방",
+    "파크골프장", "휴양림", "계곡", "펌프장", "저수지", "수문", "취수장",
+    # 건물·생활 시설
+    "맨홀", "급경사지", "공사현장",
+    "요양병원", "병원", "의원",
+    "초등학교", "중학교", "고등학교", "학교",
+    "문화원", "경기장", "화장실",
+    "주민센터", "복지관", "경로당", "노인회관",
+    "파출소", "소방서", "우체국", "행정복지센터",
+    "아파트", "마트", "슈퍼", "편의점",
+    # 자연 지형
+    "고개", "터널", "나들목",
+    # 고정 패턴 (긴 것 먼저)
+    "교현천 산책로", "충주천 하천변 산책로", "남산등산로", "참샘골 마을안길",
 ]
 
 # 괄호 정리용 문자 (위치 추출 시)
@@ -577,3 +592,95 @@ def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
         )
 
     return parsed
+
+
+# =========================
+# GPT 배치 위치 보완 (획기적 해결책)
+# =========================
+
+async def enrich_locations_with_gpt(
+    incidents: List[Dict],
+    openai_service,
+) -> List[Dict]:
+    """
+    GPT(gpt-4o-mini) 한 번의 배치 호출로 위치가 부족한 사건들의
+    location_raw를 보완한다.
+
+    대상: location_raw가 없거나 emd(읍면동명)만 있는 사건
+    방식: 사건 요약 목록을 한 번에 전달 → GPT가 구체적 위치 추출
+    실패 시: 원본 데이터 그대로 유지 (non-blocking)
+    """
+    if not incidents or openai_service is None:
+        return incidents
+
+    to_enrich_idx = [
+        i for i, inc in enumerate(incidents)
+        if inc.get("emd")
+        and (
+            not inc.get("location_raw")
+            or inc.get("location_raw") == inc.get("emd")
+        )
+        and inc.get("incident_type") not in ("inspection",)
+        and (inc.get("summary") or inc.get("location_raw"))
+    ]
+
+    if not to_enrich_idx:
+        return incidents
+
+    lines = []
+    for seq, inc_idx in enumerate(to_enrich_idx, 1):
+        inc = incidents[inc_idx]
+        emd = inc.get("emd", "")
+        summary = (inc.get("summary") or inc.get("location_raw") or "")[:120]
+        lines.append(f"{seq}. [{emd}] {summary}")
+
+    batch_text = "\n".join(lines)
+    prompt = (
+        "다음은 충주시 재난상황 보고 메시지 목록입니다.\n"
+        "각 항목에서 읍면동명을 제외한 구체적인 위치(도로명, 교량명, 하천명, 시설명, 마을명 등)를 추출하세요.\n\n"
+        f"{batch_text}\n\n"
+        "출력 형식: 각 줄에 \"번호: 위치\" 형태만 출력.\n"
+        "구체적 위치를 찾을 수 없는 항목은 출력하지 마세요.\n"
+        "읍면동명은 제외하고 그 이후의 구체적 위치만 출력하세요.\n"
+        "예시: \"1: 천변산책로\", \"3: 동아교 교량\", \"5: 참샘골 마을안길\""
+    )
+
+    try:
+        result = await openai_service.generate_text(
+            prompt=prompt,
+            system_prompt="충주시 재난 위치 추출 전문가. 주어진 형식대로만 출력.",
+            max_tokens=400,
+            temperature=0.1,
+            model="gpt-4o-mini",
+        )
+    except Exception as e:
+        logger.warning("GPT location enrichment call failed: %s", e)
+        return incidents
+
+    enriched: Dict[int, str] = {}
+    for raw_line in (result or "").strip().split("\n"):
+        m = re.match(r"^(\d+)[:：]\s*(.+)", raw_line.strip())
+        if m:
+            num = int(m.group(1))
+            loc = m.group(2).strip()
+            if loc and 1 <= num <= len(to_enrich_idx):
+                enriched[num] = loc
+
+    if not enriched:
+        return incidents
+
+    result_incidents = list(incidents)
+    for seq, inc_idx in enumerate(to_enrich_idx, 1):
+        new_loc = enriched.get(seq)
+        if not new_loc:
+            continue
+        inc = incidents[inc_idx]
+        emd = inc.get("emd", "")
+        full_loc = f"{emd} {new_loc}".strip() if emd and emd not in new_loc else new_loc
+        result_incidents[inc_idx] = {**inc, "location_raw": full_loc}
+
+    logger.info(
+        "GPT location enrichment: %d/%d incidents enriched",
+        len(enriched), len(to_enrich_idx),
+    )
+    return result_incidents
