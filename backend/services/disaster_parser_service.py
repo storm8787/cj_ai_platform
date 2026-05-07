@@ -104,14 +104,31 @@ VIDEO_RE = re.compile(r"^동영상$")
 DELETED_RE = re.compile(r"삭제된 메시지입니다")
 
 # fallback용 읍면동 정규식 (2자 이상 한글 + 읍/면/동 - "출동" 등 비지명 단어 방지)
+# fallback용 읍면동 정규식 (2자 이상 한글 + 읍/면/동 - "출동" 등 비지명 단어 방지)
 EMD_PATTERN = re.compile(r"([가-힣]{2,12}(?:읍|면|동))")
 
-# 주소/지번/시설형 위치
+# 주소/지번/시설형 위치 — 첫 문장 내 짧은 범위에서만 적용
 LOCATION_HINT_PATTERNS = [
     re.compile(
-        r"([가-힣0-9\-\s]+(?:로|길|번지|리|산\d+[\-\d]*|사거리|굴다리|삼거리|마을|공원|산책로|등산로|하천변|천변산책로|지하차도|통로박스|경로당|고개길|제방|펌프장|병원|시장|휴양림|주차장|진입로|출입구|진출입로|계곡|세월교|교량|다리|하상도로|파크골프장|운동장|주차장입구|산책로입구|공사현장|요양병원|문화원|경기장|화장실|맨홀|급경사지))"
+        r"([가-힣a-zA-Z0-9\-]{1,20}(?:\s+[가-힣a-zA-Z0-9\-]{1,15}){0,3}"
+        r"(?:로|길|번지|사거리|굴다리|삼거리|교차로|마을|공원|산책로|등산로|하천변|천변산책로|"
+        r"지하차도|통로박스|경로당|고개길|제방|펌프장|진입로|출입구|진출입로|계곡|세월교|"
+        r"교량|다리|하상도로|파크골프장|공사현장|맨홀|급경사지))"
     ),
 ]
+
+# 복합 위치 패턴: "X 앞 Y", "X 옆 Y" 형태 (예: 한국관 앞 삼거리, 시청 앞 교차로)
+_COMPOUND_LOC_PATTERN = re.compile(
+    r"([가-힣a-zA-Z0-9]{2,12}"
+    r"\s+(?:앞|옆|근처|주변|사이)"
+    r"(?:\s+[가-힣a-zA-Z0-9]{2,10}(?:로|길|삼거리|사거리|교차로|교량|다리|진입로|입구|광장)?)?)"
+)
+
+# 행정기관 표현 패턴: 이 이후는 행정 조치 컨텍스트 → 위치 탐색 제외
+# 예: "도로과와 자원순환과에서는", "안전총괄과에서 확인"
+_ORG_CTX_PATTERN = re.compile(
+    r"[가-힣]{2,10}(?:과|팀|소|부서|대)\s*(?:에서는?|와\s+[가-힣]|에서\s+(?:확인|처리|담당|출동))"
+)
 
 # 읍면동 뒤에 자주 붙는 장소 키워드
 LOCATION_KEYWORDS = [
@@ -276,13 +293,12 @@ def _clean_location_text(text: str) -> str:
     return " ".join(cleaned.split()).strip()
 
 
-# 위치명 뒤에 오면 안 되는 상황/동사 키워드 (LOCATION_HINT_PATTERNS fallback 후처리)
+# 위치명 뒤에 오면 안 되는 상황/동사 키워드
 _LOCATION_TAIL_STOPS = [
     "조치", "완료", "입니다", "발생", "신고", "긴급", "처리",
     "나무", "낙석", "토사", "침수", "정전", "사고", "현장", "작업",
-    # 추가: 관리/행정 동사구 (예: "도로관리사업소"의 "관리"가 지번 '리'로 오매칭)
-    "관리", "통제", "차단", "수위", "협조", "요청", "확인", "현장",
-    "정리", "마무리",  # "재난상황 최종 정리" 등 행정 요약 문구 방지
+    "관리", "통제", "차단", "수위", "협조", "요청", "확인",
+    "정리", "마무리", "에서는", "으로부터",
 ]
 
 
@@ -290,10 +306,25 @@ def _trim_location_tail(loc: str) -> str:
     """위치 문자열 뒤에 붙은 재난 상황 동사구를 제거. 3자 미만이면 빈 문자열 반환."""
     for stop in _LOCATION_TAIL_STOPS:
         loc = loc.split(stop)[0].strip()
-    # 너무 짧은 결과는 의미 없는 오매칭으로 간주
     if len(loc.replace(" ", "")) < 3:
         return ""
     return loc
+
+
+def _clip_for_location(text: str) -> str:
+    """
+    위치 탐색용 텍스트 전처리:
+    1. 행정기관 표현(과에서는, 과와 등) 이전까지만 사용
+    2. 첫 줄(개행 기준)으로 제한
+    3. 최대 100자 제한
+    이렇게 하면 "도로과와 자원순환과에서는 ... 동부외곽순환도로" 같은
+    행정 조치 문맥 뒤의 도로명이 위치로 잘못 추출되는 것을 방지.
+    """
+    m = _ORG_CTX_PATTERN.search(text)
+    if m:
+        text = text[:m.start()].strip()
+    text = text.split("\n")[0]
+    return text[:100]
 
 
 def _find_emd_text_form(text: str, emd: str) -> Optional[str]:
@@ -309,35 +340,47 @@ def _find_emd_text_form(text: str, emd: str) -> Optional[str]:
 def extract_location_raw(text: str) -> Optional[str]:
     text = text or ""
     emd = extract_emd(text)
-
-    # 텍스트에 실제 쓰인 emd 표현(별칭 포함) 찾기
     emd_text = _find_emd_text_form(text, emd) if emd else None
 
-    # 1. 읍면동 뒤 장소명 조합 방식 (첫 문장 안에서만 탐색)
+    # 1. 읍면동 뒤 첫 문장에서 장소 키워드 조합
     if emd_text and emd_text in text:
         after_emd = text.split(emd_text, 1)[1].strip()
-        # 문장 경계(마침표/쉼표/개행)에서 첫 문장만 사용
-        first_sentence = re.split(r"[.,。\n]", after_emd)[0].strip()
+        # 행정기관 문맥 절단 + 첫 문장
+        first_sentence = re.split(r"[.,。\n]", _clip_for_location(after_emd))[0].strip()
 
+        # 1a. 복합 위치 ("한국관 앞 삼거리" 등) 우선 탐색
+        compound = _COMPOUND_LOC_PATTERN.search(first_sentence)
+        if compound:
+            candidate = _clean_location_text(compound.group(1))
+            if candidate:
+                return f"{emd} {candidate}".strip()
+
+        # 1b. LOCATION_KEYWORDS 기반
         for keyword in sorted(LOCATION_KEYWORDS, key=len, reverse=True):
             if keyword in first_sentence:
                 idx = first_sentence.find(keyword)
-                candidate = first_sentence[: idx + len(keyword)].strip()
-                candidate = _clean_location_text(candidate)
-
+                candidate = _clean_location_text(first_sentence[: idx + len(keyword)])
                 if candidate:
                     return f"{emd} {candidate}".strip()
 
-    # 2. 정규식 기반 fallback (리(里) 등이 동사구와 오매칭될 수 있어 tail 정리 필수)
+    # 2. 행정기관 문맥 절단 후 정규식 fallback
+    clipped = _clip_for_location(text)
+
+    # 2a. 복합 위치 패턴 먼저
+    compound = _COMPOUND_LOC_PATTERN.search(clipped)
+    if compound:
+        loc = _clean_location_text(compound.group(1))
+        if loc and len(loc.replace(" ", "")) >= 3:
+            return f"{emd} {loc}".strip() if (emd and emd not in loc) else loc
+
+    # 2b. 주소형 패턴
     for pattern in LOCATION_HINT_PATTERNS:
-        match = pattern.search(text)
+        match = pattern.search(clipped)
         if match:
             loc = _clean_location_text(_trim_location_tail(match.group(1)))
             if not loc:
                 continue
-            if emd and emd not in loc:
-                return f"{emd} {loc}".strip()
-            return loc
+            return f"{emd} {loc}".strip() if (emd and emd not in loc) else loc
 
     # 3. 최후 fallback: 읍면동만
     return emd

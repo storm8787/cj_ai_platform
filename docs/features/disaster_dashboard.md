@@ -84,6 +84,16 @@ disaster_incident_service: 사고 재구성
 > ⚠️ `eup_myeon_dong.txt`에 없는 읍면동은 절대 반환하지 않음.  
 > "00리" 패턴은 `ri_to_emd.json` 매핑으로 상위 읍면동을 찾아 반환.
 
+### 위치(location_raw) 추출 개선 (v11)
+
+**문제**: 행정기관 표현 이후의 도로명이 위치로 잘못 추출되거나, `X 앞 Y` 복합 위치가 부분만 추출됨.
+
+**수정 내용** (`disaster_parser_service.py`):
+- `_ORG_CTX_PATTERN`: `도로과와 자원순환과에서는` 같은 행정기관 컨텍스트 표현 감지 → 그 이전 텍스트만 위치 탐색에 사용
+- `_COMPOUND_LOC_PATTERN`: `한국관 앞 삼거리`, `시청 옆 교차로` 같은 복합 위치 패턴 추가
+- `_clip_for_location()`: 행정기관 절단 + 첫 줄 + 100자 제한으로 탐색 범위 축소
+- 위치 탐색 순서: 복합 위치 → LOCATION_KEYWORDS → 주소형 패턴 → 읍면동만
+
 ### 사고 유형 분류 우선순위 (v8: 겨울 재난 추가 + v9: 계절 자동 필터)
 
 #### 계절별 분류 필터 (v9 신규)
@@ -149,7 +159,9 @@ disaster_incident_service: 사고 재구성
 | `by_status` / `by_status_labeled` | 상태별 집계 |
 | `by_emd` | 읍면동별 집계 |
 | `recent_incidents` | 최근 업데이트 사건 10건 (type_label, status_label 포함) |
-| `emd_map_data` | 읍면동별 위경도·사건수·진행중 수 목록 |
+| `active_incidents` | 진행중·발생·모니터링 사건 전체 (상한 없음) |
+| `done_incidents` | 최근 완료·종결 사건 5건 |
+| `emd_map_data` | 읍면동별 위경도·사건수·진행중 수 목록 (25개 전체 EMD 항상 포함) |
 
 ---
 
@@ -173,12 +185,16 @@ disaster_incident_service: 사고 재구성
 ## 7. 수정 시 주의사항
 
 - 일일보고 생성 모델: `gpt-4o` (다른 기능의 `gpt-4o-mini`와 다름)
-- 프롬프트: `prompt_service.get("disaster", ...)` 패턴 (3단계 fallback)
+- **일일보고 출력 형식: Markdown (.md)** — GPT 프롬프트와 폴백 템플릿 모두 MD 형식으로 생성
+  - 유형별 발생현황, 조치상황: Markdown 표(`| col | col |`) 형식
+  - 주요 사건: `읍면동 | 재난유형 | 상태 | 요약` 표 형식, 읍면동별 정렬
+- 프롬프트: `prompt_service.get("disaster_report", ...)` 패턴 (3단계 fallback)
 - TXT 파일 인코딩: UTF-8 / CP949 자동 감지
 - 빈 배열 insert 방지: `if incident_rows: insert(...)` 가드 필요 (없으면 crash)
 - 개인정보: 일일보고 GPT 프롬프트에 보고자 이름 포함하지 않도록 주의
 - 프론트엔드: `useDisasterSession()` 훅 사용 (sessionStorage 리액티브)
 - 상수 변경 시: `backend/services/disaster_constants.py`와 `frontend/src/constants/disaster.js` 양쪽 모두 업데이트 필요
+- 일일보고 페이지: 미리보기(MD 렌더링) / Markdown 원문 탭 전환 + `.md` 파일 다운로드 버튼
 
 ---
 
@@ -191,7 +207,7 @@ cd /home/user/cj_ai_platform
 python backend/tests/evaluate_disaster_dashboard.py
 ```
 
-7개 항목을 자동 검증 (PASS/WARN/FAIL 결과):
+9개 항목을 자동 검증 (PASS/WARN/FAIL 결과):
 1. TXT 파싱 (메시지 수, 날짜 파싱)
 2. EMD 추출 (별칭 포함)
 3. 사고 유형 분류 (rescue, drainage, flood 등)
