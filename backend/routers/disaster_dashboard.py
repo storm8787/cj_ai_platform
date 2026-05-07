@@ -24,8 +24,38 @@ from services.disaster_parser_service import (
     normalize_summary,
     parse_kakao_txt,
 )
+from services.disaster_constants import INCIDENT_TYPE_LABELS, STATUS_LABELS
 from services.disaster_report_service import generate_daily_report
 from services.supabase_service import get_supabase_client
+
+# 충주시 읍면동 중심 좌표 (Kakao Maps fallback용 좌표 데이터)
+EMD_COORDS: dict = {
+    "더덕읍":    {"lat": 36.9614, "lng": 127.9052},
+    "살미면":    {"lat": 36.9246, "lng": 127.9573},
+    "수안보면":  {"lat": 36.8447, "lng": 127.9753},
+    "대소원면":  {"lat": 36.9938, "lng": 127.8543},
+    "신니면":    {"lat": 36.9673, "lng": 127.8237},
+    "노은면":    {"lat": 37.0203, "lng": 127.8640},
+    "앙성면":    {"lat": 36.9948, "lng": 127.9673},
+    "중앙탑면":  {"lat": 37.0185, "lng": 127.9498},
+    "금가면":    {"lat": 37.0397, "lng": 127.8867},
+    "동량면":    {"lat": 36.9104, "lng": 127.8621},
+    "산척면":    {"lat": 36.9023, "lng": 127.9156},
+    "엄정면":    {"lat": 37.0648, "lng": 127.9843},
+    "소태면":    {"lat": 36.8738, "lng": 127.8735},
+    "성내충인동": {"lat": 36.9917, "lng": 127.9281},
+    "교현안림동": {"lat": 36.9854, "lng": 127.9235},
+    "교현2동":   {"lat": 36.9830, "lng": 127.9280},
+    "용산동":    {"lat": 37.0011, "lng": 127.9212},
+    "지현동":    {"lat": 36.9938, "lng": 127.9305},
+    "문화동":    {"lat": 37.0052, "lng": 127.9273},
+    "호암직동":  {"lat": 36.9723, "lng": 127.9234},
+    "달천동":    {"lat": 36.9601, "lng": 127.9142},
+    "봉방동":    {"lat": 36.9814, "lng": 127.9371},
+    "칠금금릉동": {"lat": 36.9774, "lng": 127.9406},
+    "연수동":    {"lat": 36.9878, "lng": 127.9498},
+    "목행용탄동": {"lat": 37.0027, "lng": 127.9546},
+}
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -416,8 +446,12 @@ def get_dashboard_overview(upload_id: str):
     supabase = get_supabase_client()
     res = (
         supabase.table("disaster_incidents")
-        .select("id, incident_type, status, emd, incident_time")
+        .select(
+            "id, incident_type, status, emd, incident_time, "
+            "location_raw, summary, photo_count, message_count, last_update_time"
+        )
         .eq("upload_id", upload_id)
+        .order("incident_time")
         .execute()
     )
     rows = res.data or []
@@ -426,6 +460,20 @@ def get_dashboard_overview(upload_id: str):
     status_counter = Counter(r["status"] for r in rows if r.get("status"))
     emd_counter = Counter((r.get("emd") or "미분류") for r in rows)
 
+    # 진행 중 / 종료 구분
+    active_statuses = {"reported", "in_progress", "monitoring"}
+    done_statuses = {"completed", "closed", "no_issue"}
+    active_count = sum(1 for r in rows if r.get("status") in active_statuses)
+    done_count = sum(1 for r in rows if r.get("status") in done_statuses)
+
+    # 사고 발생 읍면동 수 (미분류 제외)
+    affected_emds = {r["emd"] for r in rows if r.get("emd") and r["emd"] != "미분류"}
+
+    # 최다 사고 유형
+    top_type = type_counter.most_common(1)[0][0] if type_counter else None
+    top_type_label = INCIDENT_TYPE_LABELS.get(top_type, top_type) if top_type else None
+
+    # 시간대별 통계
     hour_counter = Counter()
     for r in rows:
         if r.get("incident_time"):
@@ -435,12 +483,68 @@ def get_dashboard_overview(upload_id: str):
             except (ValueError, TypeError):
                 continue
 
+    # 최근 사고 목록 (최대 10건, 최신 순)
+    recent_incidents = sorted(
+        rows, key=lambda r: r.get("last_update_time") or r.get("incident_time") or "", reverse=True
+    )[:10]
+    recent_list = [
+        {
+            "id": r["id"],
+            "incident_type": r.get("incident_type"),
+            "incident_type_label": INCIDENT_TYPE_LABELS.get(r.get("incident_type"), r.get("incident_type")),
+            "status": r.get("status"),
+            "status_label": STATUS_LABELS.get(r.get("status"), r.get("status")),
+            "emd": r.get("emd"),
+            "location_raw": r.get("location_raw"),
+            "summary": (r.get("summary") or "")[:80],
+            "incident_time": r.get("incident_time"),
+            "last_update_time": r.get("last_update_time"),
+            "photo_count": r.get("photo_count", 0),
+            "message_count": r.get("message_count", 0),
+        }
+        for r in recent_incidents
+    ]
+
+    # 지도용 읍면동 데이터 (좌표 포함)
+    emd_map_data = []
+    for emd, count in sorted(emd_counter.items(), key=lambda x: -x[1]):
+        coord = EMD_COORDS.get(emd, {})
+        emd_rows = [r for r in rows if (r.get("emd") or "미분류") == emd]
+        active_in_emd = sum(1 for r in emd_rows if r.get("status") in active_statuses)
+        emd_map_data.append({
+            "emd": emd,
+            "count": count,
+            "active_count": active_in_emd,
+            "lat": coord.get("lat"),
+            "lng": coord.get("lng"),
+            "has_coords": bool(coord),
+        })
+
+    # 유형별 라벨 포함 통계
+    by_type_labeled = {
+        INCIDENT_TYPE_LABELS.get(k, k): v
+        for k, v in type_counter.items()
+    }
+    by_status_labeled = {
+        STATUS_LABELS.get(k, k): v
+        for k, v in status_counter.items()
+    }
+
     return {
         "total": len(rows),
+        "active_count": active_count,
+        "done_count": done_count,
+        "affected_emd_count": len(affected_emds),
+        "top_type": top_type,
+        "top_type_label": top_type_label,
         "by_type": dict(type_counter),
+        "by_type_labeled": by_type_labeled,
         "by_status": dict(status_counter),
+        "by_status_labeled": by_status_labeled,
         "by_emd": dict(emd_counter),
         "by_hour": dict(sorted(hour_counter.items())),
+        "recent_incidents": recent_list,
+        "emd_map_data": emd_map_data,
     }
 
 
