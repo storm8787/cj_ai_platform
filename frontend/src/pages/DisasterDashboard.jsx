@@ -1,9 +1,10 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { disasterApi } from "../services/api";
 import { INCIDENT_TYPE_LABELS, STATUS_LABELS } from "../constants/disaster";
 import { useDisasterSession } from "../hooks/useDisasterSession";
 
+// ── 유형 색상 ──────────────────────────────────────────
 const TYPE_COLORS = {
   flood: "#3b82f6",
   drainage: "#06b6d4",
@@ -43,14 +44,16 @@ const STATUS_BG = {
   closed: "bg-slate-500/20 text-slate-500",
 };
 
-const STATUS_COLORS = {
-  reported: "#ef4444",
-  in_progress: "#f59e0b",
-  completed: "#22c55e",
-  monitoring: "#3b82f6",
-  no_issue: "#94a3b8",
-  closed: "#64748b",
+const STATUS_DOT = {
+  reported: "bg-red-500",
+  in_progress: "bg-amber-400",
+  completed: "bg-green-500",
+  monitoring: "bg-blue-400",
+  no_issue: "bg-slate-400",
+  closed: "bg-slate-600",
 };
+
+// ── 공통 컴포넌트 ────────────────────────────────────────
 
 function StatCard({ title, value, sub, highlight }) {
   return (
@@ -79,8 +82,8 @@ function HBar({ label, value, max, color }) {
   return (
     <div>
       <div className="flex justify-between text-xs mb-1">
-        <span className="text-slate-300">{label}</span>
-        <span className="text-slate-400">{value}건</span>
+        <span className="text-slate-300 truncate max-w-[70%]">{label}</span>
+        <span className="text-slate-400 shrink-0 ml-1">{value}건</span>
       </div>
       <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
         <div
@@ -92,223 +95,208 @@ function HBar({ label, value, max, color }) {
   );
 }
 
-function EmdDotMap({ emdMapData }) {
-  // 좌표 있는 항목만 렌더링. 백엔드가 25개 전체 EMD를 항상 전달하므로 항상 지도 표시됨.
-  const withCoords = (emdMapData || []).filter((d) => d.lat && d.lng);
+// ── 진행중 사건 패널 ─────────────────────────────────────
 
-  if (withCoords.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-        데이터 불러오는 중...
-      </div>
-    );
-  }
+function ActiveIncidentRow({ incident }) {
+  const typeBg = TYPE_BG[incident.incident_type] || "bg-slate-500/20 text-slate-400";
+  const statusBg = STATUS_BG[incident.status] || "bg-slate-500/20 text-slate-400";
+  const dot = STATUS_DOT[incident.status] || "bg-slate-500";
 
-  const lats = withCoords.map((d) => d.lat);
-  const lngs = withCoords.map((d) => d.lng);
-  const minLat = Math.min(...lats) - 0.025;
-  const maxLat = Math.max(...lats) + 0.025;
-  const minLng = Math.min(...lngs) - 0.025;
-  const maxLng = Math.max(...lngs) + 0.025;
-  const maxCount = Math.max(...withCoords.map((d) => d.count), 1);
+  const timeStr = (incident.last_update_time || incident.incident_time || "").slice(0, 16).replace("T", " ");
 
   return (
-    <div className="relative w-full h-full bg-slate-800/50 rounded-xl overflow-hidden border border-slate-700/50">
-      <div
-        className="absolute inset-0 opacity-10"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(148,163,184,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.4) 1px, transparent 1px)",
-          backgroundSize: "40px 40px",
-        }}
-      />
-      <div className="absolute top-2 left-3 text-xs text-slate-500 pointer-events-none">
-        충주시 읍면동 현황
+    <div className="flex items-start gap-3 py-3 border-b border-slate-800 last:border-0">
+      {/* 상태 점 */}
+      <div className="mt-1.5 shrink-0">
+        <span className={`block w-2 h-2 rounded-full ${dot}`} />
       </div>
-
-      {withCoords.map((d) => {
-        const x = ((d.lng - minLng) / (maxLng - minLng)) * 100;
-        const y = ((maxLat - d.lat) / (maxLat - minLat)) * 100;
-        const r = 7 + Math.min(d.count / maxCount, 1) * 14;
-        const hasActive = d.active_count > 0;
-        const hasAny = d.count > 0;
-
-        return (
-          <div
-            key={d.emd}
-            className="absolute group cursor-default"
-            style={{
-              left: `${x}%`,
-              top: `${y}%`,
-              transform: "translate(-50%, -50%)",
-              zIndex: hasActive ? 10 : hasAny ? 5 : 1,
-            }}
-          >
-            {hasActive && (
-              <div
-                className="absolute rounded-full animate-ping opacity-30"
-                style={{
-                  width: r * 2 + 8 + "px",
-                  height: r * 2 + 8 + "px",
-                  top: -(r + 4) + "px",
-                  left: -(r + 4) + "px",
-                  backgroundColor: "#ef4444",
-                }}
-              />
-            )}
-            <div
-              className="relative rounded-full flex items-center justify-center text-white font-bold shadow-lg border border-white/10"
-              style={{
-                width: r * 2 + "px",
-                height: r * 2 + "px",
-                backgroundColor: hasActive
-                  ? "#dc2626"
-                  : hasAny
-                  ? "#16a34a"
-                  : "#1e293b",
-                fontSize: r < 11 ? "8px" : "10px",
-              }}
-            >
-              {hasAny ? d.count : ""}
-            </div>
-            <div className="absolute z-20 bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-slate-800 border border-slate-600 rounded-lg px-2.5 py-1.5 text-xs whitespace-nowrap shadow-xl pointer-events-none">
-              <div className="font-semibold text-white">{d.emd}</div>
-              <div className="text-slate-400">
-                전체 {d.count}건 | 진행중{" "}
-                <span className={d.active_count > 0 ? "text-red-400" : ""}>
-                  {d.active_count}건
-                </span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      <div className="flex-1 min-w-0">
+        {/* 배지 */}
+        <div className="flex items-center gap-1 flex-wrap mb-1">
+          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${statusBg}`}>
+            {incident.status_label || STATUS_LABELS[incident.status] || incident.status}
+          </span>
+          <span className={`text-xs px-1.5 py-0.5 rounded ${typeBg}`}>
+            {incident.incident_type_label || INCIDENT_TYPE_LABELS[incident.incident_type] || incident.incident_type}
+          </span>
+          {incident.emd && (
+            <span className="text-xs text-slate-500">{incident.emd}</span>
+          )}
+        </div>
+        {/* 위치·요약 */}
+        <p className="text-sm text-white truncate">
+          {incident.location_raw || incident.emd || "위치 불명"}
+        </p>
+        {incident.summary && (
+          <p className="text-xs text-slate-500 truncate mt-0.5">{incident.summary}</p>
+        )}
+      </div>
+      {/* 시간 */}
+      <div className="shrink-0 text-right">
+        <p className="text-xs text-slate-600 whitespace-nowrap">{timeStr}</p>
+        {incident.message_count > 0 && (
+          <p className="text-xs text-slate-700 mt-0.5">{incident.message_count}건 보고</p>
+        )}
+      </div>
     </div>
   );
 }
 
-function KakaoMapView({ emdMapData }) {
-  const mapRef = useRef(null);
-  const [kakaoLoaded, setKakaoLoaded] = useState(false);
-  const KAKAO_KEY = import.meta.env.VITE_KAKAO_MAP_KEY;
+function ActiveIncidentPanel({ incidents }) {
+  const [expanded, setExpanded] = useState(false);
+  const SHOW_LIMIT = 6;
+  const visible = expanded ? incidents : incidents.slice(0, SHOW_LIMIT);
+  const hasMore = incidents.length > SHOW_LIMIT;
 
-  useEffect(() => {
-    if (!KAKAO_KEY || !mapRef.current) return;
-    let scriptEl = null;
-
-    const init = () => {
-      try {
-        window.kakao.maps.load(() => {
-          try {
-            const center = new window.kakao.maps.LatLng(36.9911, 127.8636);
-            const map = new window.kakao.maps.Map(mapRef.current, {
-              center,
-              level: 9,
-            });
-            (emdMapData || []).forEach((d) => {
-              if (!d.lat || !d.lng || d.count === 0) return;
-              const pos = new window.kakao.maps.LatLng(d.lat, d.lng);
-              new window.kakao.maps.Circle({
-                map,
-                center: pos,
-                radius: 300 + d.count * 200,
-                strokeWeight: 2,
-                strokeColor: d.active_count > 0 ? "#ef4444" : "#16a34a",
-                strokeOpacity: 0.9,
-                fillColor: d.active_count > 0 ? "#ef4444" : "#16a34a",
-                fillOpacity: 0.35,
-              });
-              new window.kakao.maps.CustomOverlay({
-                map,
-                position: pos,
-                content: `<div style="background:rgba(0,0,0,0.75);color:#fff;border-radius:4px;padding:2px 6px;font-size:11px;white-space:nowrap">${d.emd} ${d.count}건</div>`,
-                yAnchor: 2.6,
-              });
-            });
-            setKakaoLoaded(true);
-          } catch {
-            // 카카오맵 초기화 실패 → EmdDotMap으로 fallback (아무것도 안 해도 됨)
-          }
-        });
-      } catch {
-        // 무시 — EmdDotMap이 항상 기본 표시됨
-      }
-    };
-
-    if (window.kakao?.maps) {
-      init();
-    } else {
-      scriptEl = document.createElement("script");
-      scriptEl.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_KEY}&autoload=false`;
-      scriptEl.async = true;
-      scriptEl.onload = init;
-      scriptEl.onerror = () => {}; // EmdDotMap이 기본 표시됨
-      document.head.appendChild(scriptEl);
-    }
-
-    return () => {
-      if (scriptEl && document.head.contains(scriptEl))
-        document.head.removeChild(scriptEl);
-    };
-  }, [KAKAO_KEY, emdMapData]);
+  if (incidents.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <div className="w-10 h-10 rounded-full bg-green-900/40 flex items-center justify-center">
+          <span className="text-green-400 text-xl">✓</span>
+        </div>
+        <p className="text-green-400 text-sm font-medium">현재 진행중 사건 없음</p>
+        <p className="text-slate-600 text-xs">모든 사건이 완료 또는 종결되었습니다</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="relative w-full h-full">
-      {/* EmdDotMap은 항상 기본 표시 */}
-      <EmdDotMap emdMapData={emdMapData} />
-      {/* 카카오맵 성공 시 위에 오버레이 */}
-      {KAKAO_KEY && (
-        <div
-          ref={mapRef}
-          className="absolute inset-0 rounded-xl"
-          style={{ display: kakaoLoaded ? "block" : "none" }}
-        />
+    <div>
+      <div className={`${expanded ? "max-h-[600px]" : ""} overflow-y-auto`}>
+        {visible.map((inc, i) => (
+          <ActiveIncidentRow key={inc.id || i} incident={inc} />
+        ))}
+      </div>
+      {hasMore && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="mt-2 w-full text-xs text-slate-500 hover:text-slate-300 py-1.5 border border-slate-800 rounded-lg transition-colors"
+        >
+          {expanded
+            ? "접기"
+            : `나머지 ${incidents.length - SHOW_LIMIT}건 더 보기`}
+        </button>
       )}
     </div>
   );
 }
 
-function RecentIncidentCard({ incident }) {
-  const typeBg =
-    TYPE_BG[incident.incident_type] || "bg-slate-500/20 text-slate-400";
-  const statusBg =
-    STATUS_BG[incident.status] || "bg-slate-500/20 text-slate-400";
+// ── 읍면동 랭킹 테이블 ────────────────────────────────────
+
+function EmdRankTable({ emdMapData }) {
+  const withIncidents = (emdMapData || [])
+    .filter((d) => d.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  if (withIncidents.length === 0) {
+    return (
+      <p className="text-slate-600 text-sm text-center py-8">사건 데이터 없음</p>
+    );
+  }
+
+  const maxCount = withIncidents[0]?.count || 1;
 
   return (
-    <div className="border-b border-slate-800 py-2.5 last:border-0">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1 flex-wrap mb-1">
-            <span className={`text-xs px-1.5 py-0.5 rounded ${typeBg}`}>
-              {incident.incident_type_label ||
-                INCIDENT_TYPE_LABELS[incident.incident_type] ||
-                incident.incident_type}
-            </span>
-            <span className={`text-xs px-1.5 py-0.5 rounded ${statusBg}`}>
-              {incident.status_label ||
-                STATUS_LABELS[incident.status] ||
-                incident.status}
-            </span>
-          </div>
-          <p className="text-sm text-white truncate">
-            {incident.location_raw || incident.emd || "위치 불명"}
-          </p>
-          {incident.summary && (
-            <p className="text-xs text-slate-500 truncate mt-0.5">
-              {incident.summary}
-            </p>
-          )}
-        </div>
-        <div className="text-right shrink-0">
-          <p className="text-xs text-slate-500">{incident.emd}</p>
-          <p className="text-xs text-slate-600">
-            {(incident.last_update_time || "").slice(0, 16)}
-          </p>
-        </div>
-      </div>
+    <div className="overflow-y-auto max-h-72">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-slate-900">
+          <tr className="text-slate-500 border-b border-slate-800">
+            <th className="text-left py-1.5 font-medium">읍면동</th>
+            <th className="text-right py-1.5 font-medium pr-2">전체</th>
+            <th className="text-right py-1.5 font-medium">진행중</th>
+          </tr>
+        </thead>
+        <tbody>
+          {withIncidents.map((d) => {
+            const pct = Math.round((d.count / maxCount) * 100);
+            const hasActive = d.active_count > 0;
+            return (
+              <tr
+                key={d.emd}
+                className={`border-b border-slate-800/50 last:border-0 ${
+                  hasActive ? "bg-red-950/20" : ""
+                }`}
+              >
+                <td className="py-2">
+                  <div className="flex items-center gap-2">
+                    {hasActive && (
+                      <span className="block w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                    )}
+                    <span className={hasActive ? "text-white" : "text-slate-400"}>
+                      {d.emd}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${pct}%`,
+                        backgroundColor: hasActive ? "#ef4444" : "#16a34a",
+                      }}
+                    />
+                  </div>
+                </td>
+                <td className="text-right pr-2 text-slate-300 font-medium">
+                  {d.count}
+                </td>
+                <td className="text-right">
+                  <span
+                    className={
+                      hasActive
+                        ? "text-red-400 font-semibold"
+                        : "text-slate-600"
+                    }
+                  >
+                    {d.active_count}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
+
+// ── 완료 사건 간략 목록 ───────────────────────────────────
+
+function DoneIncidentList({ incidents }) {
+  if (!incidents || incidents.length === 0) {
+    return (
+      <p className="text-slate-600 text-sm text-center py-6">완료 사건 없음</p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {incidents.map((inc, i) => (
+        <div
+          key={inc.id || i}
+          className="flex items-start gap-2 py-2 border-b border-slate-800 last:border-0"
+        >
+          <span
+            className={`mt-0.5 text-xs px-1.5 py-0.5 rounded shrink-0 ${
+              STATUS_BG[inc.status] || "bg-slate-500/20 text-slate-400"
+            }`}
+          >
+            {inc.status_label || STATUS_LABELS[inc.status]}
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs text-slate-300 truncate">
+              {inc.location_raw || inc.emd || "위치 불명"}
+            </p>
+            <p className="text-xs text-slate-600 mt-0.5">
+              {(inc.incident_type_label || inc.incident_type || "")}
+              {inc.emd ? ` · ${inc.emd}` : ""}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── 메인 페이지 ──────────────────────────────────────────
 
 export default function DisasterDashboard() {
   const navigate = useNavigate();
@@ -317,34 +305,19 @@ export default function DisasterDashboard() {
 
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [filterType, setFilterType] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all");
 
   useEffect(() => {
-    const loadOverview = async () => {
-      if (!activeUploadId) {
-        setOverview(null);
-        return;
-      }
-      setLoading(true);
-      try {
-        const res = await disasterApi.getOverview(activeUploadId);
-        setOverview(res.data);
-      } catch (err) {
-        console.error(err);
-        setOverview(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadOverview();
+    if (!activeUploadId) {
+      setOverview(null);
+      return;
+    }
+    setLoading(true);
+    disasterApi
+      .getOverview(activeUploadId)
+      .then((res) => setOverview(res.data))
+      .catch(() => setOverview(null))
+      .finally(() => setLoading(false));
   }, [activeUploadId]);
-
-  const filteredRecent = (overview?.recent_incidents || []).filter((inc) => {
-    if (filterType !== "all" && inc.incident_type !== filterType) return false;
-    if (filterStatus !== "all" && inc.status !== filterStatus) return false;
-    return true;
-  });
 
   if (!activeUploadId) {
     return (
@@ -368,11 +341,7 @@ export default function DisasterDashboard() {
   }
 
   const maxTypeVal = Math.max(...Object.values(overview?.by_type || {}), 1);
-  const maxStatusVal = Math.max(
-    ...Object.values(overview?.by_status || {}),
-    1
-  );
-  const maxEmdVal = Math.max(...Object.values(overview?.by_emd || {}), 1);
+  const maxStatusVal = Math.max(...Object.values(overview?.by_status || {}), 1);
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -380,9 +349,7 @@ export default function DisasterDashboard() {
       <div className="bg-slate-900 border-b border-slate-800 px-6 py-3.5">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold tracking-tight">
-              재난상황 대시보드
-            </h1>
+            <h1 className="text-lg font-bold tracking-tight">재난상황 대시보드</h1>
             <p className="text-xs text-slate-500 mt-0.5">
               {activeFileName || "현재 세션 파일"}
             </p>
@@ -419,7 +386,7 @@ export default function DisasterDashboard() {
           </div>
         ) : overview ? (
           <>
-            {/* 요약 카드 5개 */}
+            {/* ── Row 1: 요약 카드 5개 ── */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <StatCard title="총 사건" value={overview.total ?? 0} />
               <StatCard
@@ -452,85 +419,49 @@ export default function DisasterDashboard() {
               />
             </div>
 
-            {/* 지도 + 최근 사건 */}
+            {/* ── Row 2: 진행중 사건 패널 + 읍면동 현황 ── */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* 지도 영역 */}
+              {/* 진행중·발생 사건 패널 (2/3) */}
               <div className="lg:col-span-2 bg-slate-900 border border-slate-700 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-semibold text-slate-200">
-                    읍면동별 사건 현황
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold text-slate-200">
+                      진행중·발생 사건
+                    </h2>
+                    {(overview.active_incidents?.length ?? 0) > 0 && (
+                      <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-medium">
+                        {overview.active_incidents.length}건
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-3 text-xs text-slate-500">
                     <span className="flex items-center gap-1">
                       <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
-                      진행중
+                      발생
                     </span>
                     <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                      완료
+                      <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                      조치중
                     </span>
                     <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-slate-600 inline-block" />
-                      없음
+                      <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />
+                      모니터링
                     </span>
                   </div>
                 </div>
-                <div className="h-72 relative">
-                  <KakaoMapView emdMapData={overview.emd_map_data || []} />
-                </div>
+                <ActiveIncidentPanel incidents={overview.active_incidents || []} />
               </div>
 
-              {/* 최근 사건 카드 */}
+              {/* 읍면동별 현황 (1/3) */}
               <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 flex flex-col">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-sm font-semibold text-slate-200">
-                    최근 사건
-                  </h2>
-                  <span className="text-xs text-slate-500">최근 업데이트순</span>
-                </div>
-                <div className="flex gap-1.5 mb-3 flex-wrap">
-                  <select
-                    value={filterType}
-                    onChange={(e) => setFilterType(e.target.value)}
-                    className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-300 flex-1 min-w-0"
-                  >
-                    <option value="all">전체 유형</option>
-                    {Object.entries(INCIDENT_TYPE_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                    className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-300 flex-1 min-w-0"
-                  >
-                    <option value="all">전체 상태</option>
-                    {Object.entries(STATUS_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="overflow-y-auto flex-1">
-                  {filteredRecent.length > 0 ? (
-                    filteredRecent.map((inc, i) => (
-                      <RecentIncidentCard key={i} incident={inc} />
-                    ))
-                  ) : (
-                    <div className="flex items-center justify-center h-full min-h-[80px]">
-                      <p className="text-slate-500 text-sm">
-                        해당 조건의 사건 없음
-                      </p>
-                    </div>
-                  )}
-                </div>
+                <h2 className="text-sm font-semibold text-slate-200 mb-3">
+                  읍면동별 현황
+                </h2>
+                <EmdRankTable emdMapData={overview.emd_map_data || []} />
               </div>
             </div>
 
-            {/* 차트 3열 */}
+            {/* ── Row 3: 유형별 + 상태별 차트 + 완료 사건 ── */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* 유형별 */}
               <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4">
@@ -540,13 +471,13 @@ export default function DisasterDashboard() {
                 <div className="space-y-3">
                   {Object.entries(overview.by_type || {})
                     .sort((a, b) => b[1] - a[1])
-                    .map(([key, val]) => (
+                    .map(([type, count]) => (
                       <HBar
-                        key={key}
-                        label={INCIDENT_TYPE_LABELS[key] || key}
-                        value={val}
+                        key={type}
+                        label={INCIDENT_TYPE_LABELS[type] || type}
+                        value={count}
                         max={maxTypeVal}
-                        color={TYPE_COLORS[key] || "#64748b"}
+                        color={TYPE_COLORS[type]}
                       />
                     ))}
                 </div>
@@ -560,51 +491,40 @@ export default function DisasterDashboard() {
                 <div className="space-y-3">
                   {Object.entries(overview.by_status || {})
                     .sort((a, b) => b[1] - a[1])
-                    .map(([key, val]) => (
+                    .map(([status, count]) => (
                       <HBar
-                        key={key}
-                        label={STATUS_LABELS[key] || key}
-                        value={val}
+                        key={status}
+                        label={STATUS_LABELS[status] || status}
+                        value={count}
                         max={maxStatusVal}
-                        color={STATUS_COLORS[key] || "#94a3b8"}
+                        color={
+                          status === "in_progress"
+                            ? "#f59e0b"
+                            : status === "reported"
+                            ? "#ef4444"
+                            : status === "completed"
+                            ? "#22c55e"
+                            : status === "closed"
+                            ? "#64748b"
+                            : "#3b82f6"
+                        }
                       />
                     ))}
                 </div>
               </div>
 
-              {/* 읍면동별 */}
+              {/* 최근 완료·종결 사건 */}
               <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4">
-                <h2 className="text-sm font-semibold text-slate-200 mb-4">
-                  읍면동별 사건 수
+                <h2 className="text-sm font-semibold text-slate-200 mb-3">
+                  최근 완료·종결
                 </h2>
-                <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
-                  {Object.entries(overview.by_emd || {})
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([key, val]) => (
-                      <HBar
-                        key={key}
-                        label={key}
-                        value={val}
-                        max={maxEmdVal}
-                        color="#06b6d4"
-                      />
-                    ))}
-                </div>
+                <DoneIncidentList incidents={overview.done_incidents || []} />
               </div>
             </div>
           </>
         ) : (
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8 text-center">
-            <p className="text-slate-400 mb-4">분석된 데이터가 없습니다.</p>
-            <p className="text-sm text-slate-500 mb-6">
-              업로드 페이지에서 파일을 분석해주세요.
-            </p>
-            <button
-              onClick={() => navigate("/disaster-upload")}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm"
-            >
-              업로드 페이지로 이동
-            </button>
+          <div className="flex items-center justify-center h-64">
+            <p className="text-slate-500 text-sm">데이터를 불러올 수 없습니다.</p>
           </div>
         )}
       </div>
