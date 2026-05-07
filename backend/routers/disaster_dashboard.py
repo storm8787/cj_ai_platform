@@ -483,12 +483,12 @@ def get_dashboard_overview(upload_id: str):
             except (ValueError, TypeError):
                 continue
 
-    # 최근 사고 목록 (최대 10건, 최신 순)
-    recent_incidents = sorted(
+    sorted_by_time = sorted(
         rows, key=lambda r: r.get("last_update_time") or r.get("incident_time") or "", reverse=True
-    )[:10]
-    recent_list = [
-        {
+    )
+
+    def _fmt(r):
+        return {
             "id": r["id"],
             "incident_type": r.get("incident_type"),
             "incident_type_label": INCIDENT_TYPE_LABELS.get(r.get("incident_type"), r.get("incident_type")),
@@ -502,8 +502,21 @@ def get_dashboard_overview(upload_id: str):
             "photo_count": r.get("photo_count", 0),
             "message_count": r.get("message_count", 0),
         }
-        for r in recent_incidents
+
+    # 최근 사고 목록 (최대 10건, 최신 순)
+    recent_list = [_fmt(r) for r in sorted_by_time[:10]]
+
+    # 진행중·발생 사건 전체 (상한 없음, 최신 순) — 대시보드 우선 처리 패널용
+    active_list = [
+        _fmt(r) for r in sorted_by_time
+        if r.get("status") in active_statuses
     ]
+
+    # 최근 완료·종결 사건 (최대 5건)
+    done_list = [
+        _fmt(r) for r in sorted_by_time
+        if r.get("status") in done_statuses
+    ][:5]
 
     # 지도용 읍면동 데이터: EMD_COORDS의 25개 전체를 항상 포함
     # (사건이 없는 읍면동도 지도에 표시 → 파서 EMD 추출 실패 시에도 지도 항상 렌더링)
@@ -547,6 +560,8 @@ def get_dashboard_overview(upload_id: str):
         "by_emd": dict(emd_counter),
         "by_hour": dict(sorted(hour_counter.items())),
         "recent_incidents": recent_list,
+        "active_incidents": active_list,
+        "done_incidents": done_list,
         "emd_map_data": emd_map_data,
     }
 
