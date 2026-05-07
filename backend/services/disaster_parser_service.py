@@ -108,9 +108,10 @@ DELETED_RE = re.compile(r"삭제된 메시지입니다")
 EMD_PATTERN = re.compile(r"([가-힣]{2,12}(?:읍|면|동))")
 
 # 주소/지번/시설형 위치 — 첫 문장 내 짧은 범위에서만 적용
+# {2,15}: 공백+단어 그룹에서 최소 2자 이상 요구 → "119 및 도" 같은 단일자 오인 방지
 LOCATION_HINT_PATTERNS = [
     re.compile(
-        r"([가-힣a-zA-Z0-9\-]{1,20}(?:\s+[가-힣a-zA-Z0-9\-]{1,15}){0,3}"
+        r"([가-힣a-zA-Z0-9\-]{2,20}(?:\s+[가-힣a-zA-Z0-9\-]{2,15}){0,3}"
         r"(?:로|길|번지|사거리|굴다리|삼거리|교차로|마을|공원|산책로|등산로|하천변|천변산책로|"
         r"지하차도|통로박스|경로당|고개길|제방|펌프장|진입로|출입구|진출입로|계곡|세월교|"
         r"교량|다리|하상도로|파크골프장|공사현장|맨홀|급경사지))"
@@ -123,6 +124,9 @@ _COMPOUND_LOC_PATTERN = re.compile(
     r"\s+(?:앞|옆|근처|주변|사이)"
     r"(?:\s+[가-힣a-zA-Z0-9]{2,10}(?:로|길|삼거리|사거리|교차로|교량|다리|진입로|입구|광장)?)?)"
 )
+
+# 자연 지형명 패턴: 문장 앞부분 "삼탄천", "충주천" 등 천/강 계열 지명
+_NATURAL_GEO_PATTERN = re.compile(r"^([가-힣]{2,8}(?:천|강|저수지|호수|봉))")
 
 # 행정기관 표현 패턴: 이 이후는 행정 조치 컨텍스트 → 위치 탐색 제외
 # 예: "도로과와 자원순환과에서는", "안전총괄과에서 확인"
@@ -295,10 +299,11 @@ def _clean_location_text(text: str) -> str:
 
 # 위치명 뒤에 오면 안 되는 상황/동사 키워드
 _LOCATION_TAIL_STOPS = [
+    "수위", "상승", "하강", "지속", "급격히",
     "조치", "완료", "입니다", "발생", "신고", "긴급", "처리",
     "나무", "낙석", "토사", "침수", "정전", "사고", "현장", "작업",
-    "관리", "통제", "차단", "수위", "협조", "요청", "확인",
-    "정리", "마무리", "에서는", "으로부터",
+    "관리", "통제", "차단", "협조", "요청", "확인",
+    "정리", "마무리", "에서는", "으로부터", "으로 인해",
 ]
 
 
@@ -337,6 +342,23 @@ def _find_emd_text_form(text: str, emd: str) -> Optional[str]:
     return None
 
 
+def _fmt_loc(emd: Optional[str], emd_text: Optional[str], loc: str) -> str:
+    """
+    emd + loc 최종 조합. 별칭 EMD 중복 제거.
+    예) emd=칠금금릉동, emd_text=칠금동, loc='칠금동 금릉로' → '칠금금릉동 금릉로'
+    """
+    if not loc:
+        return emd or ""
+    # 별칭이 loc에 이미 포함된 경우 제거
+    if emd_text and emd_text != emd and emd_text in loc:
+        loc = " ".join(loc.replace(emd_text, "").split())
+    if not loc:
+        return emd or ""
+    if emd and emd not in loc:
+        return f"{emd} {loc}".strip()
+    return loc.strip()
+
+
 def extract_location_raw(text: str) -> Optional[str]:
     text = text or ""
     emd = extract_emd(text)
@@ -351,17 +373,37 @@ def extract_location_raw(text: str) -> Optional[str]:
         # 1a. 복합 위치 ("한국관 앞 삼거리" 등) 우선 탐색
         compound = _COMPOUND_LOC_PATTERN.search(first_sentence)
         if compound:
-            candidate = _clean_location_text(compound.group(1))
+            candidate = _trim_location_tail(_clean_location_text(compound.group(1)))
             if candidate:
-                return f"{emd} {candidate}".strip()
+                return _fmt_loc(emd, emd_text, candidate)
 
-        # 1b. LOCATION_KEYWORDS 기반
+        # 1b. LOCATION_KEYWORDS 기반 (prefix를 _trim_location_tail로 정제하여 비위치 단어 제거)
         for keyword in sorted(LOCATION_KEYWORDS, key=len, reverse=True):
             if keyword in first_sentence:
                 idx = first_sentence.find(keyword)
-                candidate = _clean_location_text(first_sentence[: idx + len(keyword)])
+                prefix = first_sentence[:idx].strip()
+                prefix_clean = _trim_location_tail(prefix)
+                candidate = _clean_location_text(
+                    f"{prefix_clean} {keyword}".strip() if prefix_clean else keyword
+                )
                 if candidate:
-                    return f"{emd} {candidate}".strip()
+                    return _fmt_loc(emd, emd_text, candidate)
+
+        # 1c. 자연 지형명 fallback (천, 강, 저수지 등) — keywords 미매칭 시
+        ngm = _NATURAL_GEO_PATTERN.match(first_sentence)
+        if ngm:
+            candidate = _clean_location_text(ngm.group(1))
+            if candidate:
+                return _fmt_loc(emd, emd_text, candidate)
+
+        # 1d. 리(里) 단위 지명 — RI_TO_EMD에 등록된 경우만 (백현리, 탑평리 등)
+        ri_match = RI_PATTERN.search(first_sentence)
+        if ri_match:
+            ri_name = ri_match.group(1)
+            if ri_name in RI_TO_EMD:
+                candidate = _clean_location_text(ri_name)
+                if candidate:
+                    return _fmt_loc(emd, emd_text, candidate)
 
     # 2. 행정기관 문맥 절단 후 정규식 fallback
     clipped = _clip_for_location(text)
@@ -369,9 +411,9 @@ def extract_location_raw(text: str) -> Optional[str]:
     # 2a. 복합 위치 패턴 먼저
     compound = _COMPOUND_LOC_PATTERN.search(clipped)
     if compound:
-        loc = _clean_location_text(compound.group(1))
+        loc = _trim_location_tail(_clean_location_text(compound.group(1)))
         if loc and len(loc.replace(" ", "")) >= 3:
-            return f"{emd} {loc}".strip() if (emd and emd not in loc) else loc
+            return _fmt_loc(emd, emd_text, loc)
 
     # 2b. 주소형 패턴
     for pattern in LOCATION_HINT_PATTERNS:
@@ -380,7 +422,7 @@ def extract_location_raw(text: str) -> Optional[str]:
             loc = _clean_location_text(_trim_location_tail(match.group(1)))
             if not loc:
                 continue
-            return f"{emd} {loc}".strip() if (emd and emd not in loc) else loc
+            return _fmt_loc(emd, emd_text, loc)
 
     # 3. 최후 fallback: 읍면동만
     return emd

@@ -465,6 +465,55 @@ def test_location_similarity():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 검증 10: 위치 추출 정확도
+# ─────────────────────────────────────────────────────────────────────────────
+def test_location_accuracy():
+    """위치 추출 핵심 패턴 정확도 검증 (evaluate_location_extraction.py 연동)."""
+    print("\n[10] 위치 추출 정확도 검증")
+
+    LOCATION_CASES = [
+        # (입력 텍스트, 포함해야 할 문자열, 제외해야 할 문자열, 설명)
+        ("호암동 천변산책로 도로 침수 신고 접수되었습니다.",
+         "천변산책로", None, "기본 산책로 추출"),
+        ("칠금동 금릉로 싱크홀 발생. 노면 파손 심각.",
+         "금릉로", "칠금동 금릉로", "별칭 EMD 중복 방지"),
+        ("목행동 용탄교 주변 수위 급격히 상승 중. 하상도로 침수 우려.",
+         "용탄교", "수위", "복합위치 trailing 비위치 제거"),
+        ("신니면 백현리 절개지 사면 토사유출 구간 차단 완료. 119 및 도로관리사업소 출동 요청합니다.",
+         "백현리", "119 및 도로", "리(里) 추출 + 조직명 오인 방지"),
+        ("연수동 호우주의보 해제알림 도로과와 자원순환과에서는 내일 아침 동부외곽순환도로에서 작업.",
+         "연수동", "동부외곽순환도로", "행정기관 컨텍스트 차단"),
+        ("어제 폭우로 인해 한국관 앞 삼거리 도로에 물이 고인다는 신고.",
+         "한국관 앞 삼거리", None, "복합 위치 X 앞 Y"),
+        ("교현동 교현천 하천변 수위 상승으로 산책로 접근 통제.",
+         "교현천 하천변", "수위", "키워드 prefix 정제"),
+        ("주덕읍 삼탄천 수위 급격히 상승 중. 제방 월류 위험.",
+         "삼탄천", "수위", "자연 지형명 추출"),
+        ("지현동 주민센터 앞 맨홀 역류 신고.",
+         "주민센터 앞", None, "시설 랜드마크"),
+        ("달천동 참샘골 마을안길 도로 파손 발생.",
+         "참샘골 마을안길", None, "복합 지명 마을안길"),
+    ]
+
+    passed = 0
+    for text, must_include, must_exclude, desc in LOCATION_CASES:
+        got = extract_location_raw(text) or ""
+        ok = True
+        if must_include and must_include not in got:
+            ok = False
+        if ok and must_exclude and must_exclude in got:
+            ok = False
+        status = PASS if ok else FAIL
+        if ok:
+            passed += 1
+        print(f"  {result_str(status)} {desc}: {got!r}")
+
+    r = PASS if passed == len(LOCATION_CASES) else FAIL
+    print(f"  총 {passed}/{len(LOCATION_CASES)} 통과 → {result_str(r)}")
+    return r == PASS
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 메인 실행
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
@@ -503,6 +552,9 @@ def main():
 
     r_sim = test_location_similarity()
     results["위치 유사도"] = PASS if r_sim else WARN
+
+    r_loc_acc = test_location_accuracy()
+    results["위치 추출 정확도"] = PASS if r_loc_acc else FAIL
 
     # ── 사고 상세 출력 ──────────────────────────────────────────────────────
     print("\n[사고 목록 상세]")
