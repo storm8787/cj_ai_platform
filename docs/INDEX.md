@@ -126,7 +126,7 @@ frontend/src/
 │   └── Layout.jsx       ← 공통 레이아웃
 ├── services/
 │   └── api.js           ← 백엔드 API 호출 함수
-└── pages/               ← 28개 페이지 컴포넌트
+└── pages/               ← 31개 페이지 컴포넌트
 ```
 
 ---
