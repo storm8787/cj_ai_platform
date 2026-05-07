@@ -21,8 +21,11 @@ Claude Code가 이 저장소에서 작업을 시작하기 전에 반드시 읽�
 > ⚠️ `PROJECT_DOCUMENTATION.md`는 deprecated 됩니다. **`docs/INDEX.md`를 기준으로 사용하세요.**
 
 ---
+## 브랜치 규칙 (CRITICAL)
 
-
+- **main 브랜치 직접 push 절대 금지**
+- 모든 작업은 별도 브랜치에서 수행
+- 완료 후 PR → 사용자 승인 → 머지
 ---
 
 ## 절대 금지 사항
@@ -83,7 +86,7 @@ Claude Code가 이 저장소에서 작업을 시작하기 전에 반드시 읽�
 
 | 금지 | 이유 |
 |------|------|
-
+| main 브랜치 직접 push | CI/CD 안정성 |
 | API 키 하드코딩 | 보안 |
 | 법령 챗봇에 키워드 사전 추가 | 설계 원칙 위반 |
 | `requirements.txt`에 없는 패키지 import | 빌드 실패 |
