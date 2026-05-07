@@ -126,6 +126,17 @@ LOCATION_KEYWORDS = [
 # 괄호 정리용 문자 (위치 추출 시)
 BRACKET_CHARS_RE = re.compile(r"[\[\]【】『』()〔〕「」《》]")
 
+# 계절 구분
+# 여름(4-10월): 여름 전용 유형만 분류, 겨울 유형 건너뜀
+# 겨울(12,1,2월): 겨울 전용 유형만 분류, 여름 유형 건너뜀
+# 전환기(3,11월): 모두 허용
+SUMMER_MONTHS = frozenset({4, 5, 6, 7, 8, 9, 10})
+WINTER_MONTHS = frozenset({12, 1, 2})
+
+# 계절 전용 유형 집합 (연중 유형은 항상 적용)
+WINTER_ONLY_TYPES = frozenset({"cold_wave", "heavy_snow", "icing"})
+SUMMER_ONLY_TYPES = frozenset({"drainage", "flood"})
+
 # 원인형 재난 먼저, 통제는 뒤로
 # 겨울 재난(폭설·결빙·한파)을 여름 재난보다 앞에 배치하여 혼용 문장에서 겨울 유형 우선 분류
 INCIDENT_TYPE_RULES = [
@@ -194,8 +205,20 @@ def classify_message_type(text: str) -> Dict[str, Any]:
     return {"message_type": "normal", "photo_count": 0, "is_system": False}
 
 
-def infer_incident_type(text: str) -> str:
+def infer_incident_type(text: str, month: int = None) -> str:
+    """재난 유형 분류. month(1-12) 전달 시 계절 필터 적용:
+    - 여름(4-10): 겨울 전용 유형(cold_wave/heavy_snow/icing) 건너뜀
+    - 겨울(12,1,2): 여름 전용 유형(drainage/flood) 건너뜀
+    - 전환기(3,11) 또는 None: 모든 유형 허용
+    """
+    is_summer = month in SUMMER_MONTHS if month is not None else False
+    is_winter = month in WINTER_MONTHS if month is not None else False
+
     for pattern, value in INCIDENT_TYPE_RULES:
+        if is_summer and value in WINTER_ONLY_TYPES:
+            continue
+        if is_winter and value in SUMMER_ONLY_TYPES:
+            continue
         if pattern.search(text):
             return value
     return "inspection"
@@ -444,7 +467,15 @@ def parse_kakao_txt(content: str) -> List[Dict[str, Any]]:
     for msg in messages:
         text = msg["raw_text"]
         meta = classify_message_type(text)
-        incident_type = infer_incident_type(text)
+
+        # 메시지 타임스탬프에서 월 추출 → 계절 필터 적용
+        msg_month: int = None
+        try:
+            msg_month = datetime.fromisoformat(msg["message_time"]).month
+        except (ValueError, KeyError, TypeError):
+            pass
+
+        incident_type = infer_incident_type(text, msg_month)
 
         parsed.append(
             {
