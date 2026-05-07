@@ -23,6 +23,7 @@ from .disaster_constants import EMD_ALIASES, EMD_FALLBACK_BLACKLIST
 # =========================
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMD_FILE = BASE_DIR / "data" / "eup_myeon_dong.txt"
+RI_EMD_FILE = BASE_DIR / "data" / "ri_to_emd.json"
 
 
 def load_emd_list() -> List[str]:
@@ -36,13 +37,26 @@ def load_emd_list() -> List[str]:
         lines = EMD_FILE.read_text(encoding="cp949").splitlines()
 
     emd_list = [line.strip() for line in lines if line.strip()]
-    # 긴 이름 먼저 매칭하도록 정렬
     emd_list.sort(key=len, reverse=True)
     print(f"✅ 읍면동 목록 로드 완료: {len(emd_list)}건")
     return emd_list
 
 
+def load_ri_to_emd() -> Dict[str, str]:
+    import json
+    if not RI_EMD_FILE.exists():
+        return {}
+    try:
+        return json.loads(RI_EMD_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 EMD_LIST = load_emd_list()
+RI_TO_EMD: Dict[str, str] = load_ri_to_emd()
+
+# 리(里) 패턴: 2자 이상 한글 + 리
+RI_PATTERN = re.compile(r"([가-힣]{2,6}리)")
 
 
 # =========================
@@ -113,9 +127,15 @@ LOCATION_KEYWORDS = [
 BRACKET_CHARS_RE = re.compile(r"[\[\]【】『』()〔〕「」《》]")
 
 # 원인형 재난 먼저, 통제는 뒤로
+# 겨울 재난(폭설·결빙·한파)을 여름 재난보다 앞에 배치하여 혼용 문장에서 겨울 유형 우선 분류
 INCIDENT_TYPE_RULES = [
-    (re.compile(r"산사태|토사유출|토사유실|사면|붕괴|낙석|석축이 무너|임야 사태"), "landslide"),
-    (re.compile(r"나무전도|수목전도|쓰러진 나무|전도된 나무|고목.*전도|아카시아나무.*쓰러|피해목제거|나무.*쓰러|수목.*쓰러|쓰러진.*나무"), "tree_fall"),
+    (re.compile(r"산사태|토사유출|토사유실|사면|붕괴|낙석|석축이 무너|임야 사태|눈사태"), "landslide"),
+    (re.compile(r"나무전도|수목전도|쓰러진 나무|전도된 나무|고목.*전도|아카시아나무.*쓰러|피해목제거|나무.*쓰러|수목.*쓰러|쓰러진.*나무|폭설.*나무|눈.*나무.*부러"), "tree_fall"),
+    # 겨울 재난
+    (re.compile(r"한파|동파|수도동파|계량기.*동파|동파된|동결"), "cold_wave"),
+    (re.compile(r"폭설|제설|적설|강설|눈.*쌓|도로.*눈|눈.*도로|노면.*눈|제설작업"), "heavy_snow"),
+    (re.compile(r"결빙|빙판|노면결빙|도로결빙|블랙아이스|빙결"), "icing"),
+    # 여름/공통 재난
     (re.compile(r"배수로|맨홀|양수|펌프장|역류|준설|배수 안됨|오수맨홀|맨홀역류"), "drainage"),
     (re.compile(r"침수|범람|월류|수위상승|수위.*상승|도로침수|유실된 제방|배수불량으로 침수|하상도로.*침수|침수 우려"), "flood"),
     (re.compile(r"싱크홀|씽크홀|노면 파손|웅덩이"), "sinkhole"),
@@ -129,8 +149,8 @@ INCIDENT_TYPE_RULES = [
 # '설치 완료'는 임시 안전시설(안전봉, 차단봉) 설치이므로 completed에서 제외 → monitoring으로 처리
 STATUS_RULES = [
     (re.compile(r"해제(?!\s*예정)|통행\s*재개(?!\s*가능)|개통|상황\s*종료"), "closed"),
-    (re.compile(r"복구 완료|처리 완료|긴급조치 완료|제거 완료|응급복구 완료|양수 작업 완료|조치 완료|조치완료|완료했습니다|완료하였습니다"), "completed"),
-    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|처리중|처리 중|수색중"), "in_progress"),
+    (re.compile(r"복구 완료|처리 완료|긴급조치 완료|제거 완료|응급복구 완료|양수 작업 완료|조치 완료|조치완료|완료했습니다|완료하였습니다|제설 완료|살포 완료|염화칼슘 살포"), "completed"),
+    (re.compile(r"조치중|작업중|진행중|준설 중|투입|복구중|응급 조치 중|처리중|처리 중|수색중|제설중|제설 중|제설작업 중"), "in_progress"),
     (re.compile(r"이상없음|이상 없습니다|우려 없습니다"), "no_issue"),
     (re.compile(r"모니터링|상황관리|지속적으로 확인|관찰지역|통제 유지|설치 완료|예찰강화|예찰 강화"), "monitoring"),
     # '~예정'은 아직 시작 안 함 → reported 유지 (명시적 패턴이지만 마지막에 배치)
@@ -193,21 +213,36 @@ def infer_status(text: str, incident_type: str) -> str:
 def extract_emd(text: str) -> Optional[str]:
     text = text or ""
 
+    # 대괄호 표기 전처리: "[호암직동] 메시지" → "호암직동 메시지"
+    text_clean = re.sub(r"\[([가-힣a-zA-Z0-9\s]+)\]", r"\1 ", text)
+
     # 1순위: 읍면동 목록 파일 기준 (공식 행정동명)
     for emd in EMD_LIST:
-        if emd in text:
+        if emd in text_clean:
             return emd
 
     # 2순위: 별칭 매핑 (충주시 줄임 표기 → 공식 행정동)
     for alias, canonical in EMD_ALIASES.items():
-        if alias in text:
+        if alias in text_clean:
             return canonical
 
-    # 3순위: fallback regex (비지명 단어 블랙리스트 적용)
-    for match in EMD_PATTERN.finditer(text):
+    # 3순위: 리(里) 패턴 → 상위 읍면동 역조회
+    for match in RI_PATTERN.finditer(text_clean):
+        ri = match.group(1)
+        if ri in RI_TO_EMD:
+            return RI_TO_EMD[ri]
+
+    # 4순위: fallback regex — 공식 목록에 있는 EMD만 반환 (임의 단어 오매칭 방지)
+    for match in EMD_PATTERN.finditer(text_clean):
         candidate = match.group(1)
-        if candidate not in EMD_FALLBACK_BLACKLIST:
+        if candidate in EMD_FALLBACK_BLACKLIST:
+            continue
+        if candidate in EMD_LIST:
             return candidate
+        # 별칭도 재확인
+        canonical = EMD_ALIASES.get(candidate)
+        if canonical:
+            return canonical
 
     return None
 

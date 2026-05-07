@@ -13,6 +13,9 @@ const TYPE_COLORS = {
   sinkhole: "#ef4444",
   rescue: "#a855f7",
   facility: "#6366f1",
+  heavy_snow: "#93c5fd",
+  icing: "#67e8f9",
+  cold_wave: "#818cf8",
   inspection: "#64748b",
 };
 
@@ -25,6 +28,9 @@ const TYPE_BG = {
   sinkhole: "bg-red-500/20 text-red-300",
   rescue: "bg-purple-500/20 text-purple-300",
   facility: "bg-indigo-500/20 text-indigo-300",
+  heavy_snow: "bg-blue-300/20 text-blue-200",
+  icing: "bg-cyan-300/20 text-cyan-200",
+  cold_wave: "bg-indigo-400/20 text-indigo-300",
   inspection: "bg-slate-500/20 text-slate-400",
 };
 
@@ -190,7 +196,7 @@ function EmdDotMap({ emdMapData }) {
 
 function KakaoMapView({ emdMapData }) {
   const mapRef = useRef(null);
-  const [mapError, setMapError] = useState(false);
+  const [kakaoLoaded, setKakaoLoaded] = useState(false);
   const KAKAO_KEY = import.meta.env.VITE_KAKAO_MAP_KEY;
 
   useEffect(() => {
@@ -200,34 +206,39 @@ function KakaoMapView({ emdMapData }) {
     const init = () => {
       try {
         window.kakao.maps.load(() => {
-          const center = new window.kakao.maps.LatLng(36.9911, 127.8636);
-          const map = new window.kakao.maps.Map(mapRef.current, {
-            center,
-            level: 9,
-          });
-          (emdMapData || []).forEach((d) => {
-            if (!d.lat || !d.lng || d.count === 0) return;
-            const pos = new window.kakao.maps.LatLng(d.lat, d.lng);
-            new window.kakao.maps.Circle({
-              map,
-              center: pos,
-              radius: 300 + d.count * 200,
-              strokeWeight: 2,
-              strokeColor: d.active_count > 0 ? "#ef4444" : "#16a34a",
-              strokeOpacity: 0.9,
-              fillColor: d.active_count > 0 ? "#ef4444" : "#16a34a",
-              fillOpacity: 0.35,
+          try {
+            const center = new window.kakao.maps.LatLng(36.9911, 127.8636);
+            const map = new window.kakao.maps.Map(mapRef.current, {
+              center,
+              level: 9,
             });
-            new window.kakao.maps.CustomOverlay({
-              map,
-              position: pos,
-              content: `<div style="background:rgba(0,0,0,0.75);color:#fff;border-radius:4px;padding:2px 6px;font-size:11px;white-space:nowrap">${d.emd} ${d.count}건</div>`,
-              yAnchor: 2.6,
+            (emdMapData || []).forEach((d) => {
+              if (!d.lat || !d.lng || d.count === 0) return;
+              const pos = new window.kakao.maps.LatLng(d.lat, d.lng);
+              new window.kakao.maps.Circle({
+                map,
+                center: pos,
+                radius: 300 + d.count * 200,
+                strokeWeight: 2,
+                strokeColor: d.active_count > 0 ? "#ef4444" : "#16a34a",
+                strokeOpacity: 0.9,
+                fillColor: d.active_count > 0 ? "#ef4444" : "#16a34a",
+                fillOpacity: 0.35,
+              });
+              new window.kakao.maps.CustomOverlay({
+                map,
+                position: pos,
+                content: `<div style="background:rgba(0,0,0,0.75);color:#fff;border-radius:4px;padding:2px 6px;font-size:11px;white-space:nowrap">${d.emd} ${d.count}건</div>`,
+                yAnchor: 2.6,
+              });
             });
-          });
+            setKakaoLoaded(true);
+          } catch {
+            // 카카오맵 초기화 실패 → EmdDotMap으로 fallback (아무것도 안 해도 됨)
+          }
         });
       } catch {
-        setMapError(true);
+        // 무시 — EmdDotMap이 항상 기본 표시됨
       }
     };
 
@@ -238,7 +249,7 @@ function KakaoMapView({ emdMapData }) {
       scriptEl.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_KEY}&autoload=false`;
       scriptEl.async = true;
       scriptEl.onload = init;
-      scriptEl.onerror = () => setMapError(true);
+      scriptEl.onerror = () => {}; // EmdDotMap이 기본 표시됨
       document.head.appendChild(scriptEl);
     }
 
@@ -248,11 +259,20 @@ function KakaoMapView({ emdMapData }) {
     };
   }, [KAKAO_KEY, emdMapData]);
 
-  if (!KAKAO_KEY || mapError) {
-    return <EmdDotMap emdMapData={emdMapData} />;
-  }
-
-  return <div ref={mapRef} className="w-full h-full rounded-xl" />;
+  return (
+    <div className="relative w-full h-full">
+      {/* EmdDotMap은 항상 기본 표시 */}
+      <EmdDotMap emdMapData={emdMapData} />
+      {/* 카카오맵 성공 시 위에 오버레이 */}
+      {KAKAO_KEY && (
+        <div
+          ref={mapRef}
+          className="absolute inset-0 rounded-xl"
+          style={{ display: kakaoLoaded ? "block" : "none" }}
+        />
+      )}
+    </div>
+  );
 }
 
 function RecentIncidentCard({ incident }) {

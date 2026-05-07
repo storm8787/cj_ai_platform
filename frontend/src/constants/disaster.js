@@ -15,6 +15,9 @@ export const INCIDENT_TYPE_LABELS = {
   drainage: "배수·맨홀·양수",
   facility: "시설물 이상",
   rescue: "수색·구조",
+  heavy_snow: "폭설·제설",
+  icing: "도로결빙",
+  cold_wave: "한파·동파",
   inspection: "기타/미분류",
 };
 

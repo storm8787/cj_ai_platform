@@ -64,6 +64,7 @@ build_incidents = _incident.build_incidents
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "disaster_sample_kakao.txt"
+WINTER_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "disaster_sample_winter_kakao.txt"
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -162,7 +163,7 @@ def test_emd_extraction(messages):
         ("살미면 동아교 교량 균열 발생", "살미면"),
         ("소태면 용교리 진입도로 낙석 발생", "소태면"),
         ("신니면 백현리 절개지 토사유출", "신니면"),
-        ("가금면 창동교 진입로 침수 신고", "가금면"),
+        ("금가면 창동교 진입로 침수 신고", "금가면"),
         ("노은면 노은로 현장 점검 완료", "노은면"),
     ]
 
@@ -206,8 +207,16 @@ TYPE_CASES = [
     ("신니면 백현리 절개지 토사유출 발생. 도로 일부 토사 유입", "landslide"),
     ("소태면 용교리 진입도로 낙석 발생. 통행 차단 조치 완료", "landslide"),
     ("배수로 막혀 주변 침수 발생. 양수펌프 투입 요청합니다", "drainage"),
-    ("가금면 창동교 진입로 도로 침수 신고. 집중호우로 인근 하천 범람", "flood"),
+    ("금가면 창동교 진입로 도로 침수 신고. 집중호우로 인근 하천 범람", "flood"),
     ("노은면 노은로 현장 점검 완료. 도로 이상없음 확인", "inspection"),
+    # 겨울 재난 유형
+    ("주덕읍 삼탄리 일대 폭설로 도로 통제 중. 제설작업 진행중입니다", "heavy_snow"),
+    ("칠금동 금릉로 블랙아이스 발생 신고. 노면결빙 상태입니다", "icing"),
+    ("신니면 백현리 수도동파 신고 접수. 한파로 인한 계량기 동파 발생", "cold_wave"),
+    ("수안보면 수안보로 폭설 및 눈사태 위험 발생. 도로 통제 조치 완료", "landslide"),
+    ("호암동 천변산책로 노면 결빙 확인. 출입통제 조치 완료", "icing"),
+    ("봉방배수펌프장 계량기 동파 신고. 한파로 인한 동결 확인", "cold_wave"),
+    ("연수동 남산등산로 입구 눈 쌓임으로 출입통제. 제설 완료 시까지 통제 유지", "heavy_snow"),
 ]
 
 def test_incident_type(messages=None):
@@ -248,6 +257,10 @@ STATUS_CASES = [
     ("야간 모니터링 지속합니다. 수위 경계 유지", "monitoring"),
     # 추가: 응급복구 완료
     ("토사유출 응급복구 완료하였습니다. 통행 재개합니다", "closed"),
+    # 겨울 상태
+    ("염화칼슘 살포 완료하였습니다. 노면 확인 중입니다", "completed"),
+    ("주덕읍 삼탄리 제설 완료하였습니다. 도로 정상화하였습니다", "completed"),
+    ("봉방배수펌프장 제설중입니다. 1시간 소요 예정", "in_progress"),
 ]
 
 def test_status_classification():
@@ -314,7 +327,7 @@ def test_incident_type_coverage(incidents):
     found_emds = {inc.get("emd") for inc in incidents}
 
     expected_types = {"flood", "landslide", "tree_fall", "sinkhole", "drainage", "facility", "rescue"}
-    expected_emds = {"주덕읍", "살미면", "소태면", "신니면", "가금면"}
+    expected_emds = {"주덕읍", "살미면", "소태면", "신니면", "금가면"}
 
     missing_types = expected_types - found_types
     missing_emds = expected_emds - found_emds
@@ -341,6 +354,49 @@ def test_incident_type_coverage(incidents):
     print(f"  주덕읍 Day1→Day2 병합 (1건): {result_str(r5)} ({len(jukdeok)}건, 메시지 {jukdeok[0].get('message_count',0) if jukdeok else 0}개)")
 
     return r1 == PASS and r2 == PASS
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 검증 5c: 겨울 샘플 파일 검증
+# ─────────────────────────────────────────────────────────────────────────────
+def test_winter_sample():
+    """겨울 샘플 파일로 폭설·결빙·한파 유형 분류 및 읍면동 추출 검증."""
+    print("\n[5c] 겨울 샘플 검증")
+    if not WINTER_FIXTURE_PATH.exists():
+        print(f"  [SKIP] 파일 없음: {WINTER_FIXTURE_PATH}")
+        return True
+
+    content = WINTER_FIXTURE_PATH.read_text(encoding="utf-8")
+    messages = parse_kakao_txt(content)
+    normal = [m for m in messages if m.get("message_type") == "normal"]
+    incidents = build_incidents(messages)
+
+    print(f"  파싱: {len(messages)}개 메시지, 일반 {len(normal)}개")
+    print(f"  사고 재구성: {len(incidents)}건")
+
+    found_types = {i.get("incident_type") for i in incidents}
+    found_emds  = {i.get("emd") for i in incidents}
+
+    expected_winter = {"heavy_snow", "icing", "cold_wave"}
+    missing_winter = expected_winter - found_types
+    r1 = PASS if not missing_winter else FAIL
+    print(f"  겨울 유형 3종 등장: {result_str(r1)} (누락={missing_winter or '없음'})")
+
+    expected_emds_w = {"주덕읍", "호암직동", "교현안림동", "칠금금릉동", "신니면"}
+    missing_emds_w = expected_emds_w - found_emds
+    r2 = PASS if not missing_emds_w else WARN
+    print(f"  기대 읍면동 등장: {result_str(r2)} (누락={missing_emds_w or '없음'})")
+
+    count_ok = 7 <= len(incidents) <= 15
+    r3 = PASS if count_ok else WARN
+    print(f"  사고 건수 7~15건 범위: {result_str(r3)} ({len(incidents)}건)")
+
+    for i, inc in enumerate(incidents, 1):
+        print(f"    {i:02d}. [{inc.get('incident_type','?')}] [{inc.get('status','?')}] "
+              f"{inc.get('emd','?')} / {(inc.get('location_raw') or '')[:30]} "
+              f"(메시지 {inc.get('message_count',0)}개)")
+
+    return r1 == PASS
 
 
 def test_overview_structure(incidents):
@@ -438,6 +494,9 @@ def main():
 
     r_coverage = test_incident_type_coverage(incidents)
     results["유형·지역 커버리지"] = PASS if r_coverage else WARN
+
+    r_winter = test_winter_sample()
+    results["겨울 샘플 검증"] = PASS if r_winter else FAIL
 
     r_overview = test_overview_structure(incidents)
     results["Overview 통계"] = PASS if r_overview else FAIL

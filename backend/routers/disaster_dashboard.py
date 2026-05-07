@@ -30,7 +30,7 @@ from services.supabase_service import get_supabase_client
 
 # 충주시 읍면동 중심 좌표 (Kakao Maps fallback용 좌표 데이터)
 EMD_COORDS: dict = {
-    "더덕읍":    {"lat": 36.9614, "lng": 127.9052},
+    "주덕읍":    {"lat": 36.9614, "lng": 127.9052},
     "살미면":    {"lat": 36.9246, "lng": 127.9573},
     "수안보면":  {"lat": 36.8447, "lng": 127.9753},
     "대소원면":  {"lat": 36.9938, "lng": 127.8543},
