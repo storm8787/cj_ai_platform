@@ -241,10 +241,13 @@ def _generate_fallback_summary(report_date: str, agg: Dict) -> str:
 
 
 def _md_table(headers: List[str], rows: List[List[str]]) -> str:
-    """간단한 Markdown 표 생성."""
-    sep = "|" + "|".join(["---"] * len(headers)) + "|"
-    head = "|" + "|".join(headers) + "|"
-    body = "\n".join("|" + "|".join(r) + "|" for r in rows)
+    """표준 Markdown 표 생성 (공백 포함, 범용 호환)."""
+    sep = "| " + " | ".join(["---"] * len(headers)) + " |"
+    head = "| " + " | ".join(headers) + " |"
+    body = "\n".join(
+        "| " + " | ".join(c if c else " " for c in r) + " |"
+        for r in rows
+    )
     return f"{head}\n{sep}\n{body}"
 
 

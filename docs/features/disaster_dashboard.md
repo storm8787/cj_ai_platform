@@ -84,15 +84,26 @@ disaster_incident_service: 사고 재구성
 > ⚠️ `eup_myeon_dong.txt`에 없는 읍면동은 절대 반환하지 않음.  
 > "00리" 패턴은 `ri_to_emd.json` 매핑으로 상위 읍면동을 찾아 반환.
 
-### 위치(location_raw) 추출 개선 (v11)
+### 위치(location_raw) 추출 개선 (v12)
 
-**문제**: 행정기관 표현 이후의 도로명이 위치로 잘못 추출되거나, `X 앞 Y` 복합 위치가 부분만 추출됨.
+**v12 수정** (`disaster_parser_service.py`):
+- **별칭 EMD 중복 제거**: `_fmt_loc()` 헬퍼 — `칠금동→칠금금릉동` 별칭이 loc에 이미 있으면 제거 후 공식명만 사용 (예: `칠금금릉동 칠금동 금릉로` → `칠금금릉동 금릉로`)
+- **trailing 비위치 단어 차단**: compound match 결과에도 `_trim_location_tail()` 적용 (예: `용탄교 주변 수위` → `용탄교 주변`)
+- **키워드 prefix 정제**: 키워드(산책로·등산로 등) 앞의 prefix에 `_trim_location_tail` 적용 → `교현천 하천변 수위 상승으로 산책로`에서 `수위 이후` 제거 → `교현천 하천변 산책로`
+- **자연 지형명 fallback** (`_NATURAL_GEO_PATTERN`): `삼탄천`, `충주천` 등 천/강 계열 단어가 문장 앞에 오면 우선 추출
+- **리(里) 단위 위치 추출** (step 1d): `RI_TO_EMD`에 등록된 리(里)가 first_sentence에 나오면 세부 위치로 추출 (예: `신니면 백현리 절개지...` → `신니면 백현리`)
+- **조직명 오인 방지 강화**: `LOCATION_HINT_PATTERNS` space-word group 최소 2자로 변경 (`{1,15}` → `{2,15}`) → `119 및 도` 처럼 단일 한글자가 터미널 직전에 붙는 오매칭 방지
+- `_LOCATION_TAIL_STOPS`에 `수위`, `상승`, `하강`, `지속`, `급격히` 추가
 
-**수정 내용** (`disaster_parser_service.py`):
-- `_ORG_CTX_PATTERN`: `도로과와 자원순환과에서는` 같은 행정기관 컨텍스트 표현 감지 → 그 이전 텍스트만 위치 탐색에 사용
-- `_COMPOUND_LOC_PATTERN`: `한국관 앞 삼거리`, `시청 옆 교차로` 같은 복합 위치 패턴 추가
-- `_clip_for_location()`: 행정기관 절단 + 첫 줄 + 100자 제한으로 탐색 범위 축소
-- 위치 탐색 순서: 복합 위치 → LOCATION_KEYWORDS → 주소형 패턴 → 읍면동만
+**v12 위치 탐색 순서 (읍면동 이후 텍스트)**:
+1. 복합 위치 (`_COMPOUND_LOC_PATTERN`: `X 앞 Y`, `X 옆 Y`)
+2. LOCATION_KEYWORDS (prefix를 `_trim_location_tail`로 정제)
+3. 자연 지형명 (`_NATURAL_GEO_PATTERN`: 천/강 등)
+4. RI_TO_EMD 등록 리(里) 단위
+
+**v11 수정** (이전):
+- `_ORG_CTX_PATTERN`: `도로과와 자원순환과에서는` 같은 행정기관 컨텍스트 감지 → 그 이전 텍스트만 사용
+- `_clip_for_location()`: 행정기관 절단 + 첫 줄 + 100자 제한
 
 ### 사고 유형 분류 우선순위 (v8: 겨울 재난 추가 + v9: 계절 자동 필터)
 
@@ -207,17 +218,25 @@ cd /home/user/cj_ai_platform
 python backend/tests/evaluate_disaster_dashboard.py
 ```
 
-9개 항목을 자동 검증 (PASS/WARN/FAIL 결과):
+10개 항목을 자동 검증 (PASS/WARN/FAIL 결과):
 1. TXT 파싱 (메시지 수, 날짜 파싱)
 2. EMD 추출 (별칭 포함)
 3. 사고 유형 분류 (rescue, drainage, flood 등)
 4. 상태 분류 (closed, in_progress, completed 등)
 5. 사건 병합 (유형 호환 그룹, 위치 유사도)
-6. Overview 구조 (active_count, done_count 등 신규 필드 포함)
-7. 위치 유사도 임계값 동작
+6. 유형·지역 커버리지
+7. 겨울 샘플 검증
+8. Overview 통계 구조
+9. 위치 유사도 임계값 동작
+10. 위치 추출 정확도 (별칭 중복·trailing 비위치·조직명 오인 등 10개 케이스)
 
-**샘플 데이터**: `backend/tests/fixtures/disaster_sample_kakao.txt`
-- 충주시 12개 읍면동, 9가지 사고 유형, 75개 메시지
+**전용 위치 추출 평가** (`backend/tests/evaluate_location_extraction.py`):
+- 28개 케이스 검증: 기본/컨텍스트차단/복합위치/별칭중복/비위치제거/리단위/EMD만/대괄호
+
+**샘플 데이터**:
+- `backend/tests/fixtures/disaster_sample_kakao.txt` — 충주시 15개 읍면동, 18가지 사고, 116개 메시지
+- `backend/tests/fixtures/disaster_sample_winter_kakao.txt` — 겨울 특보 샘플
+- `backend/tests/fixtures/disaster_location_test_kakao.txt` — 위치 추출 패턴 집중 샘플 (v12 신규)
 
 ### 수동 확인
 
@@ -228,26 +247,18 @@ python backend/tests/evaluate_disaster_dashboard.py
 
 ---
 
-## 9. 대시보드 UI 구성 (v9)
+## 9. 대시보드 UI 구성 (v10)
 
 `frontend/src/pages/DisasterDashboard.jsx`
 
 - **요약 카드 5개**: 총 사건·진행중(빨간 하이라이트)·완료종결·발생읍면동·최다유형
-- **지도 영역** (v9 개선):
-  - `EmdDotMap`이 **항상 기본 표시** (카카오맵 키 없어도, 사건이 없어도 동작)
-  - `EMD_COORDS`의 **25개 전체 읍면동**이 항상 표시됨 — 파서 EMD 추출 실패해도 지도 공백 없음
-  - 사건 있는 읍면동: 버블 크기·색상으로 표현 (빨강=진행중, 초록=완료)
-  - 사건 없는 읍면동: 작은 회색 점으로 배경 표시
-  - hover 시 EMD명·전체/진행중 건수 툴팁 표시
-  - `VITE_KAKAO_MAP_KEY` 있고 로딩 성공 시에만 카카오맵이 위에 오버레이
-- **최근 사건 카드**: 유형/상태 필터 + 최근 10건 목록
-- **차트 3개**: 유형별·상태별·읍면동별 수평 바 차트 (외부 라이브러리 미사용)
+- **진행중 사건 패널** (`ActiveIncidentPanel`): 상태 점 + 유형/상태 뱃지 + 위치 + 요약 + 시간, 6건 후 확장/축소
+- **읍면동 랭킹 테이블** (`EmdRankTable`): 미니 바 + 진행중 있으면 빨간 행 하이라이트
+- **최근 완료 사건 목록** (`DoneIncidentList`): 완료/종결 상위 5건
+- **차트 2개**: 유형별·상태별 수평 바 차트 (외부 라이브러리 미사용)
 
-### 지도가 비어 보였던 원인 (v8 → v9 수정)
-
-**이전 동작**: `emd_map_data`에 사건 발생 읍면동만 포함 → 파서가 EMD를 "미분류"로 처리하면 모든 항목에 좌표 없음 → "좌표 데이터 없음" 문자만 표시.
-
-**v9 수정**: 백엔드가 `EMD_COORDS` 25개를 모두 `emd_map_data`에 포함시킴. 좌표는 항상 존재하므로 지도가 반드시 렌더링됨.
+> 지도 미사용 이유: 외부 라이브러리(Leaflet 등) 없이 실제 지형 배경을 구현하기 어렵고,  
+> CSS 그리드 기반 대체 지도는 실제 지도로 오인될 수 있어 v10에서 지도 없는 대시보드로 재설계.
 
 ---
 
