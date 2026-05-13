@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Home, Info, Cpu, MessageSquare, LogOut, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useBackendWakeup } from '../hooks/useBackendWakeup';
 
 // AI 서비스 카테고리별 정리
 const aiServiceCategories = [
@@ -195,6 +196,7 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [openMenu, setOpenMenu] = useState(null);
   const { user, logout, isAdmin } = useAuth();
+  const backendStatus = useBackendWakeup();
 
   const handleOpen = (menu) => {
     setOpenMenu(menu);
@@ -303,6 +305,20 @@ export default function Layout({ children }) {
           </div>
         </div>
       </header>
+
+      {/* 백엔드 서버 상태 배너 */}
+      {backendStatus === 'loading' && (
+        <div className="flex items-center justify-center gap-3 bg-cyan-950 border-b border-cyan-800/60 px-4 py-2 text-sm text-cyan-300">
+          <div className="w-3.5 h-3.5 border-2 border-cyan-400/40 border-t-cyan-400 rounded-full animate-spin shrink-0" />
+          <span>AI 서버를 준비 중입니다. 첫 접속 시 약간의 시간이 소요될 수 있습니다.</span>
+        </div>
+      )}
+      {backendStatus === 'error' && (
+        <div className="flex items-center justify-center gap-2 bg-red-950 border-b border-red-800/60 px-4 py-2 text-sm text-red-300">
+          <span>⚠️</span>
+          <span>AI 서버 연결이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.</span>
+        </div>
+      )}
 
       {/* Main Content */}
       <main>
