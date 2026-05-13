@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { ArrowRight, Sparkles, Sun, Moon, CloudSun } from 'lucide-react';
+import { useBackendWakeup } from '../hooks/useBackendWakeup';
 
 // 카테고리 정의
 const categories = [
@@ -138,6 +139,7 @@ const categoryOrder = {
 export default function Dashboard() {
   const [time, setTime] = useState(new Date());
   const [activeCategory, setActiveCategory] = useState('all');
+  const backendStatus = useBackendWakeup();
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 60000);
@@ -169,6 +171,20 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen overflow-x-hidden">
+      {/* 백엔드 웜업 배너 */}
+      {backendStatus === 'loading' && (
+        <div className="flex items-center justify-center gap-3 bg-cyan-950 border-b border-cyan-800 px-4 py-2.5 text-sm text-cyan-300">
+          <div className="w-4 h-4 border-2 border-cyan-400/40 border-t-cyan-400 rounded-full animate-spin shrink-0"></div>
+          <span>AI 서버를 준비 중입니다. 첫 접속 시 약간의 시간이 소요될 수 있습니다.</span>
+        </div>
+      )}
+      {backendStatus === 'error' && (
+        <div className="flex items-center justify-center gap-2 bg-red-950 border-b border-red-800 px-4 py-2.5 text-sm text-red-300">
+          <span>⚠️</span>
+          <span>AI 서버 연결이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.</span>
+        </div>
+      )}
+
       {/* Hero Section */}
       <section className="relative bg-slate-950 text-white py-20 px-4 sm:px-6 lg:px-8 overflow-hidden">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-cyan-500/20 rounded-full mix-blend-multiply filter blur-3xl opacity-50 animate-blob"></div>
