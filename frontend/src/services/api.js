@@ -12,19 +12,44 @@ const api = axios.create({
   },
 });
 
-// 요청 인터셉터
+// 요청 인터셉터 — Authorization 헤더 자동 주입
 api.interceptors.request.use(
   (config) => {
+    const token = localStorage.getItem('access_token');
+    if (token && !config.headers['Authorization']) {
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
     console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
     return config;
   },
   (error) => Promise.reject(error)
 );
 
-// 응답 인터셉터
+// 응답 인터셉터 — 에러 처리
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // arraybuffer 응답에서 JSON 에러 디코딩 (번역기 등 파일 다운로드 엔드포인트 대응)
+    if (error.response?.data instanceof ArrayBuffer) {
+      try {
+        const decoded = JSON.parse(new TextDecoder().decode(error.response.data));
+        error.response.data = decoded;
+      } catch (_) {
+        // 디코딩 실패 시 원본 유지
+      }
+    }
+
+    const status = error.response?.status;
+    const detail = error.response?.data?.detail;
+
+    // 429 — 일일 사용량 초과
+    if (status === 429) {
+      const msg = detail ||
+        '일일 AI 사용 한도에 도달했습니다. 일반 사용자는 하루 최대 50회까지 AI 기능을 사용할 수 있습니다. 내일 다시 이용해 주세요.';
+      // 전역 커스텀 이벤트로 알림 (각 페이지의 catch에서도 detail로 접근 가능)
+      window.dispatchEvent(new CustomEvent('api:quota-exceeded', { detail: { message: msg } }));
+    }
+
     console.error('[API Error]', error.response?.data || error.message);
     return Promise.reject(error);
   }

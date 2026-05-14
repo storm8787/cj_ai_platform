@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Home, Info, Cpu, MessageSquare, LogOut, Settings } from 'lucide-react';
+import { ChevronDown, ChevronRight, Home, Info, Cpu, MessageSquare, LogOut, Settings, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useBackendWakeup } from '../hooks/useBackendWakeup';
 
@@ -197,6 +197,13 @@ export default function Layout({ children }) {
   const [openMenu, setOpenMenu] = useState(null);
   const { user, logout, isAdmin } = useAuth();
   const backendStatus = useBackendWakeup();
+  const [quotaMsg, setQuotaMsg] = useState(null);
+
+  useEffect(() => {
+    const handler = (e) => setQuotaMsg(e.detail?.message || '일일 AI 사용 한도에 도달했습니다.');
+    window.addEventListener('api:quota-exceeded', handler);
+    return () => window.removeEventListener('api:quota-exceeded', handler);
+  }, []);
 
   const handleOpen = (menu) => {
     setOpenMenu(menu);
@@ -317,6 +324,23 @@ export default function Layout({ children }) {
         <div className="flex items-center justify-center gap-2 bg-red-950 border-b border-red-800/60 px-4 py-2 text-sm text-red-300">
           <span>⚠️</span>
           <span>AI 서버 연결이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.</span>
+        </div>
+      )}
+
+      {/* 일일 사용량 초과 배너 */}
+      {quotaMsg && (
+        <div className="flex items-center justify-between gap-3 bg-amber-950 border-b border-amber-800/60 px-4 py-2.5 text-sm text-amber-200">
+          <div className="flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{quotaMsg}</span>
+          </div>
+          <button
+            onClick={() => setQuotaMsg(null)}
+            className="shrink-0 hover:text-white transition-colors"
+            aria-label="닫기"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
 
