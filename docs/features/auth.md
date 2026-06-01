@@ -99,6 +99,21 @@ user_profiles (
 - 이메일로 회원가입 → OTP 확인 → 로그인 → JWT 토큰으로 API 호출
 - `GET /api/auth/me`로 role 및 isAdmin 확인
 
+### 로그인 장애 진단 (DNS/네트워크 오류)
+
+로그인 시 `[Errno -2] Name or service not known` 등 네트워크 오류가 나면,
+백엔드 → Supabase 연결 자체가 실패한 것이다. (코드 버그가 아닌 인프라/설정 문제)
+
+1. `GET /api/auth/status` 호출 → `supabase_reachable` 값 확인
+   - `false` 이면 백엔드가 Supabase 호스트에 도달하지 못하는 상태
+2. 점검 순서
+   - Azure Container Apps 환경변수 `SUPABASE_URL` 오타/누락 여부
+   - Supabase 프로젝트 일시정지 여부 (무료 플랜은 장기간 미사용 시 자동 정지 → 대시보드에서 Restore)
+   - 컨테이너 egress/DNS 차단 여부
+
+> 네트워크 오류 시 사용자에게는 raw errno 대신 "인증 서버에 일시적으로 연결할 수 없습니다"
+> 메시지(503)를 반환하고, 상세 원인은 서버 로그에만 남긴다. (`_supabase_unreachable`)
+
 ---
 
 ## 10. 향후 개선 과제

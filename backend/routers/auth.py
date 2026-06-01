@@ -61,6 +61,28 @@ HEADERS = {
 }
 
 
+def _supabase_unreachable(action: str, err: Exception) -> HTTPException:
+    """
+    Supabase 호출 시 발생한 네트워크 오류(DNS 해석 실패·연결 거부·타임아웃 등)를
+    사용자 친화적인 503 응답으로 변환한다.
+
+    원인의 대부분은 코드가 아니라 인프라/설정 측에 있다:
+      - SUPABASE_URL 환경변수 누락/오타
+      - Supabase 프로젝트 일시정지(무료 플랜은 미사용 시 자동 정지)
+      - 컨테이너 egress/DNS 차단
+    raw errno("[Errno -2] Name or service not known")를 그대로 노출하지 않고,
+    서버 로그에만 상세 원인을 남긴다.
+    """
+    print(f"[auth] ❌ Supabase 연결 실패({action}): {err!r}")
+    return HTTPException(
+        status_code=503,
+        detail=(
+            "인증 서버에 일시적으로 연결할 수 없습니다. 잠시 후 다시 시도해주세요. "
+            "(문제가 계속되면 관리자에게 문의하세요)"
+        ),
+    )
+
+
 async def _fetch_user_profile(client: httpx.AsyncClient, user_id: str, token: str) -> dict:
     """user_profiles 테이블에서 role/name/department 조회"""
     try:
@@ -154,6 +176,8 @@ async def signup(request: SignUpRequest):
                 
                 return AuthResponse(success=False, message=error_msg)
                 
+    except httpx.RequestError as e:
+        raise _supabase_unreachable("signup", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"회원가입 오류: {str(e)}")
 
@@ -195,6 +219,8 @@ async def verify_otp(request: VerifyOTPRequest):
                 
                 return AuthResponse(success=False, message=error_msg)
                 
+    except httpx.RequestError as e:
+        raise _supabase_unreachable("verify-otp", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"인증 오류: {str(e)}")
 
@@ -224,6 +250,8 @@ async def resend_otp(request: ResendOTPRequest):
                     message="인증 코드 재발송에 실패했습니다."
                 )
                 
+    except httpx.RequestError as e:
+        raise _supabase_unreachable("resend-otp", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"재발송 오류: {str(e)}")
 
@@ -266,6 +294,8 @@ async def login(request: LoginRequest):
                 
                 return AuthResponse(success=False, message=error_msg)
                 
+    except httpx.RequestError as e:
+        raise _supabase_unreachable("login", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"로그인 오류: {str(e)}")
 
@@ -364,6 +394,8 @@ async def refresh_token(refresh_token: str):
             else:
                 return AuthResponse(success=False, message="토큰 갱신 실패")
                 
+    except httpx.RequestError as e:
+        raise _supabase_unreachable("refresh", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"토큰 갱신 오류: {str(e)}")
 
@@ -401,9 +433,35 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
 
 @router.get("/status")
 async def get_status():
-    """서비스 상태 확인"""
-    return {
+    """
+    서비스 상태 + Supabase 연결 진단.
+
+    로그인 시 '[Errno -2] Name or service not known' 같은 DNS/네트워크 오류가
+    났을 때, 이 엔드포인트로 백엔드 → Supabase 연결 가능 여부를 즉시 확인한다.
+    시크릿(전체 URL·키)은 노출하지 않는다.
+    """
+    result = {
         "status": "active",
         "service": "인증 서비스",
-        "supabase_url": SUPABASE_URL[:30] + "..." if SUPABASE_URL else "Not configured"
+        "supabase_url_configured": bool(SUPABASE_URL),
+        "supabase_url": (SUPABASE_URL[:30] + "...") if SUPABASE_URL else "Not configured",
+        "supabase_reachable": None,
+        "supabase_detail": None,
     }
+
+    if not SUPABASE_URL:
+        result["supabase_detail"] = "SUPABASE_URL 환경변수가 설정되지 않았습니다."
+        return result
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # 인증 불필요한 health 엔드포인트로 연결성만 확인
+            resp = await client.get(f"{SUPABASE_URL}/auth/v1/health", headers=HEADERS)
+        result["supabase_reachable"] = True
+        result["supabase_detail"] = f"HTTP {resp.status_code}"
+    except httpx.RequestError as e:
+        # DNS 해석 실패·연결 거부·타임아웃 등 → 인프라/설정 문제
+        result["supabase_reachable"] = False
+        result["supabase_detail"] = f"{type(e).__name__}: {e}"
+
+    return result
