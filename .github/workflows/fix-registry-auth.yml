@@ -1,0 +1,65 @@
+name: Fix - Azure GHCR pull auth (one-off)
+
+# 목적: Azure Container App(cj-ai-backend)이 GHCR 이미지를 pull 할 때
+#   'unauthorized / ImagePullFailure' 가 나는 문제를 해결한다.
+#   원인: 이미지는 public 인데, Container App 에 등록된 옛 GHCR 자격증명(만료)이
+#         익명 pull 대신 사용되어 GHCR 가 401 로 거부.
+#   조치: ghcr.io 레지스트리 자격증명을 제거 → 익명(public) pull 로 전환 → 리비전 재시작.
+#
+# 실행 방법: Actions 탭 → 이 워크플로우 선택 → Run workflow (수동).
+#   * 별도 시크릿 추가 불필요 (기존 AZURE_CREDENTIALS 사용).
+
+on:
+  workflow_dispatch:
+
+env:
+  APP_NAME: cj-ai-backend
+  RESOURCE_GROUP: rg-cj-ai-platform
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Diagnose current registry & revisions
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            echo "===== 현재 등록된 레지스트리 자격증명 ====="
+            az containerapp registry list \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" -o table || true
+            echo "===== 현재 리비전 상태 ====="
+            az containerapp revision list \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" -o table || true
+
+      - name: Remove stale ghcr.io credential (public image -> anonymous pull)
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            if az containerapp registry list --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" -o tsv | grep -qi 'ghcr.io'; then
+              echo "ghcr.io 자격증명 발견 → 제거"
+              az containerapp registry remove \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --server ghcr.io
+            else
+              echo "ghcr.io 자격증명이 없음 (이미 익명 pull 상태)"
+            fi
+
+      - name: Restart active revision to re-pull image
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            ACTIVE=$(az containerapp revision list \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+              --query "[?properties.active].name | [0]" -o tsv)
+            echo "활성 리비전: ${ACTIVE:-(none)}"
+            if [ -n "$ACTIVE" ]; then
+              az containerapp revision restart \
+                --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --revision "$ACTIVE" || true
+            fi
+            echo "===== 조치 후 리비전 상태 ====="
+            az containerapp revision list \
+              --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" -o table || true
