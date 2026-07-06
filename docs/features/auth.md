@@ -113,6 +113,8 @@ user_profiles (
 
 > 네트워크 오류 시 사용자에게는 raw errno 대신 "인증 서버에 일시적으로 연결할 수 없습니다"
 > 메시지(503)를 반환하고, 상세 원인은 서버 로그에만 남긴다. (`_supabase_unreachable`)
+> DNS 해석 실패는 `httpx.RequestError` 외에 소켓 레벨 `OSError`(`socket.gaierror`)로도
+> 올라올 수 있어, 두 예외를 함께 잡아 raw errno 노출을 원천 차단한다.
 
 ---
 
