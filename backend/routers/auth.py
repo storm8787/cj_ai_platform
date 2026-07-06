@@ -176,7 +176,7 @@ async def signup(request: SignUpRequest):
                 
                 return AuthResponse(success=False, message=error_msg)
                 
-    except httpx.RequestError as e:
+    except (httpx.RequestError, OSError) as e:
         raise _supabase_unreachable("signup", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"회원가입 오류: {str(e)}")
@@ -219,7 +219,7 @@ async def verify_otp(request: VerifyOTPRequest):
                 
                 return AuthResponse(success=False, message=error_msg)
                 
-    except httpx.RequestError as e:
+    except (httpx.RequestError, OSError) as e:
         raise _supabase_unreachable("verify-otp", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"인증 오류: {str(e)}")
@@ -250,7 +250,7 @@ async def resend_otp(request: ResendOTPRequest):
                     message="인증 코드 재발송에 실패했습니다."
                 )
                 
-    except httpx.RequestError as e:
+    except (httpx.RequestError, OSError) as e:
         raise _supabase_unreachable("resend-otp", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"재발송 오류: {str(e)}")
@@ -294,7 +294,7 @@ async def login(request: LoginRequest):
                 
                 return AuthResponse(success=False, message=error_msg)
                 
-    except httpx.RequestError as e:
+    except (httpx.RequestError, OSError) as e:
         raise _supabase_unreachable("login", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"로그인 오류: {str(e)}")
@@ -394,7 +394,7 @@ async def refresh_token(refresh_token: str):
             else:
                 return AuthResponse(success=False, message="토큰 갱신 실패")
                 
-    except httpx.RequestError as e:
+    except (httpx.RequestError, OSError) as e:
         raise _supabase_unreachable("refresh", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"토큰 갱신 오류: {str(e)}")
