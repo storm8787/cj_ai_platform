@@ -52,7 +52,8 @@ docs/features/law_chatbot.md → docs/evaluations/law_chatbot_eval.md
 | 파일 | 내용 |
 |-----|------|
 | `docs/ARCHITECTURE.md` | 전체 아키텍처 (백엔드/프론트/DB/서비스) |
-| `docs/DEPLOYMENT.md` | 배포 흐름 (Dockerfile, GHCR, Azure) |
+| `docs/DEPLOYMENT.md` | 배포 흐름 (Dockerfile, GHCR, Azure, 블루-그린) |
+| `docs/design/image_slimming.md` | 이미지 슬림화 설계(근본책) — cold pull 시간 단축 |
 | `docs/ENVIRONMENT_VARIABLES.md` | 환경변수 전체 목록 |
 | `docs/CHANGELOG.md` | 주요 변경 이력 |
 
