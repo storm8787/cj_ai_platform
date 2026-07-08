@@ -24,7 +24,7 @@ on:
 
 `backend/` 하위 파일 변경 후 main 브랜치에 머지되면 자동 실행.
 
-### 배포 단계 (`.github/workflows/backend-deploy.yml`)
+### 배포 단계 (`.github/workflows/backend-deploy.yml`) — 블루-그린 (무중단)
 
 ```
 1. Checkout (actions/checkout@v4)
@@ -33,18 +33,30 @@ on:
    - 태그: latest, {github.sha}
    - Context: ./backend
 4. Azure 로그인 (AZURE_CREDENTIALS 시크릿)
-5. Azure Container Apps update
-   - az containerapp update
-   - --name cj-ai-backend
-   - --resource-group rg-cj-ai-platform
-   - --image ghcr.io/storm8787/cj-ai-backend:{SHA}
+5. 블루-그린 배포 (단일 az update → 아래 순서로 대체)
+   ① 다중 리비전 모드 전환
+   ② 현재 서빙 리비전(OLD) 확인 → 트래픽 100% OLD 고정
+   ③ GHCR pull 자격증명 재등록(방어)
+   ④ 새 리비전(NEW)을 0% 트래픽 + min-replicas 1 로 생성
+      (revision-suffix = sha7-runNumber)
+   ⑤ NEW 의 runningState=Running 될 때까지 폴링 (최대 25분)
+   ⑥ 성공 → 트래픽 100% NEW 전환 → OLD 비활성화 → /api/health 200 확인
+      실패 → NEW 비활성화, 트래픽은 OLD 유지(사이트 정상), 잡 실패 처리
 ```
+
+> **왜 블루-그린인가**: 기존 방식(`az containerapp update` + 단일 모드)은 새 리비전으로 트래픽을
+> **즉시** 넘겨서, 새 리비전이 큰 이미지(약 9.6GB) pull(~13분)로 ACA 프로비저닝 데드라인(10분)을
+> 넘기면 사이트가 다운됐다(2026-07 반복 장애의 직접 원인). 이제 새 리비전이 실제로 Running 된
+> 뒤에만 트래픽을 전환하므로, 배포가 실패해도 기존 리비전이 계속 서비스한다.
+>
+> **근본책(별도 과제)**: 이미지 슬림화 — 이미지에 구워진 HuggingFace 모델(bge-m3, ko-sroberta)을
+> 런타임 볼륨으로 분리하여 pull 시간을 단축하면 데드라인 문제 자체가 사라진다.
 
 ### 예상 소요 시간
 
 - Docker 빌드: 15~25분 (HuggingFace 모델 2개 다운로드 포함)
-- Azure 배포: 2~5분
-- 총계: 약 20~30분
+- 블루-그린 배포: 새 리비전 이미지 pull(~13분) + Running 확인 + 트래픽 전환 → 약 15~25분
+- 총계: 약 30~50분 (무중단. 배포 중에도 기존 리비전이 서비스)
 
 ---
 
