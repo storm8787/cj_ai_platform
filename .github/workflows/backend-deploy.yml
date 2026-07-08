@@ -1,5 +1,11 @@
 name: Backend - Build and Push to GHCR
 
+# 배포 전략: 블루-그린 (zero-downtime)
+#   기존 방식(단일 리비전 + update)은 새 리비전으로 트래픽을 즉시 넘겨서,
+#   새 리비전이 (9.6GB 이미지의 ~13분 pull 등으로) 제때 못 뜨면 사이트가 다운됐다.
+#   → 이제 새 리비전을 0% 트래픽으로 띄우고, Running 확인 후에만 트래픽을 전환한다.
+#     새 리비전이 실패하면 트래픽은 기존(정상) 리비전에 그대로 남아 사이트가 유지된다.
+
 on:
   push:
     branches: [ main ]
@@ -7,21 +13,26 @@ on:
       - 'backend/**'
   workflow_dispatch:  # 수동 실행 가능
 
+env:
+  APP_NAME: cj-ai-backend
+  RESOURCE_GROUP: rg-cj-ai-platform
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 90  # 큰 이미지 pull(~13분) + Healthy 대기(최대 25분) 감안
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GHCR_TOKEN }}
-    
+
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
@@ -30,17 +41,96 @@ jobs:
         tags: |
           ghcr.io/${{ github.repository_owner }}/cj-ai-backend:latest
           ghcr.io/${{ github.repository_owner }}/cj-ai-backend:${{ github.sha }}
-    
+
     - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
-    
-    - name: Deploy to Azure Container Apps
+
+    - name: Blue-green deploy to Azure Container Apps
       uses: azure/CLI@v1
+      env:
+        IMAGE_SHA: ghcr.io/${{ github.repository_owner }}/cj-ai-backend:${{ github.sha }}
+        GHCR_USER: ${{ github.actor }}
+        GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        # 리비전 접미사: 커밋 sha 앞 7자 + run number (재실행/동일 sha 충돌 방지)
+        REV_SUFFIX: ${{ github.sha }}
+        RUN_NUMBER: ${{ github.run_number }}
       with:
         inlineScript: |
-          az containerapp update \
-            --name cj-ai-backend \
-            --resource-group rg-cj-ai-platform \
-            --image ghcr.io/${{ github.repository_owner }}/cj-ai-backend:${{ github.sha }}
+          set -euo pipefail
+          APP="$APP_NAME"; RG="$RESOURCE_GROUP"
+          SUFFIX="$(echo "$REV_SUFFIX" | cut -c1-7)-${RUN_NUMBER}"
+          NEW_REV="${APP}--${SUFFIX}"
+
+          echo "===== 1. 다중 리비전 모드 전환 ====="
+          az containerapp revision set-mode --name "$APP" --resource-group "$RG" --mode multiple
+
+          echo "===== 2. 현재 서빙 리비전 확인 (롤아웃 동안 유지) ====="
+          OLD_REV=$(az containerapp revision list --name "$APP" --resource-group "$RG" \
+            --query "reverse(sort_by([?properties.active], &properties.createdTime))[0].name" -o tsv || true)
+          echo "현재 서빙 리비전: ${OLD_REV:-(없음)}"
+
+          echo "===== 3. GHCR pull 자격증명 재등록 (방어) ====="
+          az containerapp registry set --name "$APP" --resource-group "$RG" \
+            --server ghcr.io --username "$GHCR_USER" --password "$GHCR_TOKEN" \
+            && echo "✅ 자격증명 재등록" || echo "⚠️ 자격증명 재등록 실패(계속 진행)"
+
+          echo "===== 4. 트래픽을 기존 리비전에 고정 (새 리비전 자동 전환 방지) ====="
+          if [ -n "${OLD_REV:-}" ]; then
+            az containerapp ingress traffic set --name "$APP" --resource-group "$RG" \
+              --revision-weight "${OLD_REV}=100" && echo "✅ ${OLD_REV}=100% 고정" || true
+          fi
+
+          echo "===== 5. 새 리비전 생성 (0% 트래픽, warm replica) ====="
+          echo "새 리비전: $NEW_REV / 이미지: $IMAGE_SHA"
+          az containerapp update --name "$APP" --resource-group "$RG" \
+            --image "$IMAGE_SHA" --revision-suffix "$SUFFIX" \
+            --min-replicas 1 --max-replicas 3
+
+          echo "===== 6. 새 리비전 Running 대기 (최대 25분) ====="
+          OK=0
+          for i in $(seq 1 100); do
+            RUN=$(az containerapp revision show --name "$APP" --resource-group "$RG" \
+              --revision "$NEW_REV" --query "properties.runningState" -o tsv 2>/dev/null || echo "?")
+            HEALTH=$(az containerapp revision show --name "$APP" --resource-group "$RG" \
+              --revision "$NEW_REV" --query "properties.healthState" -o tsv 2>/dev/null || echo "?")
+            echo "[$i/100] running=$RUN health=$HEALTH"
+            if [ "$RUN" = "Running" ]; then OK=1; break; fi
+            if [ "$RUN" = "Failed" ]; then echo "❌ 새 리비전 Failed"; break; fi
+            sleep 15
+          done
+
+          if [ "$OK" != "1" ]; then
+            echo "❌ 새 리비전($NEW_REV)이 25분 내 기동하지 못했습니다."
+            echo "   트래픽은 기존 리비전(${OLD_REV:-N/A})에 그대로 유지되어 사이트는 정상입니다."
+            echo "   새(실패) 리비전을 비활성화하고 배포를 실패 처리합니다."
+            az containerapp revision deactivate --name "$APP" --resource-group "$RG" \
+              --revision "$NEW_REV" || true
+            exit 1
+          fi
+
+          echo "===== 7. 트래픽 100% → 새 리비전 전환 (cutover) ====="
+          az containerapp ingress traffic set --name "$APP" --resource-group "$RG" \
+            --revision-weight "${NEW_REV}=100"
+          echo "✅ 트래픽 100% → $NEW_REV"
+
+          echo "===== 8. 옛 리비전 비활성화 ====="
+          for r in $(az containerapp revision list --name "$APP" --resource-group "$RG" \
+            --query "[?properties.active].name" -o tsv); do
+            if [ "$r" != "$NEW_REV" ]; then
+              az containerapp revision deactivate --name "$APP" --resource-group "$RG" \
+                --revision "$r" && echo "  비활성화: $r" || true
+            fi
+          done
+
+          echo "===== 9. 최종 Health check ====="
+          FQDN=$(az containerapp show --name "$APP" --resource-group "$RG" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "FQDN: $FQDN"
+          for i in $(seq 1 8); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 "https://$FQDN/api/health" || echo 000)
+            echo "health 시도 $i: HTTP $code"
+            if [ "$code" = "200" ]; then echo "🎉 배포 완료 & 서버 정상 (무중단)"; break; fi
+            sleep 15
+          done
