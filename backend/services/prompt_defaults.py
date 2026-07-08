@@ -26,11 +26,22 @@ def _report_writer_build() -> str:
     return _DEFAULT_BUILD_PROMPT_TEMPLATE
 
 
+def _report_writer_type_directive(rtype: str) -> Callable[[], str]:
+    def _loader() -> str:
+        from routers.report_writer import REPORT_TYPE_DIRECTIVES
+        return REPORT_TYPE_DIRECTIVES[rtype]
+    return _loader
+
+
 # (feature, prompt_key) → 기본값 로더(지연)
 _REGISTRY: Dict[Tuple[str, str], Callable[[], str]] = {
     ("report_writer", "system_prompt"): _report_writer_system,
     ("report_writer", "build_prompt_template"): _report_writer_build,
 }
+
+# 보고서 유형별 지시문도 관리자 화면에 노출 (유형명은 report_writer.REPORT_TYPE_DIRECTIVES와 일치)
+for _rtype in ("계획 보고서", "대책 보고서", "상황 보고서", "분석 보고서", "기타 보고서"):
+    _REGISTRY[("report_writer", f"type_directive:{_rtype}")] = _report_writer_type_directive(_rtype)
 
 
 def get_default(feature: str, prompt_key: str) -> Optional[str]:
