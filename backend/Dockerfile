@@ -34,6 +34,14 @@ ENV PYTHONUNBUFFERED=1
 
 # 의존성 먼저 설치
 COPY requirements.txt .
+# torch: CPU 전용 빌드로 먼저 설치.
+#   기본 PyPI torch 는 nvidia CUDA 라이브러리(~5~6GB)를 딸려오는데, 이 앱은 GPU 미사용(cpu:1, faiss-cpu)이라
+#   전부 낭비다. +cpu 로컬 버전을 못박아 CUDA 빌드를 차단 → 이미지 크기·cold pull 시간 대폭 절감.
+#   (이후 requirements.txt 의 torch>=2.6.0 은 2.6.0+cpu 로 이미 충족되어 재설치되지 않음)
+RUN pip install --no-cache-dir \
+    --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host download.pytorch.org \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    torch==2.6.0+cpu
 RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org -r requirements.txt
 
 # 임베딩 모델 다운로드
