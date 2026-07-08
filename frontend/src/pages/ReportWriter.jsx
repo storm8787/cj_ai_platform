@@ -163,6 +163,15 @@ export default function ReportWriter() {
     setSectionsEdited(false);
   };
 
+  // 항목 앞의 개조식 번호(가. / 1) / 1. / ①)를 인식해 마커와 본문을 분리
+  const parseItem = (text) => {
+    const m = (text || '').match(/^((?:[가-힣][.)])|(?:\d{1,2}[.)])|[①-⑳])\s+/);
+    if (m) {
+      return { marker: m[1], body: text.slice(m[0].length), sub: /^[가-힣]/.test(m[1]) };
+    }
+    return { marker: null, body: text, sub: false };
+  };
+
   const handleCopyText = () => {
     if (!report) return;
     
@@ -174,7 +183,8 @@ export default function ReportWriter() {
     report.sections.forEach(sec => {
       text += `■ ${sec.title}\n`;
       sec.content.forEach(para => {
-        text += `  ❍ ${para}\n`;
+        const { marker, body, sub } = parseItem(para);
+        text += `${sub ? '    ' : '  '}${marker || '❍'} ${body}\n`;
       });
       text += '\n';
     });
@@ -197,7 +207,8 @@ export default function ReportWriter() {
     report.sections.forEach(sec => {
       text += `■ ${sec.title}\n`;
       sec.content.forEach(para => {
-        text += `  ❍ ${para}\n`;
+        const { marker, body, sub } = parseItem(para);
+        text += `${sub ? '    ' : '  '}${marker || '❍'} ${body}\n`;
       });
       text += '\n';
     });
@@ -520,12 +531,20 @@ export default function ReportWriter() {
                     {section.title}
                   </h3>
                   <div className="space-y-2 pl-4">
-                    {section.content.map((para, pIdx) => (
-                      <p key={pIdx} className="text-slate-700 leading-relaxed flex">
-                        <span className="text-cyan-600 mr-2 flex-shrink-0">❍</span>
-                        <span>{para}</span>
-                      </p>
-                    ))}
+                    {section.content.map((para, pIdx) => {
+                      const { marker, body, sub } = parseItem(para);
+                      return (
+                        <p
+                          key={pIdx}
+                          className={`text-slate-700 leading-relaxed flex ${sub ? 'pl-5' : ''}`}
+                        >
+                          <span className={`mr-2 flex-shrink-0 ${marker ? 'text-slate-500 font-medium' : 'text-cyan-600'}`}>
+                            {marker || '❍'}
+                          </span>
+                          <span>{body}</span>
+                        </p>
+                      );
+                    })}
                   </div>
                 </div>
               ))}

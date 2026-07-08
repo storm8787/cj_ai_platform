@@ -433,6 +433,7 @@ _DEFAULT_BUILD_PROMPT_TEMPLATE = """당신은 대한민국 지방자치단체에
 - 서술형 섹션: "~임", "~음", "~함", "~됨" 등으로 문장 종결
 - 나열형 섹션: "항목: 내용" 형태로 간결하게 (문장형 종결어미 불필요)
 - 절대 금지: "~했습니다", "~합니다", "~했다", "~한다"
+- 한 항목 안에서 세부 요소를 구분할 때는 '가.', '나.' 또는 '1)', '2)' 개조식 번호를 사용할 수 있음 (마크다운 '-', '*' 기호는 금지)
 
 ## 핵심 규칙
 1. 키워드 "{keywords_joined}"를 반드시 내용에 자연스럽게 포함
@@ -579,10 +580,29 @@ TERM_CORRECTIONS = {
     "하겠다": "할 예정임",
     "해야 합니다": "이 필요함",
     "해야 한다": "이 필요함",
+    # 일반 규칙 (구체 규칙에 안 걸린 '~습니다' 형용사·동사 처리: 낮습니다→낮음, 높습니다→높음)
+    # ↑ 반드시 마지막에 위치 (구체 규칙 우선 매칭)
+    "습니다": "음",
 }
 
-BULLET_PATTERN = re.compile(r"^\s*([\-•\*\d]+[.)\]:]|\(?\d+\)|[가-힣][.)])\s*")
+# 마크다운/불릿 기호만 제거 (❍ 렌더러와 중복되는 것). 개조식 번호(1. 가. 1) ①)는 보존
+MARKDOWN_BULLET_PATTERN = re.compile(r"^\s*[-•*▪‣◦]\s+")
 MARKDOWN_PATTERN = re.compile(r"\*\*(.*?)\*\*|\*(.*?)\*|`(.*?)`")
+
+# 문장 분리기: '한글 + 마침표 + 공백'에서만 분리 → 날짜(2026. 1. 15.)·소수(3.2)는 분리하지 않음
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[가-힣])[.。]\s+")
+
+# 행정문서에서 자주 쓰는 기호 (삭제 방지 화이트리스트)
+_ALLOWED_SYMBOLS = (
+    "「」『』〈〉《》‘’“”"          # 인용/괄호
+    "→←↑↓⇒"                       # 화살표
+    "℃℉㎡㎥㎞㎧㎏㎾°‰※"           # 단위/기타
+    "①②③④⑤⑥⑦⑧⑨⑩"             # 개조식 원문자
+    "·・○△▷□◇●▶"               # 구분/도형 기호
+)
+CLEAN_KEEP_PATTERN = re.compile(
+    r"[^\w\s가-힣.,()%~\-:/;" + re.escape(_ALLOWED_SYMBOLS) + r"]"
+)
 
 
 def add_number_commas(text: str) -> str:
@@ -599,7 +619,7 @@ def add_number_commas(text: str) -> str:
 
 
 def fix_ending(sentence: str) -> str:
-    """문장 종결어미를 개괄식으로 변환"""
+    """한 문장의 종결어미를 개괄식으로 변환"""
     sentence = sentence.strip()
     if not sentence:
         return sentence
@@ -615,11 +635,30 @@ def fix_ending(sentence: str) -> str:
     return sentence
 
 
+def fix_all_endings(text: str) -> str:
+    """여러 문장이 포함된 텍스트의 '각 문장' 종결어미를 개괄식으로 변환.
+
+    - 문장 경계는 '한글 + 마침표 + 공백'에서만 분리(날짜·소수점은 보존)
+    - 나열형("항목: 내용")처럼 문장 종결이 없는 경우 단일 조각으로 처리
+    """
+    text = (text or "").strip()
+    if not text:
+        return text
+
+    parts = [p for p in SENTENCE_SPLIT_PATTERN.split(text) if p.strip()]
+    if not parts:
+        return ""
+
+    fixed = [fix_ending(p) for p in parts]
+    # 문장이 여러 개면 마침표로 구분해 가독성 유지
+    return ". ".join(fixed)
+
+
 def clean_content(text: str) -> str:
-    """콘텐츠 정리"""
-    text = BULLET_PATTERN.sub("", text)
+    """콘텐츠 정리 (개조식 번호는 보존, 마크다운/불릿만 제거)"""
+    text = MARKDOWN_BULLET_PATTERN.sub("", text)
     text = MARKDOWN_PATTERN.sub(r"\1\2\3", text)
-    text = re.sub(r"[^\w\s가-힣.,()%~\-:/·○△▷]", "", text)
+    text = CLEAN_KEEP_PATTERN.sub("", text)
     text = re.sub(r"\s{2,}", " ", text)
     text = add_number_commas(text)
     return text.strip()
@@ -630,10 +669,7 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
     result = dict(data)
 
     if isinstance(result.get("summary"), str):
-        summary = clean_content(result["summary"])
-        sentences = re.split(r"(?<=[.。])\s*", summary)
-        processed_sentences = [fix_ending(s) for s in sentences if s.strip()]
-        result["summary"] = " ".join(processed_sentences)
+        result["summary"] = fix_all_endings(clean_content(result["summary"]))
 
     processed_sections = []
     for sec in result.get("sections", []):
@@ -647,7 +683,7 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
         for item in contents:
             if isinstance(item, str) and item.strip():
                 cleaned = clean_content(item)
-                fixed = fix_ending(cleaned)
+                fixed = fix_all_endings(cleaned)
                 if fixed:
                     processed_contents.append(fixed)
 
