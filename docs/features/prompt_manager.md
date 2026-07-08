@@ -112,6 +112,24 @@ prompt_history (
 
 ---
 
+## 6-2. 코드 기본값 노출 (DB 미저장 프롬프트도 관리 화면에 표시)
+
+관리자 목록(`/list`, `/by-feature`)은 원래 **DB `prompts`에 저장된 row만** 반환했다.
+따라서 아직 DB에 seed되지 않은 프롬프트(코드 `_DEFAULT_*`만 존재)는 관리 화면에 **아예 보이지 않아 관리자가 조회·수정할 수 없었다.**
+
+이를 해소하기 위해 `backend/services/prompt_defaults.py` 레지스트리를 두고,
+`FEATURE_META`에 등록된 키 중 **DB에 없는 것은 코드 기본값을 합성 항목으로 함께 반환**한다.
+
+- 합성 항목 필드: `is_default=True`, `id="default:{feature}:{key}"`, `updated_at=null`, `content=코드 기본값`
+- 화면에서는 **"미저장" 배지**와 안내 문구를 표시하며, 관리자가 **저장하면 그때 DB로 insert**되어 이후 요청부터 DB 값이 우선 적용된다.
+- 단일 소스 유지: 레지스트리는 기본값을 복사하지 않고 실제 기능 모듈의 상수를 **지연 참조**한다.
+- 현재 레지스트리 등록: `report_writer`의 `system_prompt`, `build_prompt_template`. (다른 기능도 필요 시 `_REGISTRY`에 추가)
+
+> ⚠️ 이미 DB에 **구버전** row가 저장돼 있으면 합성 항목이 추가되지 않고 DB 값이 그대로 표시된다.
+> (DB가 소스이므로 정상) — 코드 기본값이 갱신됐다면 관리자가 화면에서 내용을 확인·갱신해야 한다.
+
+---
+
 ## 7. 수정 시 주의사항
 
 - admin 역할 확인: Supabase `user_profiles.role = 'admin'`

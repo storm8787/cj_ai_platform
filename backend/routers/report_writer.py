@@ -3,15 +3,17 @@
 섹션별 특성에 맞는 차별화된 프롬프트 적용
 DB 프롬프트 우선 + 하드코딩 fallback 유지
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from urllib.parse import quote
 import json
 import re
 from datetime import datetime
 
 from config import settings
 from services.prompt_service import prompt_service
+from services.hwpx_writer import build_hwpx
 
 router = APIRouter()
 
@@ -25,6 +27,14 @@ class ReportGenerateRequest(BaseModel):
     detail_type: str
     keywords: str
     length: str = "표준"
+    # --- 선택 입력 (비어 있으면 키워드 중심으로 생성) ---
+    department: str = ""       # 부서명 (예: 자치행정과)
+    author: str = ""           # 작성자 (예: ○○○ 주무관)
+    report_date: str = ""      # 보고일자 (예: 2026. 7. 8.)
+    facts: str = ""            # 확인된 사실·배경·현황 자유 서술
+    # --- 목차 커스터마이즈 (선택, 2단계 대비) ---
+    # 비어 있으면 REPORT_STRUCTURES의 기본 목차를 사용
+    custom_sections: List[str] = []
 
 
 class ReportSection(BaseModel):
@@ -41,11 +51,25 @@ class ReportResponse(BaseModel):
     sections: List[ReportSection]
     metadata: Dict[str, Any]
     success: bool
+    # --- 문서 머리말 정보 (HWPX 내보내기 대비, 비어 있을 수 있음) ---
+    department: str = ""
+    author: str = ""
+    report_date: str = ""
 
 
 class StructureResponse(BaseModel):
     report_types: Dict[str, Dict[str, List[str]]]
     length_options: List[str]
+
+
+class HwpxExportRequest(BaseModel):
+    """편집된 보고서를 HWPX로 내보내기 위한 요청 (프론트가 편집 결과를 POST)"""
+    title: str = ""
+    summary: str = ""
+    department: str = ""
+    author: str = ""
+    report_date: str = ""
+    sections: List[ReportSection] = []
 
 
 # ===========================================
@@ -80,9 +104,9 @@ REPORT_STRUCTURES: Dict[str, Dict[str, List[str]]] = {
 }
 
 LENGTH_RULES = {
-    "간략": {"items_per_section": "3~4", "detail_level": "핵심만 간략히"},
-    "표준": {"items_per_section": "4~6", "detail_level": "구체적 내용 포함"},
-    "상세": {"items_per_section": "6~8", "detail_level": "매우 상세하게"},
+    "간략": {"items_per_section": "3~4", "sentences_per_item": "1~2", "detail_level": "핵심만 간략히"},
+    "표준": {"items_per_section": "4~6", "sentences_per_item": "2~3", "detail_level": "구체적 내용 포함"},
+    "상세": {"items_per_section": "6~8", "sentences_per_item": "3~4", "detail_level": "매우 상세하게"},
 }
 
 
@@ -408,22 +432,28 @@ _DEFAULT_BUILD_PROMPT_TEMPLATE = """당신은 대한민국 지방자치단체에
 ## 작성할 보고서 정보
 - 제목: {title}
 - 유형: {report_type} > {detail_type}
+- 부서: {department}
+- 작성자: {author}
+- 보고일자: {report_date}
 - 핵심 키워드: {keywords_joined}
-- 분량: 섹션당 {items_per_section}개 항목
+- 분량: 섹션당 {items_per_section}개 항목, 항목당 {sentences_per_item}문장 ({detail_level})
 
 ## 섹션 구성
 {sections_joined}
-
+{facts_block}
 ## 문체 규칙 (개괄식 종결어미)
 - 서술형 섹션: "~임", "~음", "~함", "~됨" 등으로 문장 종결
 - 나열형 섹션: "항목: 내용" 형태로 간결하게 (문장형 종결어미 불필요)
 - 절대 금지: "~했습니다", "~합니다", "~했다", "~한다"
+- 한 항목 안에서 세부 요소를 구분할 때는 '가.', '나.' 또는 '1)', '2)' 개조식 번호를 사용할 수 있음 (마크다운 '-', '*' 기호는 금지)
 
 ## 핵심 규칙
 1. 키워드 "{keywords_joined}"를 반드시 내용에 자연스럽게 포함
-2. 구체적 숫자(수량, 금액, 일정, 비율 등)를 반드시 포함
-3. 각 섹션의 스타일(서술형/나열형/효과형/방안형/분석형)에 맞게 작성
-4. 섹션 간 내용 중복 금지
+2. '확인된 사실'이 제공된 경우 이를 최우선 근거로 사용하고, 사실과 배치되는 내용을 지어내지 말 것
+3. 수치(수량·금액·일정·비율 등)는 확인된 사실에 근거가 있을 때만 구체적으로 기재하고,
+   근거가 없으면 임의로 지어내지 말고 자리표시자(○○, □□, 0000 등)로 표기하여 담당자가 채우도록 할 것
+4. 각 섹션의 스타일(서술형/나열형/효과형/방안형/분석형)에 맞게 작성
+5. 섹션 간 내용 중복 금지
 
 ## 섹션별 작성 가이드
 {section_guide_text}
@@ -460,11 +490,40 @@ _DEFAULT_BUILD_PROMPT_TEMPLATE = """당신은 대한민국 지방자치단체에
 # ===========================================
 # 🎯 프롬프트 생성 함수
 # ===========================================
-def build_prompt(title: str, report_type: str, detail_type: str, keywords: str, length_key: str) -> str:
+def build_prompt(
+    title: str,
+    report_type: str,
+    detail_type: str,
+    keywords: str,
+    length_key: str,
+    department: str = "",
+    author: str = "",
+    report_date: str = "",
+    facts: str = "",
+    custom_sections: List[str] = None,
+) -> str:
     """섹션별 특성을 반영한 프롬프트 생성"""
-    sections = REPORT_STRUCTURES[report_type][detail_type]
+    # 목차: 사용자가 지정한 custom_sections가 있으면 우선, 없으면 기본 목차
+    if custom_sections:
+        sections = [s.strip() for s in custom_sections if s and s.strip()]
+    if not custom_sections or not sections:
+        sections = REPORT_STRUCTURES[report_type][detail_type]
     rule = LENGTH_RULES[length_key]
     keyword_list = [kw.strip() for kw in keywords.split(",") if kw.strip()]
+
+    # 확인된 사실 블록 (비어 있으면 키워드 중심 안내)
+    facts = (facts or "").strip()
+    if facts:
+        facts_block = (
+            "\n## 확인된 사실 (최우선 근거 — 이 내용과 배치되게 지어내지 말 것)\n"
+            f"{facts}\n"
+        )
+    else:
+        facts_block = (
+            "\n## 확인된 사실\n"
+            "- 제공된 사실 없음. 키워드를 중심으로 문서 구조를 완성하되,\n"
+            "  구체적 수치·기관명·일정은 지어내지 말고 자리표시자(○○, □□)로 표기할 것\n"
+        )
 
     section_guides = []
     for sec in sections:
@@ -497,8 +556,14 @@ def build_prompt(title: str, report_type: str, detail_type: str, keywords: str, 
         title=title,
         report_type=report_type,
         detail_type=detail_type,
+        department=department.strip() or "○○과",
+        author=author.strip() or "미지정",
+        report_date=report_date.strip() or "미지정",
         keywords_joined=", ".join(keyword_list),
         items_per_section=rule["items_per_section"],
+        sentences_per_item=rule["sentences_per_item"],
+        detail_level=rule["detail_level"],
+        facts_block=facts_block,
         sections_joined=" → ".join(sections),
         section_guide_text=section_guide_text,
         generated_at=datetime.now().isoformat(),
@@ -527,10 +592,29 @@ TERM_CORRECTIONS = {
     "하겠다": "할 예정임",
     "해야 합니다": "이 필요함",
     "해야 한다": "이 필요함",
+    # 일반 규칙 (구체 규칙에 안 걸린 '~습니다' 형용사·동사 처리: 낮습니다→낮음, 높습니다→높음)
+    # ↑ 반드시 마지막에 위치 (구체 규칙 우선 매칭)
+    "습니다": "음",
 }
 
-BULLET_PATTERN = re.compile(r"^\s*([\-•\*\d]+[.)\]:]|\(?\d+\)|[가-힣][.)])\s*")
+# 마크다운/불릿 기호만 제거 (❍ 렌더러와 중복되는 것). 개조식 번호(1. 가. 1) ①)는 보존
+MARKDOWN_BULLET_PATTERN = re.compile(r"^\s*[-•*▪‣◦]\s+")
 MARKDOWN_PATTERN = re.compile(r"\*\*(.*?)\*\*|\*(.*?)\*|`(.*?)`")
+
+# 문장 분리기: '한글 + 마침표 + 공백'에서만 분리 → 날짜(2026. 1. 15.)·소수(3.2)는 분리하지 않음
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[가-힣])[.。]\s+")
+
+# 행정문서에서 자주 쓰는 기호 (삭제 방지 화이트리스트)
+_ALLOWED_SYMBOLS = (
+    "「」『』〈〉《》‘’“”"          # 인용/괄호
+    "→←↑↓⇒"                       # 화살표
+    "℃℉㎡㎥㎞㎧㎏㎾°‰※"           # 단위/기타
+    "①②③④⑤⑥⑦⑧⑨⑩"             # 개조식 원문자
+    "·・○△▷□◇●▶"               # 구분/도형 기호
+)
+CLEAN_KEEP_PATTERN = re.compile(
+    r"[^\w\s가-힣.,()%~\-:/;" + re.escape(_ALLOWED_SYMBOLS) + r"]"
+)
 
 
 def add_number_commas(text: str) -> str:
@@ -547,7 +631,7 @@ def add_number_commas(text: str) -> str:
 
 
 def fix_ending(sentence: str) -> str:
-    """문장 종결어미를 개괄식으로 변환"""
+    """한 문장의 종결어미를 개괄식으로 변환"""
     sentence = sentence.strip()
     if not sentence:
         return sentence
@@ -563,11 +647,30 @@ def fix_ending(sentence: str) -> str:
     return sentence
 
 
+def fix_all_endings(text: str) -> str:
+    """여러 문장이 포함된 텍스트의 '각 문장' 종결어미를 개괄식으로 변환.
+
+    - 문장 경계는 '한글 + 마침표 + 공백'에서만 분리(날짜·소수점은 보존)
+    - 나열형("항목: 내용")처럼 문장 종결이 없는 경우 단일 조각으로 처리
+    """
+    text = (text or "").strip()
+    if not text:
+        return text
+
+    parts = [p for p in SENTENCE_SPLIT_PATTERN.split(text) if p.strip()]
+    if not parts:
+        return ""
+
+    fixed = [fix_ending(p) for p in parts]
+    # 문장이 여러 개면 마침표로 구분해 가독성 유지
+    return ". ".join(fixed)
+
+
 def clean_content(text: str) -> str:
-    """콘텐츠 정리"""
-    text = BULLET_PATTERN.sub("", text)
+    """콘텐츠 정리 (개조식 번호는 보존, 마크다운/불릿만 제거)"""
+    text = MARKDOWN_BULLET_PATTERN.sub("", text)
     text = MARKDOWN_PATTERN.sub(r"\1\2\3", text)
-    text = re.sub(r"[^\w\s가-힣.,()%~\-:/·○△▷]", "", text)
+    text = CLEAN_KEEP_PATTERN.sub("", text)
     text = re.sub(r"\s{2,}", " ", text)
     text = add_number_commas(text)
     return text.strip()
@@ -578,10 +681,7 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
     result = dict(data)
 
     if isinstance(result.get("summary"), str):
-        summary = clean_content(result["summary"])
-        sentences = re.split(r"(?<=[.。])\s*", summary)
-        processed_sentences = [fix_ending(s) for s in sentences if s.strip()]
-        result["summary"] = " ".join(processed_sentences)
+        result["summary"] = fix_all_endings(clean_content(result["summary"]))
 
     processed_sections = []
     for sec in result.get("sections", []):
@@ -595,7 +695,7 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
         for item in contents:
             if isinstance(item, str) and item.strip():
                 cleaned = clean_content(item)
-                fixed = fix_ending(cleaned)
+                fixed = fix_all_endings(cleaned)
                 if fixed:
                     processed_contents.append(fixed)
 
@@ -637,7 +737,12 @@ async def generate_report(request: ReportGenerateRequest):
             report_type=request.report_type,
             detail_type=request.detail_type,
             keywords=request.keywords,
-            length_key=request.length
+            length_key=request.length,
+            department=request.department,
+            author=request.author,
+            report_date=request.report_date,
+            facts=request.facts,
+            custom_sections=request.custom_sections,
         )
 
         system_prompt = prompt_service.get(
@@ -687,7 +792,10 @@ async def generate_report(request: ReportGenerateRequest):
             summary=data.get("summary", ""),
             sections=sections,
             metadata=data.get("metadata", {}),
-            success=True
+            success=True,
+            department=request.department.strip(),
+            author=request.author.strip(),
+            report_date=request.report_date.strip(),
         )
 
     except json.JSONDecodeError as e:
@@ -696,12 +804,45 @@ async def generate_report(request: ReportGenerateRequest):
         raise HTTPException(status_code=500, detail=f"보고서 생성 실패: {str(e)}")
 
 
+@router.post("/export-hwpx")
+async def export_hwpx(request: HwpxExportRequest):
+    """편집된 보고서를 HWPX(한글) 파일로 생성하여 다운로드"""
+    try:
+        report = {
+            "title": request.title,
+            "summary": request.summary,
+            "department": request.department,
+            "author": request.author,
+            "report_date": request.report_date,
+            "sections": [
+                {"title": s.title, "order": s.order, "content": s.content}
+                for s in request.sections
+            ],
+        }
+        data = build_hwpx(report)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"HWPX 생성 실패: {str(e)}")
+
+    base = (request.title or "업무보고").strip()[:40] or "업무보고"
+    safe = re.sub(r'[\\/:*?"<>|]', "_", base)
+    filename = f"{safe}.hwpx"
+    disposition = (
+        f'attachment; filename="report.hwpx"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
+
+
 @router.get("/status")
 async def get_status():
     """서비스 상태 확인"""
     return {
         "status": "active",
         "service": "업무보고 생성기",
-        "version": "3.1.0",
+        "version": "3.2.0",
         "supported_types": list(REPORT_STRUCTURES.keys())
     }
