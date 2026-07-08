@@ -49,7 +49,7 @@ API prefix: `/api/report-writer` (main.py에서 등록)
 | `length` | | 간략/표준/상세 (섹션당 항목 수 + 항목당 문장 수 제어) |
 | `department` / `author` / `report_date` | | 문서 머리말 (HWPX 대비) |
 | `facts` | | 확인된 사실·배경·현황 자유 서술 |
-| `custom_sections` | | 목차 커스터마이즈 (비면 기본 목차, 2단계 대비) |
+| `custom_sections` | | 목차 커스터마이즈 (비면 기본 목차). 프론트 목차 편집 UI에서 전달 |
 
 ### 분량 규칙 (`LENGTH_RULES`)
 
@@ -89,6 +89,6 @@ API prefix: `/api/report-writer` (main.py에서 등록)
 ## 8. 향후 개선 과제
 
 - 생성 보고서 HWPX 내보내기 기능 (머리말 정보 department/author/report_date 활용)
-- 목차(섹션) 인라인 편집 UI — 백엔드 `custom_sections` 이미 지원, 프론트 편집 UI 예정 (2단계)
+- ✅ 목차(섹션) 편집 UI — 프론트에서 항목 이름 수정·추가·삭제·순서 변경 가능 (2단계 완료)
 - 생성 결과 인라인 편집 UX (4단계)
 - 보고서 유형 추가 (현재 5카테고리)

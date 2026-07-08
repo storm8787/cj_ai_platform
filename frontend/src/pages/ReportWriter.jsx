@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, ChevronRight, Download, RefreshCw, Sparkles, ClipboardCopy, Check } from 'lucide-react';
+import { FileText, ChevronRight, Download, RefreshCw, Sparkles, ClipboardCopy, Check, ChevronUp, ChevronDown, X, Plus, RotateCcw } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -22,7 +22,11 @@ export default function ReportWriter() {
   const [reportDate, setReportDate] = useState('');
   const [facts, setFacts] = useState('');
   const [showOptional, setShowOptional] = useState(false);
-  
+
+  // 목차(섹션) 편집 상태
+  const [sections, setSections] = useState([]);
+  const [sectionsEdited, setSectionsEdited] = useState(false);
+
   // 결과 상태
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
@@ -41,6 +45,13 @@ export default function ReportWriter() {
       }
     }
   }, [reportType, structures]);
+
+  // 유형/세부유형 변경 시 목차를 기본값으로 초기화
+  useEffect(() => {
+    const def = structures?.report_types?.[reportType]?.[detailType] || [];
+    setSections(def);
+    setSectionsEdited(false);
+  }, [reportType, detailType, structures]);
 
   const fetchStructures = async () => {
     try {
@@ -71,6 +82,11 @@ export default function ReportWriter() {
       setError('키워드를 입력해주세요.');
       return;
     }
+    const cleanSections = sections.map((s) => s.trim()).filter(Boolean);
+    if (cleanSections.length === 0) {
+      setError('목차 항목을 1개 이상 입력해주세요.');
+      return;
+    }
 
     setLoading(true);
     setError('');
@@ -89,7 +105,8 @@ export default function ReportWriter() {
           department: department.trim(),
           author: author.trim(),
           report_date: reportDate.trim(),
-          facts: facts.trim()
+          facts: facts.trim(),
+          custom_sections: cleanSections
         })
       });
 
@@ -110,6 +127,40 @@ export default function ReportWriter() {
   const handleReset = () => {
     setReport(null);
     setError('');
+  };
+
+  // ── 목차(섹션) 편집 핸들러 ──
+  const defaultSections = structures?.report_types?.[reportType]?.[detailType] || [];
+
+  const updateSection = (idx, value) => {
+    setSections((prev) => prev.map((s, i) => (i === idx ? value : s)));
+    setSectionsEdited(true);
+  };
+
+  const removeSection = (idx) => {
+    setSections((prev) => prev.filter((_, i) => i !== idx));
+    setSectionsEdited(true);
+  };
+
+  const moveSection = (idx, dir) => {
+    setSections((prev) => {
+      const next = [...prev];
+      const target = idx + dir;
+      if (target < 0 || target >= next.length) return prev;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+    setSectionsEdited(true);
+  };
+
+  const addSection = () => {
+    setSections((prev) => [...prev, '']);
+    setSectionsEdited(true);
+  };
+
+  const resetSections = () => {
+    setSections(defaultSections);
+    setSectionsEdited(false);
   };
 
   const handleCopyText = () => {
@@ -159,9 +210,6 @@ export default function ReportWriter() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  // 현재 선택된 구조 미리보기
-  const currentSections = structures?.report_types?.[reportType]?.[detailType] || [];
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -334,25 +382,83 @@ export default function ReportWriter() {
               )}
             </div>
 
-            {/* 구조 미리보기 */}
+            {/* 목차(섹션) 편집 */}
             <div className="mb-6">
-              <label className="block text-sm font-semibold text-slate-700 mb-2">
-                🔍 보고서 구조 미리보기
-              </label>
-              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                <div className="flex flex-wrap items-center gap-2">
-                  {currentSections.map((section, idx) => (
-                    <span key={idx} className="flex items-center">
-                      <span className="px-3 py-1.5 bg-white border border-slate-200 rounded-full text-sm font-medium text-slate-700 shadow-sm">
-                        {section}
-                      </span>
-                      {idx < currentSections.length - 1 && (
-                        <ChevronRight className="text-slate-300 mx-1" size={16} />
-                      )}
-                    </span>
-                  ))}
-                </div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-semibold text-slate-700">
+                  🔍 보고서 목차 (편집 가능)
+                  {sectionsEdited && (
+                    <span className="ml-2 text-xs font-normal text-cyan-600">· 사용자 지정</span>
+                  )}
+                </label>
+                {sectionsEdited && defaultSections.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={resetSections}
+                    className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+                  >
+                    <RotateCcw size={14} />
+                    기본 목차로 초기화
+                  </button>
+                )}
               </div>
+
+              <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 space-y-2">
+                {sections.map((section, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <span className="w-6 text-right text-sm text-slate-400 flex-shrink-0">
+                      {idx + 1}.
+                    </span>
+                    <input
+                      type="text"
+                      value={section}
+                      onChange={(e) => updateSection(idx, e.target.value)}
+                      placeholder="목차 항목명 (예: 추진배경)"
+                      className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                    />
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => moveSection(idx, -1)}
+                        disabled={idx === 0}
+                        title="위로"
+                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <ChevronUp size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveSection(idx, 1)}
+                        disabled={idx === sections.length - 1}
+                        title="아래로"
+                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeSection(idx)}
+                        title="삭제"
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-white rounded-md"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={addSection}
+                  className="w-full flex items-center justify-center gap-1 py-2 mt-1 border border-dashed border-slate-300 rounded-lg text-sm text-slate-500 hover:text-cyan-600 hover:border-cyan-400 transition-all"
+                >
+                  <Plus size={16} />
+                  목차 항목 추가
+                </button>
+              </div>
+              <p className="mt-1.5 text-xs text-slate-400">
+                💡 표준 목차 항목명(추진배경·기대효과 등)을 사용하면 항목별 작성 스타일이 자동 적용됩니다.
+              </p>
             </div>
 
             {/* 에러 메시지 */}
