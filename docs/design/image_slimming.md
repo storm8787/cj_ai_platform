@@ -1,7 +1,7 @@
 # 백엔드 이미지 슬림화 설계 (근본책)
 
-> 상태: **설계(제안)** — 구현 전. 2026-07 반복된 배포-다운 장애의 근본 원인 해소용.
-> 관련: `docs/DEPLOYMENT.md`(블루-그린 배포), `.github/workflows/backend-deploy.yml`
+> 상태: **Phase 1 구현됨 / Phase 2 설계(제안)**. 2026-07 반복된 배포-다운 장애의 근본 원인 해소용.
+> 관련: `docs/DEPLOYMENT.md`(블루-그린 배포), `.github/workflows/backend-deploy.yml`, `backend/Dockerfile`
 
 ---
 
@@ -47,18 +47,19 @@ running replica 없음 → ingress 404/000 → **사이트 다운**.
 
 ## 3. 설계 — 2단계
 
-### 🥇 Phase 1 — CPU torch + 정리 (저위험 · 최대 효과)
+### 🥇 Phase 1 — CPU torch (저위험 · 최대 효과) ✅ **구현됨**
 
-- **CPU 전용 torch 설치**: `torch`를 CPU 인덱스로 분리 설치하여 CUDA 라이브러리 제거.
+- **CPU 전용 torch 설치**(적용): `requirements.txt` 설치 **전에** CPU 빌드를 못박아 선설치 → CUDA 라이브러리 차단.
   ```dockerfile
-  # requirements.txt 에서 torch 줄 제거 후, 별도 설치
-  RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
-  RUN pip install --no-cache-dir -r requirements.txt
+  RUN pip install --no-cache-dir \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      torch==2.6.0+cpu
+  RUN pip install --no-cache-dir -r requirements.txt   # torch>=2.6.0 는 이미 충족 → 재설치 안 됨
   ```
-- (선택) **미사용 Node/MCP CLI 제거** — 빌드 시간·용량 절감. *docs상 "미래 대비 유지"라 유지/제거는 결정 필요.*
-- (선택) **multi-stage 빌드** — gcc/g++ 등 빌드 도구를 최종 이미지에서 제외.
-- **예상 결과: 9.6GB → ~4GB, pull ~13분 → ~5분** (데드라인 아래로 내려갈 공산 큼)
-- **위험: 낮음.** torch는 어차피 CPU로만 구동. 앱 코드 변경 없음. `use_fp16=True`는 CPU에서 무시/폴백되므로 동작 동일.
+- **Node/MCP CLI: 유지** (docs상 "미래 대비 유지" 방침).
+- (미적용, 선택) **multi-stage 빌드** — gcc/g++ 등 빌드 도구를 최종 이미지에서 제외.
+- **예상 결과: 9.6GB → ~4GB, pull ~13분 → ~5분** (데드라인 아래로 내려갈 공산 큼). 실제 수치는 배포 빌드 로그로 검증.
+- **위험: 낮음.** torch는 어차피 CPU로만 구동(GPU 없음). 앱 코드 변경 없음. `use_fp16=True`는 CPU에서 무시/폴백되므로 동작 동일.
 
 ### 🥈 Phase 2 — 모델을 런타임 볼륨으로 분리 (근본책)
 
