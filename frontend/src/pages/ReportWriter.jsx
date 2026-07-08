@@ -15,6 +15,13 @@ export default function ReportWriter() {
   const [detailType, setDetailType] = useState('');
   const [keywords, setKeywords] = useState('');
   const [length, setLength] = useState('표준');
+
+  // 선택 입력 (비우면 키워드 중심 생성)
+  const [department, setDepartment] = useState('');
+  const [author, setAuthor] = useState('');
+  const [reportDate, setReportDate] = useState('');
+  const [facts, setFacts] = useState('');
+  const [showOptional, setShowOptional] = useState(false);
   
   // 결과 상태
   const [report, setReport] = useState(null);
@@ -78,7 +85,11 @@ export default function ReportWriter() {
           report_type: reportType,
           detail_type: detailType,
           keywords: keywords.trim(),
-          length: length
+          length: length,
+          department: department.trim(),
+          author: author.trim(),
+          report_date: reportDate.trim(),
+          facts: facts.trim()
         })
       });
 
@@ -104,9 +115,11 @@ export default function ReportWriter() {
   const handleCopyText = () => {
     if (!report) return;
     
-    let text = `${report.title}\n\n`;
-    text += `[요약]\n${report.summary}\n\n`;
-    
+    let text = `${report.title}\n`;
+    const metaLine = [report.department, report.report_date, report.author].filter(Boolean).join('  ·  ');
+    if (metaLine) text += `${metaLine}\n`;
+    text += `\n[요약]\n${report.summary}\n\n`;
+
     report.sections.forEach(sec => {
       text += `■ ${sec.title}\n`;
       sec.content.forEach(para => {
@@ -114,7 +127,7 @@ export default function ReportWriter() {
       });
       text += '\n';
     });
-    
+
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -124,6 +137,8 @@ export default function ReportWriter() {
     if (!report) return;
     
     let text = `${report.title}\n`;
+    const metaLine = [report.department, report.report_date, report.author].filter(Boolean).join('  ·  ');
+    if (metaLine) text += `${metaLine}\n`;
     text += `${'='.repeat(50)}\n\n`;
     text += `[요약]\n${report.summary}\n\n`;
     text += `${'─'.repeat(50)}\n\n`;
@@ -224,9 +239,9 @@ export default function ReportWriter() {
                   onChange={(e) => setLength(e.target.value)}
                   className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-cyan-500"
                 >
-                  <option value="간략">간략 (항목당 2~3문장)</option>
-                  <option value="표준">표준 (항목당 3~4문장)</option>
-                  <option value="상세">상세 (항목당 4~5문장)</option>
+                  <option value="간략">간략 (섹션당 3~4항목·항목당 1~2문장)</option>
+                  <option value="표준">표준 (섹션당 4~6항목·항목당 2~3문장)</option>
+                  <option value="상세">상세 (섹션당 6~8항목·항목당 3~4문장)</option>
                 </select>
               </div>
             </div>
@@ -243,6 +258,80 @@ export default function ReportWriter() {
                 placeholder="쉼표로 구분 (예: 스마트시티, 데이터 기반, 시민 편의)"
                 className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-cyan-500"
               />
+            </div>
+
+            {/* 선택 입력 (부서·작성자·보고일자 + 확인된 사실) */}
+            <div className="mb-6 border border-slate-200 rounded-xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowOptional((v) => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-all text-left"
+              >
+                <span className="text-sm font-semibold text-slate-700">
+                  ⚙️ 선택 입력 (부서·작성자·보고일자·확인된 사실)
+                </span>
+                <ChevronRight
+                  className={`text-slate-400 transition-transform ${showOptional ? 'rotate-90' : ''}`}
+                  size={18}
+                />
+              </button>
+
+              {showOptional && (
+                <div className="p-4 space-y-4">
+                  <p className="text-xs text-slate-500">
+                    비워두면 키워드 중심으로 생성됩니다. 아는 사실을 적을수록 정확도가 올라가며,
+                    확인되지 않은 수치는 AI가 지어내지 않고 <span className="font-semibold">○○·□□</span> 자리표시자로 남깁니다.
+                  </p>
+
+                  {/* 부서 / 작성자 / 보고일자 (3열) */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">부서명</label>
+                      <input
+                        type="text"
+                        value={department}
+                        onChange={(e) => setDepartment(e.target.value)}
+                        placeholder="예: 자치행정과"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">작성자</label>
+                      <input
+                        type="text"
+                        value={author}
+                        onChange={(e) => setAuthor(e.target.value)}
+                        placeholder="예: 홍길동 주무관"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">보고일자</label>
+                      <input
+                        type="text"
+                        value={reportDate}
+                        onChange={(e) => setReportDate(e.target.value)}
+                        placeholder="예: 2026. 7. 8."
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 확인된 사실 */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      확인된 사실 · 배경 · 현황 (자유 서술)
+                    </label>
+                    <textarea
+                      value={facts}
+                      onChange={(e) => setFacts(e.target.value)}
+                      rows={5}
+                      placeholder={'아는 사실을 자유롭게 적어주세요. 예)\n- 관내 CCTV 856대 중 노후장비 274대(32%)\n- 2026년 사업비 3억원 확보\n- 설치 대상지 15개소, 준공목표 6월'}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 resize-y"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 구조 미리보기 */}
@@ -302,6 +391,13 @@ export default function ReportWriter() {
               {/* 제목 */}
               <div className="border-2 border-slate-700 rounded-lg p-4 mb-6 text-center">
                 <h2 className="text-xl font-bold text-slate-900">{report.title}</h2>
+                {(report.department || report.author || report.report_date) && (
+                  <p className="mt-2 text-sm text-slate-500">
+                    {[report.department, report.report_date, report.author]
+                      .filter(Boolean)
+                      .join('  ·  ')}
+                  </p>
+                )}
               </div>
 
               {/* 요약 */}
