@@ -99,6 +99,11 @@ FEATURE_META = {
         "keys": {
             "build_prompt_template": "보고서 작성 템플릿",
             "system_prompt": "시스템 프롬프트",
+            "type_directive:계획 보고서": "유형지침 - 계획",
+            "type_directive:대책 보고서": "유형지침 - 대책",
+            "type_directive:상황 보고서": "유형지침 - 상황",
+            "type_directive:분석 보고서": "유형지침 - 분석",
+            "type_directive:기타 보고서": "유형지침 - 기타",
         },
     },
     "kakao_promo": {
