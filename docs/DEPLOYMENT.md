@@ -75,7 +75,9 @@ FROM python:3.11-slim
 #       미래 정상화 대비 및 법령 챗봇 기능 확장 목적으로 유지)
 
 # 2. Python 의존성 설치
-#    COPY requirements.txt → pip install
+#    - torch 를 CPU 전용(torch==2.6.0+cpu, pytorch cpu 인덱스)으로 먼저 설치
+#      → nvidia CUDA 라이브러리(~5~6GB) 제거. 앱은 GPU 미사용(cpu:1, faiss-cpu).
+#    - COPY requirements.txt → pip install (torch 는 이미 충족되어 재설치 안 됨)
 
 # 3. HuggingFace 모델 다운로드
 #    - BAAI/bge-m3→ /app/models/bge-m3

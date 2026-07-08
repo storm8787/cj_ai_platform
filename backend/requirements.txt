@@ -7,6 +7,7 @@ python-multipart==0.0.9
 openai>=1.12.0
 sentence-transformers==2.3.1
 faiss-cpu==1.7.4
+# 컨테이너에서는 Dockerfile이 torch==2.6.0+cpu(CPU 전용)로 선설치해 이 요구를 충족한다(CUDA 빌드 방지).
 torch>=2.6.0
 numpy==1.26.4
 pandas>=2.0.0
