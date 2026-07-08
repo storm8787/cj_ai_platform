@@ -108,11 +108,16 @@ API prefix: `/api/report-writer` (main.py에서 등록)
 ## 9. HWPX 내보내기 (services/hwpx_writer.py)
 
 - **의존성**: 새 pip 패키지 없이 표준 라이브러리 `zipfile` + 기존 `lxml`만 사용 (CLAUDE.md 준수)
-- **구조**: HWPX는 OWPML 규격 zip 컨테이너
-  - `mimetype`(무압축, 최상단) · `version.xml` · `META-INF/container.xml` · `Contents/content.hpf` · `Contents/header.xml` · `Contents/section0.xml` · `settings.xml`
-- **서식**: 제목(가운데 16pt bold) → 머리말(부서·보고일자·작성자) → □요약 → ■섹션 제목 → 개조식 본문
-  - 개조식 번호(가./1)/①)는 텍스트로 보존, 한글 소분류·원문자는 들여쓰기(paraPr left margin), 마커 없는 항목은 `○` 부여
-- **검증 한계 (중요)**: 이 저장소/CI 환경에는 한글(HWP)이 없어 **구조적 유효성(zip 레이아웃·XML well-formed·ID 참조 일관성)까지만 자동 검증**됨.
-  실제 한글에서의 열림/렌더링은 배포 후 사용자가 확인해야 함.
-  - 만약 열리지 않으면 `hwpx_writer.py`의 `_HEADER_XML` / `_sec_pr()` 를 실제 한글에서 저장한 빈 HWPX의 header.xml / secPr로 교체하면 확실히 호환됨(코드가 이 교체를 쉽게 하도록 분리되어 있음)
-- **미포함(향후)**: 결재란 표, 제목 테두리 상자 — 컨테이너 호환이 확인된 뒤 추가 권장
+- **방식 (템플릿 기반)**: 손으로 짠 OWPML 대신 **실제 한글로 저장된 충주시 서식(REF)을 템플릿으로 채택**.
+  - `backend/services/templates/hwpx/` 에 REF의 `header.xml`(글꼴·글자모양·문단모양·여백 정의) / `settings.xml` / `secpr.xml`(구역·여백) / `container.rdf` / `manifest.xml` / `version.xml` / `sec_open.txt`(section 루트) 저장
+  - 코드는 **본문(section0.xml)만 생성**하고, 템플릿 header가 정의한 charPr/paraPr ID를 참조 → 한글 열림·서식이 참고 문서와 동일하게 보장됨
+  - 템플릿 header에는 스타일 정의만 있고 원본 문서 내용·개인정보는 포함하지 않음(section0 미포함)
+- **서식 (REF 추출)**:
+  - 여백: 좌우 15mm / 상 20mm (secPr)
+  - 글꼴·크기: 제목·□대분류 = HY헤드라인M 16pt(charPr 29), 본문 = 휴먼명조 15pt(charPr 31), 머리말 = 휴먼고딕 15pt(charPr 18)
+  - **목차 기호 체계: □(대분류: 요약/섹션 제목) · ❍(중분류: 본문 항목) · -(소분류: 들여쓰기) · ※(참고)**
+  - 항목의 기존 마커(가./①/○/숫자)는 레벨 판별에 사용 후 표준 기호(❍/-)로 치환, `※`로 시작하는 항목은 참고로 유지
+- **문서 구조**: 제목(가운데 HY헤드라인M) → 머리말(부서·보고일자·작성자) → □요약 → □섹션 → ❍/-/※ 항목
+- **검증 한계 (중요)**: CI 환경에 한글(HWP)이 없어 **구조적 유효성(zip 레이아웃·XML well-formed·charPr/paraPr/style 참조 일관성·secPr 포함)까지 자동 검증**함.
+  실제 한글 렌더링 최종 확인은 사용자 몫이나, **템플릿이 실제 한글 저장본이라 열림 가능성이 매우 높음**.
+- **미포함(향후)**: 결재란 표, 제목 테두리 상자, 표 형태 데이터
