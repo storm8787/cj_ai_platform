@@ -16,8 +16,23 @@ import httpx
 
 from config import settings
 from services.prompt_service import prompt_service
+from services.prompt_defaults import iter_feature_defaults, iter_all_defaults
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
+
+
+def _default_entry(feature: str, prompt_key: str, content: str) -> dict:
+    """DB에 아직 없는 코드 기본값을 관리자 화면에 노출하기 위한 합성 항목"""
+    return {
+        "id": f"default:{feature}:{prompt_key}",
+        "feature": feature,
+        "prompt_key": prompt_key,
+        "description": "",
+        "content": content,
+        "is_active": True,
+        "updated_at": None,
+        "is_default": True,  # DB 미저장 + 코드 기본값 사용 중
+    }
 
 
 # ─── 기능 메타데이터 ───
@@ -200,13 +215,20 @@ async def list_prompts(authorization: Optional[str] = Header(None)):
     await _verify_admin(authorization)
     
     prompts = await prompt_service.list_all()
-    
+
+    # DB에 없는 코드 기본값 프롬프트를 합성 항목으로 추가 (관리자가 보고/저장 가능하도록)
+    existing = {(p["feature"], p["prompt_key"]) for p in prompts}
+    for feat, key, content in iter_all_defaults():
+        if (feat, key) not in existing:
+            prompts.append(_default_entry(feat, key, content))
+
     # 기능 메타데이터 병합
     for p in prompts:
         meta = FEATURE_META.get(p["feature"], {})
         p["feature_name"] = meta.get("name", p["feature"])
         p["feature_icon"] = meta.get("icon", "📄")
         p["prompt_key_label"] = _key_label(p["feature"], p["prompt_key"])
+        p["is_default"] = p.get("is_default", False)
 
     return {"prompts": prompts}
 
@@ -219,9 +241,16 @@ async def get_prompts_by_feature(feature: str, authorization: Optional[str] = He
     prompts = await prompt_service.list_all()
     filtered = [p for p in prompts if p["feature"] == feature]
 
+    # DB에 없는 코드 기본값 프롬프트를 합성 항목으로 추가
+    existing_keys = {p["prompt_key"] for p in filtered}
+    for key, content in iter_feature_defaults(feature):
+        if key not in existing_keys:
+            filtered.append(_default_entry(feature, key, content))
+
     meta = FEATURE_META.get(feature, {})
     for p in filtered:
         p["prompt_key_label"] = _key_label(feature, p["prompt_key"])
+        p["is_default"] = p.get("is_default", False)
 
     return {
         "feature": feature,

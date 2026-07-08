@@ -221,12 +221,31 @@ export default function PromptManager() {
                       ...(editingPrompt?.id === p.id ? styles.promptCardActive : {}),
                     }}
                   >
-                    <div style={styles.promptKey}>{p.prompt_key_label || p.prompt_key}</div>
+                    <div style={styles.promptKey}>
+                      {p.prompt_key_label || p.prompt_key}
+                      {p.is_default && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 11,
+                            color: "#0891b2",
+                            border: "1px solid #a5f3fc",
+                            borderRadius: 6,
+                            padding: "1px 6px",
+                          }}
+                        >
+                          미저장
+                        </span>
+                      )}
+                    </div>
                     <div style={styles.promptPreview}>
                       {p.content.slice(0, 80)}...
                     </div>
                     <div style={styles.promptMeta}>
-                      {p.content.length.toLocaleString()}자 · {new Date(p.updated_at).toLocaleDateString("ko-KR")}
+                      {p.content.length.toLocaleString()}자 ·{" "}
+                      {p.is_default
+                        ? "코드 기본값 · DB 미저장"
+                        : new Date(p.updated_at).toLocaleDateString("ko-KR")}
                     </div>
                   </div>
                 ))}
@@ -253,6 +272,19 @@ export default function PromptManager() {
                     editingPrompt.prompt_key_label !== editingPrompt.prompt_key && (
                       <code style={styles.editKeyHint}>{editingPrompt.prompt_key}</code>
                     )}
+                  {editingPrompt.is_default && (
+                    <p
+                      style={{
+                        marginTop: 8,
+                        fontSize: 13,
+                        color: "#0891b2",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      ⚠️ 아직 DB에 저장되지 않은 <b>코드 기본값</b>입니다. 지금 보이는 내용이 현재 실제로
+                      사용되는 프롬프트이며, <b>저장</b>하면 DB에 반영되어 이후 요청부터 DB 값이 우선 적용됩니다.
+                    </p>
+                  )}
                 </div>
                 <div style={styles.editActions}>
                   <button onClick={loadHistory} style={styles.historyBtn}>
@@ -263,13 +295,20 @@ export default function PromptManager() {
                   </button>
                   <button
                     onClick={savePrompt}
-                    disabled={saving || editContent === editingPrompt.content}
+                    disabled={
+                      saving ||
+                      (!editingPrompt.is_default && editContent === editingPrompt.content)
+                    }
                     style={{
                       ...styles.saveBtn,
-                      opacity: saving || editContent === editingPrompt.content ? 0.5 : 1,
+                      opacity:
+                        saving ||
+                        (!editingPrompt.is_default && editContent === editingPrompt.content)
+                          ? 0.5
+                          : 1,
                     }}
                   >
-                    {saving ? "저장 중..." : "저장"}
+                    {saving ? "저장 중..." : editingPrompt.is_default ? "DB에 저장" : "저장"}
                   </button>
                 </div>
               </div>

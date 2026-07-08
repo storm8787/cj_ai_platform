@@ -80,7 +80,9 @@ API prefix: `/api/report-writer` (main.py에서 등록)
 ## 6. 수정 시 주의사항
 
 - 보고서 유형별 작성 스타일: 서술형/나열형/효과형/방안형/분석형
-- 프롬프트: `prompt_service.get("report_writer", ...)` 패턴으로 Supabase 관리 가능
+- 프롬프트: `prompt_service.get("report_writer", ...)` 패턴으로 Supabase 관리 가능 (DB 우선 → 코드 fallback)
+  - `system_prompt`, `build_prompt_template` 두 키는 DB에 없어도 관리자 '프롬프트 관리'에 **코드 기본값('미저장')으로 표시·수정 가능** (`services/prompt_defaults.py` 등록)
+  - ⚠️ DB에 구버전 `build_prompt_template`이 저장돼 있으면 1·3단계 프롬프트 개선(사실/메타 치환자 등)이 반영 안 됨 → 관리자 화면에서 최신 내용으로 갱신 필요
 - 후처리 로직 (용어 교정, 마크다운 제거) 라우터 내에 있음
 
 ---
