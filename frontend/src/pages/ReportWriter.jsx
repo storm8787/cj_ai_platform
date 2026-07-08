@@ -8,6 +8,7 @@ export default function ReportWriter() {
   const [structures, setStructures] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [hwpxLoading, setHwpxLoading] = useState(false);
   
   // 입력 상태
   const [title, setTitle] = useState('');
@@ -207,6 +208,52 @@ export default function ReportWriter() {
         i === sIdx ? { ...s, content: [...s.content, ''] } : s
       ),
     }));
+  };
+
+  // ── HWPX(한글) 다운로드 ──
+  const handleDownloadHwpx = async () => {
+    if (!report) return;
+    setHwpxLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/report-writer/export-hwpx`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: report.title || '',
+          summary: report.summary || '',
+          department: report.department || '',
+          author: report.author || '',
+          report_date: report.report_date || '',
+          sections: report.sections.map((s) => ({
+            title: s.title || '',
+            order: s.order || 0,
+            content: (s.content || []).filter((c) => c && c.trim()),
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        let msg = 'HWPX 생성 실패';
+        try {
+          const e = await res.json();
+          msg = e.detail || msg;
+        } catch (_) { /* ignore */ }
+        throw new Error(msg);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(report.title || '업무보고').slice(0, 20).replace(/\s/g, '_')}.hwpx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'HWPX 다운로드 중 오류가 발생했습니다.');
+    } finally {
+      setHwpxLoading(false);
+    }
   };
 
   // ── 목차(섹션) 편집 핸들러 ──
@@ -740,8 +787,15 @@ export default function ReportWriter() {
               )}
             </div>
 
+            {/* 결과 오류 메시지 */}
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm text-center">
+                {error}
+              </div>
+            )}
+
             {/* 액션 버튼 */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <button
                 onClick={handleCopyText}
                 className="flex items-center justify-center gap-2 py-3 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all font-medium text-slate-700"
@@ -749,7 +803,7 @@ export default function ReportWriter() {
                 {copied ? <Check size={18} className="text-green-500" /> : <ClipboardCopy size={18} />}
                 {copied ? '복사됨!' : '텍스트 복사'}
               </button>
-              
+
               <button
                 onClick={handleDownloadTxt}
                 className="flex items-center justify-center gap-2 py-3 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all font-medium text-slate-700"
@@ -757,7 +811,16 @@ export default function ReportWriter() {
                 <Download size={18} />
                 TXT 다운로드
               </button>
-              
+
+              <button
+                onClick={handleDownloadHwpx}
+                disabled={hwpxLoading}
+                className="flex items-center justify-center gap-2 py-3 bg-cyan-600 text-white rounded-xl hover:bg-cyan-700 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {hwpxLoading ? <RefreshCw size={18} className="animate-spin" /> : <FileText size={18} />}
+                {hwpxLoading ? '생성 중...' : 'HWPX 다운로드'}
+              </button>
+
               <button
                 onClick={handleReset}
                 className="flex items-center justify-center gap-2 py-3 bg-slate-100 border border-slate-200 rounded-xl hover:bg-slate-200 transition-all font-medium text-slate-700"
@@ -769,7 +832,7 @@ export default function ReportWriter() {
 
             {/* 안내 */}
             <p className="text-center text-sm text-slate-500">
-              💡 '내용 편집'으로 제목·요약·항목을 직접 수정할 수 있습니다. 편집 결과가 복사·TXT에 반영됩니다.
+              💡 '내용 편집'으로 직접 수정한 결과가 복사·TXT·HWPX에 모두 반영됩니다. HWPX는 한글(HWP)에서 열어 확인하세요.
             </p>
           </div>
         )}

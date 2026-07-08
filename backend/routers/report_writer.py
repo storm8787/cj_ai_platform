@@ -3,15 +3,17 @@
 섹션별 특성에 맞는 차별화된 프롬프트 적용
 DB 프롬프트 우선 + 하드코딩 fallback 유지
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from urllib.parse import quote
 import json
 import re
 from datetime import datetime
 
 from config import settings
 from services.prompt_service import prompt_service
+from services.hwpx_writer import build_hwpx
 
 router = APIRouter()
 
@@ -58,6 +60,16 @@ class ReportResponse(BaseModel):
 class StructureResponse(BaseModel):
     report_types: Dict[str, Dict[str, List[str]]]
     length_options: List[str]
+
+
+class HwpxExportRequest(BaseModel):
+    """편집된 보고서를 HWPX로 내보내기 위한 요청 (프론트가 편집 결과를 POST)"""
+    title: str = ""
+    summary: str = ""
+    department: str = ""
+    author: str = ""
+    report_date: str = ""
+    sections: List[ReportSection] = []
 
 
 # ===========================================
@@ -790,6 +802,39 @@ async def generate_report(request: ReportGenerateRequest):
         raise HTTPException(status_code=500, detail=f"JSON 파싱 실패: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"보고서 생성 실패: {str(e)}")
+
+
+@router.post("/export-hwpx")
+async def export_hwpx(request: HwpxExportRequest):
+    """편집된 보고서를 HWPX(한글) 파일로 생성하여 다운로드"""
+    try:
+        report = {
+            "title": request.title,
+            "summary": request.summary,
+            "department": request.department,
+            "author": request.author,
+            "report_date": request.report_date,
+            "sections": [
+                {"title": s.title, "order": s.order, "content": s.content}
+                for s in request.sections
+            ],
+        }
+        data = build_hwpx(report)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"HWPX 생성 실패: {str(e)}")
+
+    base = (request.title or "업무보고").strip()[:40] or "업무보고"
+    safe = re.sub(r'[\\/:*?"<>|]', "_", base)
+    filename = f"{safe}.hwpx"
+    disposition = (
+        f'attachment; filename="report.hwpx"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @router.get("/status")

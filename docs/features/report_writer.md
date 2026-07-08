@@ -14,6 +14,7 @@
 |------|---------|
 | 백엔드 라우터 | `backend/routers/report_writer.py` |
 | 프롬프트 관리 | `backend/services/prompt_service.py` |
+| HWPX 생성기 | `backend/services/hwpx_writer.py` |
 | 프론트엔드 페이지 | `frontend/src/pages/ReportWriter.jsx` |
 
 ---
@@ -26,6 +27,7 @@ API prefix: `/api/report-writer` (main.py에서 등록)
 |-------|------|------|
 | GET | `/api/report-writer/structures` | 보고서 유형 및 템플릿 목록 |
 | POST | `/api/report-writer/generate` | 보고서 생성 |
+| POST | `/api/report-writer/export-hwpx` | 편집된 보고서를 HWPX(한글) 파일로 다운로드 |
 | GET | `/api/report-writer/status` | 서비스 상태 |
 
 ---
@@ -95,6 +97,20 @@ API prefix: `/api/report-writer` (main.py에서 등록)
 - 생성 보고서 HWPX 내보내기 기능 (머리말 정보 department/author/report_date 활용)
 - ✅ 목차(섹션) 편집 UI — 프론트에서 항목 이름 수정·추가·삭제·순서 변경 가능 (2단계 완료)
 - ✅ 후처리 품질 개선 — 문장단위 종결어미 교정, 개조식 번호 보존, 행정기호 보존 (3단계 완료)
-- ✅ 생성 결과 인라인 편집 UX — '내용 편집' 토글로 제목·요약·섹션 제목·항목 수정/추가/삭제/순서변경, 편집 결과가 복사·TXT에 반영 (4단계 완료)
-- 생성 결과 HWPX 내보내기 (5단계, 편집된 report 구조를 그대로 변환)
+- ✅ 생성 결과 인라인 편집 UX — '내용 편집' 토글로 제목·요약·섹션 제목·항목 수정/추가/삭제/순서변경, 편집 결과가 복사·TXT·HWPX에 반영 (4단계 완료)
+- ✅ HWPX(한글) 내보내기 — `services/hwpx_writer.py`가 편집된 report를 OWPML(zip) HWPX로 변환 (5단계 완료)
 - 보고서 유형 추가 (현재 5카테고리)
+
+---
+
+## 9. HWPX 내보내기 (services/hwpx_writer.py)
+
+- **의존성**: 새 pip 패키지 없이 표준 라이브러리 `zipfile` + 기존 `lxml`만 사용 (CLAUDE.md 준수)
+- **구조**: HWPX는 OWPML 규격 zip 컨테이너
+  - `mimetype`(무압축, 최상단) · `version.xml` · `META-INF/container.xml` · `Contents/content.hpf` · `Contents/header.xml` · `Contents/section0.xml` · `settings.xml`
+- **서식**: 제목(가운데 16pt bold) → 머리말(부서·보고일자·작성자) → □요약 → ■섹션 제목 → 개조식 본문
+  - 개조식 번호(가./1)/①)는 텍스트로 보존, 한글 소분류·원문자는 들여쓰기(paraPr left margin), 마커 없는 항목은 `○` 부여
+- **검증 한계 (중요)**: 이 저장소/CI 환경에는 한글(HWP)이 없어 **구조적 유효성(zip 레이아웃·XML well-formed·ID 참조 일관성)까지만 자동 검증**됨.
+  실제 한글에서의 열림/렌더링은 배포 후 사용자가 확인해야 함.
+  - 만약 열리지 않으면 `hwpx_writer.py`의 `_HEADER_XML` / `_sec_pr()` 를 실제 한글에서 저장한 빈 HWPX의 header.xml / secPr로 교체하면 확실히 호환됨(코드가 이 교체를 쉽게 하도록 분리되어 있음)
+- **미포함(향후)**: 결재란 표, 제목 테두리 상자 — 컨테이너 호환이 확인된 뒤 추가 권장
