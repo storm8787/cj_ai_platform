@@ -73,9 +73,10 @@ export default function PromptManager() {
 
   const filteredPrompts = prompts.filter((p) => {
     const matchFeature = !selectedFeature || p.feature === selectedFeature;
-    const matchSearch = !searchQuery || 
+    const matchSearch = !searchQuery ||
       p.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.prompt_key.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (p.prompt_key_label || "").includes(searchQuery) ||
       (p.feature_name || "").includes(searchQuery);
     return matchFeature && matchSearch;
   });
@@ -220,7 +221,7 @@ export default function PromptManager() {
                       ...(editingPrompt?.id === p.id ? styles.promptCardActive : {}),
                     }}
                   >
-                    <div style={styles.promptKey}>{p.prompt_key}</div>
+                    <div style={styles.promptKey}>{p.prompt_key_label || p.prompt_key}</div>
                     <div style={styles.promptPreview}>
                       {p.content.slice(0, 80)}...
                     </div>
@@ -245,7 +246,13 @@ export default function PromptManager() {
                   <span style={styles.editFeature}>
                     {editingPrompt.feature_icon} {editingPrompt.feature_name}
                   </span>
-                  <h2 style={styles.editTitle}>{editingPrompt.prompt_key}</h2>
+                  <h2 style={styles.editTitle}>
+                    {editingPrompt.prompt_key_label || editingPrompt.prompt_key}
+                  </h2>
+                  {editingPrompt.prompt_key_label &&
+                    editingPrompt.prompt_key_label !== editingPrompt.prompt_key && (
+                      <code style={styles.editKeyHint}>{editingPrompt.prompt_key}</code>
+                    )}
                 </div>
                 <div style={styles.editActions}>
                   <button onClick={loadHistory} style={styles.historyBtn}>
@@ -353,6 +360,7 @@ const styles = {
   editHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
   editFeature: { fontSize: 12, color: "#94a3b8", fontWeight: 500 },
   editTitle: { fontSize: 18, fontWeight: 700, color: "#f1f5f9", margin: "4px 0 0" },
+  editKeyHint: { display: "inline-block", marginTop: 4, fontSize: 11, color: "#64748b", fontFamily: "'JetBrains Mono', 'D2Coding', monospace", background: "#0f172a", border: "1px solid #334155", borderRadius: 4, padding: "1px 6px" },
   editActions: { display: "flex", gap: 8 },
   historyBtn: { padding: "6px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, color: "#e2e8f0" },
   cancelBtn: { padding: "6px 14px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 500, color: "#e2e8f0" },
