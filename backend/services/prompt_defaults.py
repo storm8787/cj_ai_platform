@@ -55,6 +55,11 @@ def get_default(feature: str, prompt_key: str) -> Optional[str]:
         return None
 
 
+def has_default(feature: str, prompt_key: str) -> bool:
+    """코드 기본값이 등록돼 있는지 (로더 실행 없이 확인)."""
+    return (feature, prompt_key) in _REGISTRY
+
+
 def iter_feature_defaults(feature: str) -> Iterator[Tuple[str, str]]:
     """특정 기능의 (prompt_key, 기본값) 쌍을 순회."""
     for (feat, key), loader in _REGISTRY.items():

@@ -16,7 +16,12 @@ import httpx
 
 from config import settings
 from services.prompt_service import prompt_service
-from services.prompt_defaults import iter_feature_defaults, iter_all_defaults
+from services.prompt_defaults import (
+    iter_feature_defaults,
+    iter_all_defaults,
+    get_default,
+    has_default,
+)
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 
@@ -31,7 +36,8 @@ def _default_entry(feature: str, prompt_key: str, content: str) -> dict:
         "content": content,
         "is_active": True,
         "updated_at": None,
-        "is_default": True,  # DB 미저장 + 코드 기본값 사용 중
+        "is_default": True,          # DB 미저장 + 코드 기본값 사용 중
+        "has_code_default": True,    # 코드 기본값 존재(재설정 가능)
     }
 
 
@@ -161,6 +167,11 @@ class PromptHistoryRequest(BaseModel):
     limit: int = 10
 
 
+class PromptResetRequest(BaseModel):
+    feature: str
+    prompt_key: str
+
+
 # ─── 권한 확인 헬퍼 ───
 async def _verify_admin(authorization: Optional[str]) -> str:
     """관리자 권한 확인, 이메일 반환"""
@@ -234,6 +245,7 @@ async def list_prompts(authorization: Optional[str] = Header(None)):
         p["feature_icon"] = meta.get("icon", "📄")
         p["prompt_key_label"] = _key_label(p["feature"], p["prompt_key"])
         p["is_default"] = p.get("is_default", False)
+        p["has_code_default"] = p.get("has_code_default", has_default(p["feature"], p["prompt_key"]))
 
     return {"prompts": prompts}
 
@@ -256,6 +268,7 @@ async def get_prompts_by_feature(feature: str, authorization: Optional[str] = He
     for p in filtered:
         p["prompt_key_label"] = _key_label(feature, p["prompt_key"])
         p["is_default"] = p.get("is_default", False)
+        p["has_code_default"] = p.get("has_code_default", has_default(feature, p["prompt_key"]))
 
     return {
         "feature": feature,
@@ -287,6 +300,37 @@ async def update_prompt(
         return {"success": True, "message": "프롬프트가 업데이트되었습니다"}
     else:
         raise HTTPException(status_code=500, detail="프롬프트 업데이트 실패")
+
+
+@router.post("/reset-default")
+async def reset_prompt_to_default(
+    request: PromptResetRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """DB에 저장된 프롬프트를 '코드 기본값'으로 덮어쓰기 (관리자 전용)
+
+    DB에 옛 프롬프트가 저장돼 있어 코드 개선이 반영되지 않을 때,
+    현재 코드 기본값으로 DB 행을 재설정하는 용도.
+    """
+    email = await _verify_admin(authorization)
+
+    default_content = get_default(request.feature, request.prompt_key)
+    if default_content is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"코드 기본값이 없는 프롬프트입니다: {request.feature}/{request.prompt_key}",
+        )
+
+    success = await prompt_service.update(
+        feature=request.feature,
+        prompt_key=request.prompt_key,
+        content=default_content,
+        changed_by=f"{email} (reset-to-default)",
+    )
+
+    if success:
+        return {"success": True, "content": default_content, "message": "코드 기본값으로 재설정되었습니다"}
+    raise HTTPException(status_code=500, detail="재설정 실패")
 
 
 @router.post("/history")

@@ -28,6 +28,7 @@ API prefix: `/api/prompts` (라우터 내부 선언)
 | GET | `/api/prompts/list` | 전체 프롬프트 목록 | admin |
 | GET | `/api/prompts/by-feature/{feature}` | 기능별 프롬프트 | admin |
 | PUT | `/api/prompts/update` | 프롬프트 수정 | admin |
+| POST | `/api/prompts/reset-default` | DB 프롬프트를 코드 기본값으로 재설정 | admin |
 | POST | `/api/prompts/history` | 변경 이력 조회 | admin |
 | POST | `/api/prompts/refresh-cache` | 캐시 강제 갱신 | admin |
 
@@ -127,6 +128,18 @@ prompt_history (
 
 > ⚠️ 이미 DB에 **구버전** row가 저장돼 있으면 합성 항목이 추가되지 않고 DB 값이 그대로 표시된다.
 > (DB가 소스이므로 정상) — 코드 기본값이 갱신됐다면 관리자가 화면에서 내용을 확인·갱신해야 한다.
+
+### 6-3. 코드 기본값으로 재설정 (`/reset-default`)
+
+**문제**: 코드의 `_DEFAULT_*` 프롬프트를 개선·배포해도, DB에 옛 row가 저장돼 있으면
+`prompt_service.get()`이 DB 값을 우선 반환해 **코드 개선이 반영되지 않는다**(silent override).
+
+**해결**: 관리 화면에서 DB row가 사용 중인 프롬프트(코드 기본값 존재 시)에 대해
+**"코드 기본값으로 재설정"** 버튼을 제공 → `/reset-default`가 현재 코드 기본값(`prompt_defaults`)으로
+DB row를 덮어쓰고 이력을 남긴다. 재설정 후 즉시 최신 코드 프롬프트가 적용된다.
+
+- 응답의 `has_code_default`로 재설정 가능 여부를 표시(레지스트리에 등록된 키만)
+- `is_default=false && has_code_default=true`(=DB값이 코드보다 우선인 상태)일 때 안내 문구 노출
 
 ---
 
