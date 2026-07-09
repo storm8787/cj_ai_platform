@@ -116,6 +116,29 @@ export default function PromptManager() {
     }
   };
 
+  const resetToDefault = async () => {
+    if (!editingPrompt) return;
+    if (!window.confirm("이 프롬프트를 현재 '코드 기본값'으로 덮어씁니다. 계속할까요?")) return;
+    setSaving(true);
+    try {
+      const res = await api("/api/prompts/reset-default", {
+        method: "POST",
+        body: JSON.stringify({
+          feature: editingPrompt.feature,
+          prompt_key: editingPrompt.prompt_key,
+        }),
+      });
+      setEditContent(res.content || "");
+      showToast("코드 기본값으로 재설정되었습니다");
+      setEditingPrompt(null);
+      await loadData();
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const loadHistory = async () => {
     if (!editingPrompt) return;
     try {
@@ -285,8 +308,31 @@ export default function PromptManager() {
                       사용되는 프롬프트이며, <b>저장</b>하면 DB에 반영되어 이후 요청부터 DB 값이 우선 적용됩니다.
                     </p>
                   )}
+                  {!editingPrompt.is_default && editingPrompt.has_code_default && (
+                    <p
+                      style={{
+                        marginTop: 8,
+                        fontSize: 13,
+                        color: "#b45309",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      ℹ️ DB에 저장된 값이 사용 중입니다(코드 기본값보다 우선). 코드 개선을 반영하려면
+                      <b> '코드 기본값으로 재설정'</b>으로 최신 코드값을 덮어쓰세요.
+                    </p>
+                  )}
                 </div>
                 <div style={styles.editActions}>
+                  {!editingPrompt.is_default && editingPrompt.has_code_default && (
+                    <button
+                      onClick={resetToDefault}
+                      disabled={saving}
+                      style={styles.historyBtn}
+                      title="DB 값을 현재 코드 기본값으로 덮어씀"
+                    >
+                      코드 기본값으로 재설정
+                    </button>
+                  )}
                   <button onClick={loadHistory} style={styles.historyBtn}>
                     변경 이력
                   </button>
