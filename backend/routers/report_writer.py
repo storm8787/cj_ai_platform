@@ -750,15 +750,45 @@ NARRATIVE_SECTIONS = {
 
 
 def _merge_narrative_paragraph(items: List[str]) -> List[str]:
-    """서술형 섹션의 여러 항목을 하나의 문단(문장형)으로 병합.
+    """서술형 섹션의 여러 문장을 '문장형 꼭지 2~3개'로 묶음.
 
-    각 항목은 이미 명사형(~함/~임)으로 끝나므로 '. '로 이어 붙이면
-    2~3문장이 흐르는 하나의 문단이 됨. 항목이 1개 이하면 그대로 둠.
+    한 문장씩 쪼개진 ❍를 그대로 두지 않고, 여러 문장을 '. '로 이어 붙여
+    2~3개의 문단(꼭지)으로 재구성함. (문장 수가 적으면 그만큼만)
+    - 문장 수 n: n<=2 → 그대로, 3~5 → 2개 꼭지, 6+ → 3개 꼭지
     """
     sents = [s.strip().rstrip(".").strip() for s in items if s and s.strip()]
-    if len(sents) <= 1:
+    n = len(sents)
+    if n <= 2:
         return sents
-    return [". ".join(sents)]
+    num_para = 3 if n >= 6 else 2
+    size = -(-n // num_para)  # ceil(n / num_para)
+    return [". ".join(sents[i:i + size]) for i in range(0, n, size)]
+
+
+def _label_of(item: str):
+    """'라벨: 값' 형태면 라벨 반환, 아니면 None (라벨 10자 이내)."""
+    m = re.match(r"^\s*([^:：\n]{1,10})\s*[:：]\s*", item or "")
+    return m.group(1).strip() if m else None
+
+
+def _collapse_same_label(items: List[str]) -> List[str]:
+    """나열형 항목이 '모두 같은 라벨'(예: 일시:/장소:)로 반복되면 한 줄로 합침.
+
+    예) ["일시: A", "일시: B", "일시: C"] → ["일시: A, B, C"]
+    (동일 라벨 반복은 항목 수 채우기용 패딩인 경우가 많아 가독성을 해침)
+    """
+    if len(items) <= 1:
+        return items
+    labels = [_label_of(x) for x in items]
+    first = labels[0]
+    if not first or any(l != first for l in labels):
+        return items
+    values = []
+    for x in items:
+        parts = re.split(r"[:：]", x, maxsplit=1)
+        values.append(parts[1].strip() if len(parts) > 1 else x.strip())
+    values = [v for v in values if v]
+    return [f"{first}: " + ", ".join(values)]
 
 
 def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -784,10 +814,13 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
                 if fixed:
                     processed_contents.append(fixed)
 
-        # 서술형(문장형) 꼭지: ❍ 한 줄씩 쪼개진 항목을 하나의 문단으로 병합
         title = (sec.get("title") or "").strip()
         if title in NARRATIVE_SECTIONS:
+            # 서술형(문장형) 꼭지: 여러 문장을 2~3개 문단으로 재구성
             processed_contents = _merge_narrative_paragraph(processed_contents)
+        else:
+            # 나열형: 동일 라벨(일시:/장소: 등) 반복 항목은 한 줄로 합침
+            processed_contents = _collapse_same_label(processed_contents)
 
         sec["content"] = processed_contents
         processed_sections.append(sec)
