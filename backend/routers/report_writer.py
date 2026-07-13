@@ -795,12 +795,25 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
     """보고서 전체 후처리"""
     result = dict(data)
 
-    if isinstance(result.get("summary"), str):
-        result["summary"] = fix_all_endings(clean_content(result["summary"]))
+    # summary가 문자열이 아니라 리스트로 오는 경우도 있어(모델이 개조식 배열로 반환) 문자열로 정규화
+    summary = result.get("summary")
+    if isinstance(summary, list):
+        summary = " ".join(str(s).strip() for s in summary if s and str(s).strip())
+    if isinstance(summary, str):
+        result["summary"] = fix_all_endings(clean_content(summary))
+    elif summary is not None:
+        result["summary"] = str(summary)
 
     processed_sections = []
     for sec in result.get("sections", []):
         sec = dict(sec)
+
+        # 제목이 문자열이 아닌 경우(리스트 등)도 방어적으로 문자열화
+        raw_title = sec.get("title")
+        if isinstance(raw_title, list):
+            raw_title = " ".join(str(t) for t in raw_title if t)
+        sec["title"] = str(raw_title or "")
+
         contents = sec.get("content", [])
 
         if isinstance(contents, str):
