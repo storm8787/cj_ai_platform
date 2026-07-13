@@ -455,8 +455,8 @@ _DEFAULT_SYSTEM_PROMPT = (
     "개요·일정·예산·협조처럼 사실을 나열하는 섹션은 '(라벨) 값' 항목형으로 작성함\n"
     "- 어느 문체든 종결은 명사형(~함, ~임, ~됨, ~예정, ~계획임, ~필요함, ~요청)으로 하고, "
     "완결 서술문(~합니다/~한다)은 쓰지 않음\n"
-    "- 서술형 섹션은 한 문장씩 짧게 쪼개 여러 항목으로 나열하지 말고, "
-    "항목을 1~2개만 두되 각 항목을 2~3문장을 이어 붙인 하나의 문단(문장형)으로 작성함\n"
+    "- 서술형 섹션은 한 문장씩 쪼개지 말고, 2~3개 꼭지(항목)로 나누되 각 꼭지를 "
+    "2~3문장이 이어진 문단(문장형)으로 작성함(각 꼭지 최소 2문장, 챕터를 충분히 풀어서 서술)\n"
     "- 간결·사실 중심으로 작성하고 미사여구·홍보체는 쓰지 않음\n"
     "- [수치 생성 절대 금지 — 최우선 규칙] 사용자가 '확인된 사실'로 제공하지 않은 구체 수치는 어떤 경우에도 만들지 말 것. "
     "금액·예산·인원·비율·건수·면적·출산율·만족도·목표치·날짜 등 모든 숫자는 제공된 사실에 있을 때만 기재하고, "
@@ -490,11 +490,13 @@ _DEFAULT_BUILD_PROMPT_TEMPLATE = """당신은 충주시청에서 15년간 근무
 
 ## 문체 규칙 (섹션 성격에 따라 문장형/개조식 혼용, 종결은 명사형)
 각 섹션의 스타일은 아래 '섹션별 작성 가이드'에 (서술형/나열형/효과형/방안형/분석형)으로 표시됨. 스타일에 맞게 작성할 것.
-- 서술형(추진배경·현황·현황분석·문제점·상황개요·추진목표·기대효과·결론 등): content 배열에 **항목을 1개(길면 2개)만** 넣고, 그 항목을 **2~3문장이 이어지는 하나의 문단(문장형)**으로 작성함. 한 문장마다 항목을 나누지 말 것.
+- 서술형(추진배경·현황·현황분석·문제점·상황개요·추진목표·기대효과·결론 등): content 배열에 **꼭지(항목)를 2~3개** 넣되, 각 꼭지를 **2~3문장이 이어지는 문단(문장형)**으로 작성함(각 꼭지 최소 2문장, 한 문장짜리 꼭지 금지). 챕터를 충분히 풀어서 배경·원인·현황·필요성 등을 2~3개 문단으로 나눠 서술.
   (나쁜 예 — 한 문장씩 쪼갬)
     ["출산율이 낮음", "양육부담이 가중됨", "인프라가 부족함"]
-  (좋은 예 — 한 문단으로 이어 씀)
-    ["관내 출산율이 지속 하락하고 맞벌이 가정이 늘면서 돌봄 수요가 증가하고 있음. 그러나 공동육아나눔터 등 인프라는 부족하여 양육 부담 완화를 위한 지원 강화가 필요함"]
+  (나쁜 예 — 꼭지가 1개뿐)
+    ["출산율 하락과 맞벌이 증가로 수요가 늘고 인프라가 부족하여 지원이 필요함"]
+  (좋은 예 — 2~3개 문단 꼭지)
+    ["관내 출산율이 지속 하락하고 맞벌이 가정이 늘면서 돌봄 수요가 증가하고 있음. 그러나 공동육아나눔터 등 인프라는 부족하여 대기 가정이 늘고 있음", "이에 양육 부담 완화와 돌봄 사각지대 해소를 위해 인프라 확충과 서비스 개선이 필요함"]
 - 분석형·방안형·효과형(문제분석·개선방안·기대효과·추진계획 등): 1~2문장의 설명형으로 근거·목표를 포함해 기술
 - 나열형(개요·추진일정·소요예산·협조사항·참석자 등): "(라벨) 값" 또는 "라벨 : 값" 항목형으로 간결하게. 항목을 여러 개로 나눔
   (예: "(대상) ○○", "(기간) 2026. ○월 ~ ○월", "(예산) □□백만원")
@@ -750,19 +752,36 @@ NARRATIVE_SECTIONS = {
 
 
 def _merge_narrative_paragraph(items: List[str]) -> List[str]:
-    """서술형 섹션의 여러 문장을 '문장형 꼭지 2~3개'로 묶음.
+    """서술형 섹션을 '문장형 꼭지 2~3개'로 재편.
 
-    한 문장씩 쪼개진 ❍를 그대로 두지 않고, 여러 문장을 '. '로 이어 붙여
-    2~3개의 문단(꼭지)으로 재구성함. (문장 수가 적으면 그만큼만)
-    - 문장 수 n: n<=2 → 그대로, 3~5 → 2개 꼭지, 6+ → 3개 꼭지
+    GPT가 항목을 1개로 몰아넣든 여러 개로 쪼개든 상관없이, 전체를 **문장 단위**로
+    펼친 뒤 2~3개 꼭지(각 꼭지 여러 문장)로 다시 묶음.
+    - 총 문장 수 T: T<=2 → 1 꼭지, 3~4 → 2 꼭지, 5+ → 3 꼭지
     """
-    sents = [s.strip().rstrip(".").strip() for s in items if s and s.strip()]
-    n = len(sents)
-    if n <= 2:
-        return sents
-    num_para = 3 if n >= 6 else 2
-    size = -(-n // num_para)  # ceil(n / num_para)
-    return [". ".join(sents[i:i + size]) for i in range(0, n, size)]
+    joined = ". ".join(i.strip().rstrip(".").strip() for i in items if i and i.strip())
+    if not joined:
+        return []
+    sents = [s.strip() for s in SENTENCE_SPLIT_PATTERN.split(joined) if s.strip()]
+    T = len(sents)
+    if T <= 2:
+        return [joined]
+    target = 3 if T >= 5 else 2
+    size = -(-T // target)  # ceil(T / target)
+    return [". ".join(sents[i:i + size]) for i in range(0, T, size)]
+
+
+_INLINE_ENUM = re.compile(r"\s+(?=\d{1,2}\)\s)")
+
+
+def _split_inline_enumeration(items: List[str]) -> List[str]:
+    """한 항목에 '1) … 2) … 3) …'가 몰려 있으면 번호별로 분리(줄바꿈)."""
+    result = []
+    for item in items:
+        if not item or not item.strip():
+            continue
+        parts = _INLINE_ENUM.split(item)
+        result.extend(p.strip() for p in parts if p.strip())
+    return result
 
 
 def _label_of(item: str):
@@ -832,7 +851,8 @@ def postprocess_report(data: Dict[str, Any]) -> Dict[str, Any]:
             # 서술형(문장형) 꼭지: 여러 문장을 2~3개 문단으로 재구성
             processed_contents = _merge_narrative_paragraph(processed_contents)
         else:
-            # 나열형: 동일 라벨(일시:/장소: 등) 반복 항목은 한 줄로 합침
+            # 나열형/방안형: 한 항목에 몰린 '1) 2) 3)'를 줄 단위로 분리 후, 동일 라벨 반복은 한 줄로
+            processed_contents = _split_inline_enumeration(processed_contents)
             processed_contents = _collapse_same_label(processed_contents)
 
         sec["content"] = processed_contents
