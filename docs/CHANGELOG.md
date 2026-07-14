@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-07 — 업무보고 작성기 대개편 (입력폼·목차편집·후처리·HWPX·프롬프트·프롬프트 관리)
+
+**배경**: 생성 결과가 실제 공무원 업무보고 문서처럼 보이지 않는다는 문제 → 진단 후 단계적으로 개선. 실제 충주시 서식/공개 행정문서 분석 반영.
+
+**변경 내용**:
+- **입력폼**(1단계): 부서·작성자·보고일자·확인된 사실 입력 추가, 분량 라벨↔동작 정합, 사실 우선·자리표시자 규칙
+- **목차 편집 UI**(2단계): 섹션 항목 이름 수정·추가·삭제·순서 변경(`custom_sections`)
+- **후처리 품질**(3단계): 항목 내 모든 문장 종결어미 교정(날짜·소수 보존), 개조식 번호·행정기호 보존
+- **결과 인라인 편집**(4단계): '내용 편집' 토글, 편집 결과가 복사·TXT·HWPX 반영
+- **HWPX(한글) 내보내기**(5단계): `services/hwpx_writer.py` — 실제 충주시 서식(REF)을 템플릿으로 채택(`templates/hwpx/`), 본문(section0)만 생성. 여백·글꼴·기호(□·❍·-·※) 일치. 새 pip 의존성 없이 `zipfile`+`lxml`
+- **프롬프트 품질**: 유형별 지시문(`REPORT_TYPE_DIRECTIVES`, 계획/대책/상황/분석/기타), 문장형/개조식 혼용(섹션 성격별), 금지표현, 허위수치 절대 금지(자리표시자 형식+temperature 0.3)
+- **문장형 꼭지/줄분리(후처리 정규화)**: 서술형 챕터를 문장 수 기준 **2~3 꼭지**로 재구성(`_merge_narrative_paragraph`), 인라인 `1)2)3)` 줄분리(`_split_inline_enumeration`), 동일 라벨 반복 합치기(`_collapse_same_label`) — DB override·모델 변덕과 무관하게 항상 적용
+- **프롬프트 DB 관리**: `services/prompt_defaults.py`(코드 기본값 레지스트리) + `POST /api/prompts/reset-default` + 관리자 화면 '코드 기본값으로 재설정' 버튼. DB에 저장된 옛 프롬프트가 코드 개선을 덮어쓰던(silent override) 문제 해소
+- **버그픽스**: 새 프롬프트에서 `summary`가 리스트로 반환돼 `ReportResponse` 검증 실패(500)하던 문제 → summary/제목 문자열 정규화
+
+**관련 파일**: `backend/routers/report_writer.py`, `backend/services/hwpx_writer.py`, `backend/services/prompt_defaults.py`, `backend/routers/prompt_manager.py`, `frontend/src/pages/ReportWriter.jsx`, `frontend/src/pages/PromptManager.jsx`, `docs/features/report_writer.md`, `docs/features/prompt_manager.md`
+
+---
+
 ## 2026-05 — 재난상황 대시보드 v13: MD 표 렌더링 수정 + GPT 위치 보완 + UI 개선
 
 **배경**: 3가지 사용자 불만 해결 — (1) 일일보고서 Markdown 표가 화면에 표시되지 않음, (2) 위치 추출 정확도 부족, (3) 읍면동별 현황 테이블이 너무 짧아 불필요한 스크롤 발생.
