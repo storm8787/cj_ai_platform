@@ -9,10 +9,13 @@
 """
 
 import logging
+import re
 from collections import Counter
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from services.disaster_incident_service import build_incidents
 from services.disaster_parser_service import (
@@ -26,7 +29,10 @@ from services.disaster_parser_service import (
     enrich_locations_with_gpt,
 )
 from services.disaster_constants import INCIDENT_TYPE_LABELS, STATUS_LABELS
-from services.disaster_report_service import generate_daily_report
+from services.disaster_report_service import (
+    daily_report_to_hwpx_bytes,
+    generate_daily_report,
+)
 from services.supabase_service import get_supabase_client
 
 # 충주시 읍면동 중심 좌표 (Kakao Maps fallback용 좌표 데이터)
@@ -661,6 +667,46 @@ async def create_daily_report(payload: dict):
         "success": True,
         "report": insert_res.data[0],
     }
+
+
+@router.post("/reports/daily/export-hwpx")
+async def export_daily_report_hwpx(payload: dict):
+    """생성된 일일보고(Markdown)를 HWPX(한글) 파일로 내보내기.
+
+    프론트가 현재 표시 중인 report_text/summary_text/title/report_date를 전달.
+    """
+    report_text = (payload.get("report_text") or "").strip()
+    if not report_text:
+        raise HTTPException(status_code=400, detail="report_text는 필수입니다.")
+
+    report_date = (payload.get("report_date") or "").strip()
+    title = (payload.get("title") or "").strip() or (
+        f"{report_date} 재난상황 일일보고" if report_date else "재난상황 일일보고"
+    )
+    summary = (payload.get("summary_text") or "").strip()
+
+    try:
+        data = daily_report_to_hwpx_bytes(
+            report_text=report_text,
+            title=title,
+            summary=summary,
+            report_date=report_date,
+        )
+    except Exception as e:
+        logger.exception("disaster HWPX export failed")
+        raise HTTPException(status_code=500, detail=f"HWPX 생성 실패: {type(e).__name__}")
+
+    base = re.sub(r'[\\/:*?"<>|]', "_", (title or "재난일일보고").strip())[:50] or "재난일일보고"
+    filename = f"{base}.hwpx"
+    disposition = (
+        f'attachment; filename="disaster_report.hwpx"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @router.get("/reports")
