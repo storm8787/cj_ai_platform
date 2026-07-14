@@ -33,10 +33,29 @@ def _report_writer_type_directive(rtype: str) -> Callable[[], str]:
     return _loader
 
 
+def _disaster_report_system() -> str:
+    from services.disaster_report_service import _DEFAULT_SYSTEM_PROMPT
+    return _DEFAULT_SYSTEM_PROMPT
+
+
+def _disaster_report_summary() -> str:
+    from services.disaster_report_service import _DEFAULT_SUMMARY_PROMPT
+    return _DEFAULT_SUMMARY_PROMPT
+
+
+def _disaster_report_body() -> str:
+    from services.disaster_report_service import _DEFAULT_BODY_PROMPT
+    return _DEFAULT_BODY_PROMPT
+
+
 # (feature, prompt_key) → 기본값 로더(지연)
 _REGISTRY: Dict[Tuple[str, str], Callable[[], str]] = {
     ("report_writer", "system_prompt"): _report_writer_system,
     ("report_writer", "build_prompt_template"): _report_writer_build,
+    # 재난 일일보고 — DB 우선 + 관리자 화면에서 코드 기본값 노출·재설정 가능하도록 등록
+    ("disaster_report", "system_prompt"): _disaster_report_system,
+    ("disaster_report", "summary_prompt"): _disaster_report_summary,
+    ("disaster_report", "body_prompt"): _disaster_report_body,
 }
 
 # 보고서 유형별 지시문도 관리자 화면에 노출 (유형명은 report_writer.REPORT_TYPE_DIRECTIVES와 일치)

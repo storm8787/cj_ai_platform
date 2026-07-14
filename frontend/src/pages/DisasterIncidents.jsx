@@ -4,6 +4,15 @@ import { disasterApi } from "../services/api";
 import { incidentLabel, statusLabel } from "../constants/disaster";
 import { useDisasterSession } from "../hooks/useDisasterSession";
 
+/** 보고자 이름 마스킹 (개인정보 보호). 예: 홍길동 → 홍○○, 김철 → 김○ */
+function maskName(name) {
+  const n = (name || "").trim();
+  if (!n || n === "-") return "-";
+  if (n === "system") return "-";
+  if (n.length === 1) return n;
+  return n[0] + "○".repeat(n.length - 1);
+}
+
 export default function DisasterIncidents() {
   const navigate = useNavigate();
   const { uploadId: activeUploadId, fileName: activeFileName } = useDisasterSession();
@@ -113,7 +122,7 @@ export default function DisasterIncidents() {
                       <td className="p-3">{item.location_raw || "-"}</td>
                       <td className="p-3">{incidentLabel(item.incident_type)}</td>
                       <td className="p-3">{statusLabel(item.status)}</td>
-                      <td className="p-3">{item.reporter_name || "-"}</td>
+                      <td className="p-3">{maskName(item.reporter_name)}</td>
                       <td className="p-3">{item.photo_count || 0}</td>
                       <td className="p-3">{item.summary || "-"}</td>
                     </tr>

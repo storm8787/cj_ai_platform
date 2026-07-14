@@ -289,6 +289,10 @@ export const disasterApi = {
   generateDailyReport: (data) => api.post('/api/disaster/reports/daily/generate', data, {
     timeout: 180000,
   }),
+  exportDailyReportHwpx: (data) => api.post('/api/disaster/reports/daily/export-hwpx', data, {
+    responseType: 'blob',
+    timeout: 60000,
+  }),
   getReports: (uploadId) => api.get('/api/disaster/reports', {
     params: { upload_id: uploadId }
   }),

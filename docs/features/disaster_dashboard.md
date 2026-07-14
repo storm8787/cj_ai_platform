@@ -40,6 +40,7 @@ API prefix: `/api/disaster` (main.py에서 등록)
 | GET | `/api/disaster/incidents/{incident_id}` | 사고 상세 + 연결 메시지 |
 | GET | `/api/disaster/dashboard/overview` | 통계 (유형별/상태별/읍면동별/시간별) |
 | POST | `/api/disaster/reports/daily/generate` | 일일보고 생성 (GPT-4o) |
+| POST | `/api/disaster/reports/daily/export-hwpx` | 생성된 일일보고(MD)를 HWPX(한글)로 내보내기 |
 | GET | `/api/disaster/reports` | 일일보고 목록 |
 
 ---
@@ -197,9 +198,19 @@ disaster_incident_service: 사고 재구성
 
 - 일일보고 생성 모델: `gpt-4o` (다른 기능의 `gpt-4o-mini`와 다름)
 - **일일보고 출력 형식: Markdown (.md)** — GPT 프롬프트와 폴백 템플릿 모두 MD 형식으로 생성
+  - 본문 구조(8단계): 총괄 → 유형별 발생현황 → 조치상황 → 읍면동별 발생현황 → 주요 사건 → 미조치·조치중 사건 → 향후 조치계획 → 참고사항
   - 유형별 발생현황, 조치상황: Markdown 표(`| col | col |`) 형식
   - 주요 사건: `읍면동 | 재난유형 | 상태 | 요약` 표 형식, 읍면동별 정렬
-- 프롬프트: `prompt_service.get("disaster_report", ...)` 패턴 (3단계 fallback)
+- **상태 집계 정합성** (`_aggregate`): 총계 = `reported + in_progress + completed + monitoring + no_issue + closed`.
+  - `completed`(하위호환) = `completed + closed`(총괄·DB 카운트용). `no_issue`(이상없음)는 **완료 건수에 포함하지 않음**(별도 표기).
+- **주요 사건 상한**: `MAX_INCIDENTS_IN_REPORT = 50`. 초과분은 읍면동별 발생현황으로 흡수.
+- **향후 조치계획 창작 금지**: 조치중/모니터링/미조치 상태 기반 문장만 생성. 데이터에 없는 원인·피해·복구·예산·협조는 생성하지 않음.
+- **HWPX 내보내기**: `daily_report_to_hwpx_bytes()` — 생성된 MD를 `_md_report_to_sections()`로 파싱 후 `services/hwpx_writer.build_hwpx`로 변환(표는 텍스트 라인으로 평탄화, 표 미지원).
+- **보고자 이름(개인정보)**: 보고서 본문/GPT 프롬프트에 미포함. 사건 목록 화면은 마스킹 표기(`홍○○`), `/incidents` API는 원본 유지.
+- 프롬프트: `prompt_service.get("disaster_report", ...)` 패턴 (DB 우선 → 코드 fallback).
+  - 관리 키: `system_prompt`, `summary_prompt`, `body_prompt`. `services/prompt_defaults.py`에 등록되어 관리자 '프롬프트 관리'에서 **코드 기본값 노출·수정·재설정** 가능.
+  - `body_prompt` 플레이스홀더: `{report_date} {total} {type_breakdown} {status_breakdown} {emd_breakdown} {incident_list}`
+  - ⚠️ DB에 구버전 프롬프트가 저장돼 있으면 코드 개선이 반영 안 됨 → 관리자 화면에서 '코드 기본값으로 재설정' 필요
 - TXT 파일 인코딩: UTF-8 / CP949 자동 감지
 - 빈 배열 insert 방지: `if incident_rows: insert(...)` 가드 필요 (없으면 crash)
 - 개인정보: 일일보고 GPT 프롬프트에 보고자 이름 포함하지 않도록 주의

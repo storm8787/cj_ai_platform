@@ -252,6 +252,7 @@ export default function DisasterDailyReport() {
   );
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [viewMode, setViewMode] = useState("render");
 
   const handleGenerate = async () => {
@@ -294,6 +295,31 @@ export default function DisasterDailyReport() {
     a.download = `재난일일보고_${reportDate}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadHwpx = async () => {
+    if (!report?.report_text) return;
+    setExporting(true);
+    try {
+      const res = await disasterApi.exportDailyReportHwpx({
+        title: report.title,
+        report_text: report.report_text,
+        summary_text: report.summary_text,
+        report_date: reportDate,
+      });
+      const blob = new Blob([res.data], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `재난일일보고_${reportDate}.hwpx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert("한글(HWPX) 내보내기에 실패했습니다.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   if (!activeUploadId) {
@@ -353,6 +379,13 @@ export default function DisasterDailyReport() {
                   className="px-4 py-2 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-sm"
                 >
                   .md 다운로드
+                </button>
+                <button
+                  onClick={handleDownloadHwpx}
+                  disabled={exporting}
+                  className="px-4 py-2 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-sm disabled:opacity-50"
+                >
+                  {exporting ? "내보내는 중..." : "한글(hwpx) 다운로드"}
                 </button>
                 <button
                   onClick={handleCopy}
