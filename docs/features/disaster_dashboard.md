@@ -140,7 +140,9 @@ disaster_incident_service: 사고 재구성
 ### 사고 상태 분류 (우선순위 순)
 
 - `closed`: "해제|통행 재개|개통|상황 종료"
-- `completed`: "복구 완료|처리 완료|제설 완료|염화칼슘 살포 완료|..."
+- `completed`: "복구 완료|처리 완료|제설 완료|염화칼슘 살포 완료|**차단 완료|출입통제 완료|통제 완료**|..."
+  - ⚠️ "차단/출입통제/통제 완료"는 통제 조치를 **끝낸 것**이므로 `completed`. `발생`(미착수)으로 오분류 방지.
+  - "설치 완료"(임시 안전시설)는 여전히 `monitoring`, "해제·재개"는 `closed`가 우선 처리.
 - `in_progress`: "조치중|수색중|작업중|제설중|..."
 - `monitoring`: "모니터링|설치 완료|이상없음"
 - `reported`: (기본값 / "~예정")
@@ -204,7 +206,8 @@ disaster_incident_service: 사고 재구성
 - **상태 집계 정합성** (`_aggregate`): 총계 = `reported + in_progress + completed + monitoring + no_issue + closed`.
   - `completed`(하위호환) = `completed + closed`(총괄·DB 카운트용). `no_issue`(이상없음)는 **완료 건수에 포함하지 않음**(별도 표기).
 - **주요 사건 상한**: `MAX_INCIDENTS_IN_REPORT = 50`. 초과분은 읍면동별 발생현황으로 흡수.
-- **향후 조치계획 창작 금지**: 조치중/모니터링/미조치 상태 기반 문장만 생성. 데이터에 없는 원인·피해·복구·예산·협조는 생성하지 않음.
+- **향후 조치계획 창작 금지**: 조치중/모니터링/미조치 상태 기반 문장만 생성. 데이터에 없는 원인·피해·복구·예산·협조는 생성하지 않음. "안전 조치 강화" 등 사건 특정 없는 뭉뚱그린 계획 문장 금지.
+- **후처리 정규화** (`_postprocess_report_markdown`, report_writer 원칙 이식): GPT/폴백 공통으로 **명사형 종결 강제**(~합니다→~함 등). 표(`|`)·제목(`#`)·구분선은 손대지 않아 Markdown 구조 보존.
 - **HWPX 내보내기**: `daily_report_to_hwpx_bytes()` — 생성된 MD를 `_md_report_to_sections()`로 파싱 후 `services/hwpx_writer.build_hwpx`로 변환(표는 텍스트 라인으로 평탄화, 표 미지원).
 - **보고자 이름(개인정보)**: 보고서 본문/GPT 프롬프트에 미포함. 사건 목록 화면은 마스킹 표기(`홍○○`), `/incidents` API는 원본 유지.
 - 프롬프트: `prompt_service.get("disaster_report", ...)` 패턴 (DB 우선 → 코드 fallback).
