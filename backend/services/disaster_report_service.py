@@ -63,7 +63,9 @@ _DEFAULT_SYSTEM_PROMPT = """당신은 충주시청 재난안전상황실에서 �
 - 기본은 개조식(명사형 항목). 총괄과 참고사항만 2~3줄 짧은 서술을 허용한다.
 
 [금지 표현]
-혁신적·선제적·체계적·최적화·만전·총력·크게 기여·적극 대응 등 근거 없는 수식어와 홍보체.
+혁신적·선제적·체계적·최적화·만전·총력·크게 기여·적극 대응·철저히·안전 조치 강화·
+재발 방지에 만전·지속적으로 강화 등 근거 없는 수식어와 홍보체.
+"기타 발생 사건에 대한 ○○ 강화 예정" 같은 사건 특정 없는 뭉뚱그린 계획 문장 금지.
 문단마다 같은 표현을 반복하지 않는다. 감상·다짐·각오 문장을 넣지 않는다.
 """
 
@@ -143,9 +145,11 @@ _DEFAULT_BODY_PROMPT = """다음은 {report_date} 충주시 재난상황 집계 
 - 해당 사건이 없으면 "조치 중 사건 없음".
 
 ## 7. 향후 조치계획
-- 사건 목록에 실제 조치 내용이 있을 때만 그 사실을 근거로 기술.
+- 사건 목록의 '향후계획/조치현황'에 실제 명시된 내용만 해당 사건과 함께 기술
+  (예: 사건 요약에 "복구 예정"이 있으면 "○○동 ○○ 구간 복구 예정").
 - 조치중·모니터링 사건은 "지속 예찰 및 후속조치", 미조치 사건은 "관계부서 확인 필요"로만 기술.
-- 데이터에 없는 원인분석·항구복구·예산·협조는 쓰지 않음. 근거가 없으면 "특이 계획 없음".
+- 데이터에 없는 원인분석·항구복구·예산·협조·"안전 조치 강화"는 쓰지 않음.
+- 사건을 특정하지 않은 뭉뚱그린 문장("기타 사건 지속 점검 강화 예정" 등) 금지. 근거 없으면 "특이 계획 없음".
 
 ## 8. 참고사항
 - 위치가 읍면동까지만 확인된 사건, 미분류 사건 등 데이터 한계를 사실대로 기재. 없으면 생략.
@@ -315,6 +319,52 @@ def _generate_fallback_summary(report_date: str, agg: Dict) -> str:
         f"{report_date} 기준 총 {agg['total']}건 접수, "
         f"조치완료·종결 {agg['completed']}건, {in_prog}"
     )
+
+
+# =========================
+# 후처리 정규화 (report_writer 원칙 이식)
+# GPT가 프롬프트 규칙을 안 지켜도 코드가 최종적으로 문체를 교정.
+# 표(| ...)·제목(#)·구분선은 손대지 않음 → Markdown 구조 보존.
+# =========================
+_ENDING_FIXES = [
+    ("하였습니다", "하였음"), ("했습니다", "하였음"), ("하겠습니다", "할 예정임"),
+    ("합니다", "함"), ("됩니다", "됨"), ("입니다", "임"),
+    ("있습니다", "있음"), ("없습니다", "없음"),
+    ("하였다", "하였음"), ("했다", "하였음"), ("한다", "함"),
+    ("된다", "됨"), ("이다", "임"), ("있다", "있음"), ("없다", "없음"),
+    # 일반 '~습니다'는 반드시 마지막 (구체 규칙 우선)
+    ("습니다", "음"),
+]
+
+
+def _fix_line_ending(line: str) -> str:
+    """한 줄의 종결어미를 명사형으로 교정. 매칭 없으면 원본 유지."""
+    stripped = line.rstrip()
+    trail = line[len(stripped):]
+    core = stripped.rstrip(".")
+    for wrong, right in _ENDING_FIXES:
+        if core.endswith(wrong):
+            return core[: -len(wrong)] + right + trail
+    return line
+
+
+def _postprocess_report_markdown(text: str) -> str:
+    """생성된 Markdown 보고서 문체 후처리. 표/제목/구분선은 보존."""
+    if not text:
+        return text
+    out = []
+    for line in text.split("\n"):
+        s = line.lstrip()
+        if (
+            not s
+            or s.startswith("|")          # 표 행
+            or s.startswith("#")          # 제목
+            or set(s) <= set("-*_ ")      # 구분선/빈 불릿
+        ):
+            out.append(line)
+            continue
+        out.append(_fix_line_ending(line))
+    return "\n".join(out)
 
 
 def _md_table(headers: List[str], rows: List[List[str]]) -> str:
@@ -513,6 +563,10 @@ async def generate_daily_report(report_date: str, incidents: List[Dict]) -> Dict
         summary_text = _generate_fallback_summary(report_date, agg)
     if not report_text:
         report_text = _generate_fallback_body(report_date, agg, incidents)
+
+    # 후처리 정규화 (GPT/폴백 공통) — 명사형 종결 강제, 표·제목은 보존
+    summary_text = _postprocess_report_markdown(summary_text)
+    report_text = _postprocess_report_markdown(report_text)
 
     logger.info(
         "daily report generated: date=%s, incidents=%d, used_gpt=%s",
