@@ -101,7 +101,7 @@ async def openai_quota_middleware(request: Request, call_next):
     POST 요청이 AI 엔드포인트에 해당하면:
     1. Authorization 헤더에서 사용자 추출
     2. 관리자: 기록만 하고 통과
-    3. 일반 사용자: 오늘 사용량 >= 50이면 429 반환
+    3. 일반 사용자: 오늘 사용량 >= DAILY_LIMIT이면 429 반환
     토큰 없거나 Supabase 연결 실패 시: 통과 (실패 개방 원칙)
     """
     if request.method == "POST":
@@ -128,7 +128,7 @@ async def openai_quota_middleware(request: Request, call_next):
                                 content={
                                     "detail": (
                                         "일일 AI 사용 한도에 도달했습니다. "
-                                        "일반 사용자는 하루 최대 50회까지 AI 기능을 사용할 수 있습니다. "
+                                        f"일반 사용자는 하루 최대 {DAILY_LIMIT}회까지 AI 기능을 사용할 수 있습니다. "
                                         "내일 다시 이용해 주세요."
                                     ),
                                     "daily_limit": DAILY_LIMIT,

@@ -1,7 +1,7 @@
 """
 OpenAI API 일일 사용량 제한 서비스
 
-- 일반 사용자: KST 기준 하루 50회
+- 일반 사용자: KST 기준 하루 25회 (전체 기능 합산)
 - 관리자: 무제한 (기록은 남김)
 - api_usage_daily 테이블 사용
 """
@@ -14,7 +14,7 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-DAILY_LIMIT = 50
+DAILY_LIMIT = 25
 PROVIDER = "openai"
 KST = timezone(timedelta(hours=9))
 
