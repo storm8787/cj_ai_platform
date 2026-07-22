@@ -45,7 +45,7 @@ api.interceptors.response.use(
     // 429 — 일일 사용량 초과
     if (status === 429) {
       const msg = detail ||
-        '일일 AI 사용 한도에 도달했습니다. 일반 사용자는 하루 최대 50회까지 AI 기능을 사용할 수 있습니다. 내일 다시 이용해 주세요.';
+        '일일 AI 사용 한도에 도달했습니다. 일반 사용자는 하루 최대 25회까지 AI 기능을 사용할 수 있습니다. 내일 다시 이용해 주세요.';
       // 전역 커스텀 이벤트로 알림 (각 페이지의 catch에서도 detail로 접근 가능)
       window.dispatchEvent(new CustomEvent('api:quota-exceeded', { detail: { message: msg } }));
     }

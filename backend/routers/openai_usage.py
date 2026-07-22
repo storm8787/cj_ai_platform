@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from config import settings
-from services.api_quota_service import get_user_info_from_token, get_usage_status, get_kst_today
+from services.api_quota_service import get_user_info_from_token, get_usage_status, get_kst_today, DAILY_LIMIT
 import httpx
 
 router = APIRouter()
@@ -70,7 +70,7 @@ async def get_all_usage(authorization: Optional[str] = Header(None)):
             user_totals[uid] = user_totals.get(uid, 0) + row["request_count"]
 
         summary = [
-            {"user_id": uid, "used_count": count, "daily_limit": 50}
+            {"user_id": uid, "used_count": count, "daily_limit": DAILY_LIMIT}
             for uid, count in sorted(user_totals.items(), key=lambda x: -x[1])
         ]
 
