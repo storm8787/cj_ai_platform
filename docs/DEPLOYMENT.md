@@ -40,8 +40,12 @@ on:
    ④ 새 리비전(NEW)을 0% 트래픽 + min-replicas 1 로 생성
       (revision-suffix = sha7-runNumber)
    ⑤ NEW 의 runningState=Running 될 때까지 폴링 (최대 25분)
-   ⑥ 성공 → 트래픽 100% NEW 전환 → OLD 비활성화 → /api/health 200 확인
+   ⑥ 성공 → 트래픽 100% NEW 전환 → OLD 비활성화
       실패 → NEW 비활성화, 트래픽은 OLD 유지(사이트 정상), 잡 실패 처리
+   ⑦ 같은 이미지로 min-replicas 0 리비전(suffix: …-idle) 생성 → 트래픽 100% 전환
+   ⑧ /api/health 폴링(콜드스타트 포함 최대 10분)
+      성공 → warm 리비전(NEW) 비활성화 → 유휴 요금 0
+      실패 → 트래픽을 NEW(min 1)로 롤백 + idle 리비전 비활성화 + 잡 실패 처리
 ```
 
 > **왜 블루-그린인가**: 기존 방식(`az containerapp update` + 단일 모드)은 새 리비전으로 트래픽을
@@ -52,6 +56,18 @@ on:
 > **근본책(별도 과제)**: 이미지 슬림화 — 이미지에 구워진 HuggingFace 모델(bge-m3, ko-sroberta)을
 > 런타임 볼륨으로 분리하고 CPU 전용 torch로 교체하여 pull 시간을 단축하면 데드라인 문제 자체가 사라진다.
 > 상세 설계: **`docs/design/image_slimming.md`**
+
+### 왜 min-replicas 를 2단계로 바꾸는가
+
+ACA 는 `scale` 설정을 **리비전 템플릿의 일부**로 취급한다. 즉 `--min-replicas` 를 바꾸면
+무조건 새 리비전이 만들어진다. 그래서 "검증"과 "요금"을 한 리비전으로 동시에 만족시킬 수 없다.
+
+- 검증 단계에서는 `min-replicas 1` 이 필요하다. 0% 트래픽 리비전은 min 0 이면 replica 가
+  아예 뜨지 않아 `runningState=Running` 검증 자체가 불가능하다.
+- 서빙 단계에서는 `min-replicas 0` 이어야 한다. 1 이면 요청이 없어도 replica 가 계속 떠 있어
+  **24시간 과금**된다.
+
+→ 검증은 min 1 리비전으로, 서빙은 같은 이미지의 min 0 리비전으로 넘긴다.
 
 ### 예상 소요 시간
 
@@ -179,6 +195,71 @@ GET /api/law-chatbot/status
 ```
 
 응답에 `vectorstore.loaded`, `api.connected` 상태 포함.
+
+---
+
+## 비용 / 스케일 정책 (Azure 요금)
+
+### 기본 원칙
+
+| 설정 | 동작 | 요금 |
+|------|------|------|
+| `min-replicas 0` (기본·권장) | 무요청 상태가 이어지면 replica 0 으로 축소 | 유휴 시 vCPU/메모리 요금 **없음** |
+| `min-replicas 1` | replica 가 항상 기동 | 24시간 과금 |
+
+`min-replicas 1` 은 **배포 롤아웃 검증**과 **장애 진단(`fix-registry-auth.yml`)** 에서만 임시로 쓴다.
+두 워크플로 모두 끝날 때 0 으로 되돌리거나, 되돌리라는 경고를 출력한다.
+
+### 지금 당장 스케일을 바꾸는 법 (재빌드 불필요)
+
+**방법 1 — GitHub Actions (권장, 로컬 az CLI 불필요)**
+
+Actions → **Ops - Container App 스케일 전환** → Run workflow → `min_replicas` = `0`
+(`.github/workflows/scale-control.yml`)
+
+새 리비전 생성 → 트래픽 전환 → health check → 옛 리비전 비활성화까지 자동 수행한다.
+실패하면 이전 리비전으로 자동 롤백한다.
+
+**방법 2 — Azure CLI**
+
+```bash
+az containerapp update \
+  --name cj-ai-backend \
+  --resource-group rg-cj-ai-platform \
+  --min-replicas 0 --max-replicas 3
+
+# 다중 리비전 모드라면 새 리비전으로 트래픽을 직접 넘겨야 한다
+az containerapp revision list -n cj-ai-backend -g rg-cj-ai-platform -o table
+az containerapp ingress traffic set -n cj-ai-backend -g rg-cj-ai-platform \
+  --revision-weight <새-리비전-이름>=100
+# 옛(min 1) 리비전은 비활성화해야 replica 가 내려간다
+az containerapp revision deactivate -n cj-ai-backend -g rg-cj-ai-platform \
+  --revision <옛-리비전-이름>
+```
+
+**방법 3 — Azure Portal**
+
+Container Apps → `cj-ai-backend` → 애플리케이션 → 크기 조정(Scale) → 최소 복제본 수 = 0 → 저장.
+포털도 새 리비전을 만드므로, **리비전 관리에서 트래픽이 새 리비전으로 갔는지 / 옛 리비전이
+비활성화됐는지 반드시 확인**해야 실제로 요금이 멈춘다.
+
+### 확인해야 할 함정
+
+1. **워크로드 프로필이 Dedicated 면 scale-to-zero 해도 요금이 멈추지 않는다.**
+   Dedicated 프로필은 replica 수와 무관하게 노드 자체가 과금된다. 확인:
+   ```bash
+   az containerapp env show -n <환경이름> -g rg-cj-ai-platform \
+     --query "properties.workloadProfiles" -o json
+   ```
+   `Consumption` 이어야 유휴 요금이 0 이 된다. Dedicated 면 프로필을 Consumption 으로 바꾸거나
+   최소 인스턴스 수를 0 으로 내려야 한다.
+2. **활성 리비전이 2개 이상이면 둘 다 과금된다.** `az containerapp revision list` 로
+   `active=true` 인 리비전이 1개인지 확인.
+3. **Log Analytics 작업 영역**은 Container Apps 와 별도로 수집량만큼 과금된다.
+   요금 청구서에 남아 있다면 보존 기간·수집량을 조정한다.
+4. **scale-to-zero 의 대가는 콜드스타트다.** 이미지가 아직 크기 때문에(→ `docs/design/image_slimming.md`)
+   유휴 후 첫 요청이 수십 초~수 분 걸릴 수 있다. 프론트엔드는
+   `frontend/src/hooks/useBackendWakeup.js` 에서 최대 약 6분간 재시도하며 기동을 기다린다.
 
 ---
 

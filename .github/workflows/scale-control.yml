@@ -1,0 +1,124 @@
+name: Ops - Container App 스케일 전환 (요금 절감 / warm 유지)
+
+# 목적: 재빌드 없이 cj-ai-backend 의 min-replicas 를 즉시 바꾼다.
+#
+#   min_replicas = 0  → 유휴 시 replica 0. Azure 사용 요금이 0 에 수렴한다. (기본값/권장)
+#                       대신 요청이 없던 상태에서의 첫 요청은 콜드스타트로 느리다.
+#   min_replicas = 1  → 항상 1개 replica 기동. 첫 요청이 빠른 대신 24시간 과금된다.
+#                       장애 진단(로그 확보) 등 일시적인 용도로만 사용할 것.
+#
+# 주의: ACA 는 scale 설정을 리비전 템플릿의 일부로 취급하므로 이 작업은 항상 새 리비전을
+#       만든다. 현재 서빙 중인 리비전의 이미지를 그대로 재사용하므로 코드 변경은 없다.
+#
+# 실행: Actions → 이 워크플로우 → Run workflow → min_replicas 선택.
+#       (필요 시크릿: AZURE_CREDENTIALS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_replicas:
+        description: '최소 replica 수 (0 = 유휴 시 요금 없음 / 1 = 항상 기동, 과금)'
+        required: true
+        default: '0'
+        type: choice
+        options:
+          - '0'
+          - '1'
+
+env:
+  APP_NAME: cj-ai-backend
+  RESOURCE_GROUP: rg-cj-ai-platform
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Apply min-replicas
+        uses: azure/CLI@v1
+        env:
+          MIN_REPLICAS: ${{ inputs.min_replicas }}
+        with:
+          inlineScript: |
+            set -euo pipefail
+            APP="$APP_NAME"; RG="$RESOURCE_GROUP"; MIN="$MIN_REPLICAS"
+
+            echo "===== 1. 현재 상태 확인 ====="
+            MODE=$(az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.configuration.activeRevisionsMode" -o tsv)
+            CUR_REV=$(az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "reverse(sort_by(properties.configuration.ingress.traffic[?weight>\`0\`], &weight))[0].revisionName" -o tsv 2>/dev/null || true)
+            if [ -z "${CUR_REV:-}" ] || [ "$CUR_REV" = "null" ]; then
+              CUR_REV=$(az containerapp revision list --name "$APP" --resource-group "$RG" \
+                --query "reverse(sort_by([?properties.active], &properties.createdTime))[0].name" -o tsv)
+            fi
+            IMAGE=$(az containerapp revision show --name "$APP" --resource-group "$RG" \
+              --revision "$CUR_REV" --query "properties.template.containers[0].image" -o tsv)
+            echo "리비전 모드: $MODE"
+            echo "현재 서빙 리비전: $CUR_REV"
+            echo "재사용할 이미지: $IMAGE"
+            echo "적용할 min-replicas: $MIN"
+
+            echo "===== 2. 새 리비전 생성 (min-replicas=$MIN) ====="
+            SUFFIX="scale${MIN}-$(date -u +%Y%m%d%H%M%S)"
+            NEW_REV="${APP}--${SUFFIX}"
+            az containerapp update --name "$APP" --resource-group "$RG" \
+              --image "$IMAGE" --revision-suffix "$SUFFIX" \
+              --min-replicas "$MIN" --max-replicas 3
+            echo "새 리비전: $NEW_REV"
+
+            echo "===== 3. 트래픽 전환 ====="
+            if [ "$MODE" = "Multiple" ]; then
+              az containerapp ingress traffic set --name "$APP" --resource-group "$RG" \
+                --revision-weight "${NEW_REV}=100"
+              echo "✅ 트래픽 100% → $NEW_REV"
+            else
+              echo "(단일 리비전 모드 — 트래픽이 자동으로 최신 리비전으로 전환됨)"
+            fi
+
+            echo "===== 4. Health check (콜드스타트 포함, 최대 10분) ====="
+            FQDN=$(az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.configuration.ingress.fqdn" -o tsv)
+            echo "FQDN: $FQDN"
+            HEALTHY=0
+            for i in $(seq 1 40); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 "https://$FQDN/api/health" || echo 000)
+              echo "health 시도 $i/40: HTTP $code"
+              if [ "$code" = "200" ]; then HEALTHY=1; break; fi
+              sleep 15
+            done
+
+            if [ "$HEALTHY" != "1" ]; then
+              echo "❌ 새 리비전이 응답하지 않습니다. 이전 리비전($CUR_REV)으로 롤백합니다."
+              if [ "$MODE" = "Multiple" ]; then
+                az containerapp ingress traffic set --name "$APP" --resource-group "$RG" \
+                  --revision-weight "${CUR_REV}=100" || true
+              fi
+              az containerapp revision deactivate --name "$APP" --resource-group "$RG" \
+                --revision "$NEW_REV" || true
+              exit 1
+            fi
+
+            echo "===== 5. 옛 리비전 비활성화 (유휴 replica 정리) ====="
+            for r in $(az containerapp revision list --name "$APP" --resource-group "$RG" \
+              --query "[?properties.active].name" -o tsv); do
+              if [ "$r" != "$NEW_REV" ]; then
+                az containerapp revision deactivate --name "$APP" --resource-group "$RG" \
+                  --revision "$r" && echo "  비활성화: $r" || true
+              fi
+            done
+
+            echo "===== 6. 최종 확인 ====="
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.scale" -o json
+            if [ "$MIN" = "0" ]; then
+              echo "🎉 min-replicas 0 적용 완료 — 유휴 시간(기본 약 5분 무요청) 후 replica 0 으로 축소됩니다."
+            else
+              echo "⚠️ min-replicas 1 적용 완료 — replica 가 항상 떠 있어 요금이 계속 발생합니다."
+            fi

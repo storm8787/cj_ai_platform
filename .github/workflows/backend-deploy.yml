@@ -5,6 +5,10 @@ name: Backend - Build and Push to GHCR
 #   새 리비전이 (9.6GB 이미지의 ~13분 pull 등으로) 제때 못 뜨면 사이트가 다운됐다.
 #   → 이제 새 리비전을 0% 트래픽으로 띄우고, Running 확인 후에만 트래픽을 전환한다.
 #     새 리비전이 실패하면 트래픽은 기존(정상) 리비전에 그대로 남아 사이트가 유지된다.
+#
+# 비용 정책: 롤아웃 검증 동안만 min-replicas 1(warm), 검증이 끝나면 min-replicas 0 리비전으로
+#   교체한다. 요청이 없으면 replica 가 0 으로 내려가 유휴 요금이 발생하지 않는다.
+#   (수동 전환은 .github/workflows/scale-control.yml)
 
 on:
   push:
@@ -124,13 +128,46 @@ jobs:
             fi
           done
 
-          echo "===== 9. 최종 Health check ====="
+          echo "===== 9. 유휴 요금 0 전환 (min-replicas 0 리비전 생성) ====="
+          # ACA 는 scale 설정을 리비전 템플릿의 일부로 취급하므로, min-replicas 를 바꾸면
+          # 반드시 새 리비전이 만들어진다. 그래서 "검증은 min 1 로, 서빙은 min 0 으로" 2단계.
+          #   - 위 5~7단계에서 min-replicas 1 로 띄워 실제 기동을 검증했다.
+          #   - 여기서 같은 이미지로 min-replicas 0 리비전을 만들어 트래픽을 넘긴다.
+          #     → 요청이 없으면 replica 0 으로 내려가 Azure 사용 요금이 0 에 수렴한다.
+          IDLE_SUFFIX="${SUFFIX}-idle"
+          IDLE_REV="${APP}--${IDLE_SUFFIX}"
+          az containerapp update --name "$APP" --resource-group "$RG" \
+            --image "$IMAGE_SHA" --revision-suffix "$IDLE_SUFFIX" \
+            --min-replicas 0 --max-replicas 3
+          az containerapp ingress traffic set --name "$APP" --resource-group "$RG" \
+            --revision-weight "${IDLE_REV}=100"
+          echo "✅ 트래픽 100% → $IDLE_REV (min-replicas 0)"
+
+          echo "===== 10. 최종 Health check (콜드스타트 포함, 최대 10분) ====="
+          # min-replicas 0 이라 첫 요청이 scale-from-zero 를 유발한다. 이미지 pull 이 남아 있으면
+          # 수 분 걸릴 수 있으므로 넉넉히 폴링한다.
           FQDN=$(az containerapp show --name "$APP" --resource-group "$RG" \
             --query "properties.configuration.ingress.fqdn" -o tsv)
           echo "FQDN: $FQDN"
-          for i in $(seq 1 8); do
+          HEALTHY=0
+          for i in $(seq 1 40); do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 "https://$FQDN/api/health" || echo 000)
-            echo "health 시도 $i: HTTP $code"
-            if [ "$code" = "200" ]; then echo "🎉 배포 완료 & 서버 정상 (무중단)"; break; fi
+            echo "health 시도 $i/40: HTTP $code"
+            if [ "$code" = "200" ]; then HEALTHY=1; break; fi
             sleep 15
           done
+
+          if [ "$HEALTHY" != "1" ]; then
+            echo "❌ min-replicas 0 리비전($IDLE_REV)이 응답하지 않습니다. 검증된 warm 리비전으로 롤백합니다."
+            az containerapp ingress traffic set --name "$APP" --resource-group "$RG" \
+              --revision-weight "${NEW_REV}=100"
+            az containerapp revision deactivate --name "$APP" --resource-group "$RG" \
+              --revision "$IDLE_REV" || true
+            echo "⚠️ 트래픽은 ${NEW_REV}(min-replicas 1)로 복구됨 — 사이트는 정상이나 유휴 요금이 발생합니다."
+            exit 1
+          fi
+
+          echo "===== 11. warm 리비전 정리 (유휴 replica 제거 → 요금 0) ====="
+          az containerapp revision deactivate --name "$APP" --resource-group "$RG" \
+            --revision "$NEW_REV" && echo "  비활성화: $NEW_REV" || true
+          echo "🎉 배포 완료 & 서버 정상 (무중단, 유휴 시 scale-to-zero)"
